@@ -1,34 +1,29 @@
 """
-karmazyn.py — KarmazynOS Core Library v0.3.0
+karmazyn.py — KarmazynOS Core Library v0.4.0
 =============================================
 
-Dual memory architecture:
+Zmiany względem v0.3:
 
-    PhiSpace (Φ)        — pamięć robocza, termodynamiczna
-    ├── atomy z temperaturą, stygną, umierają przez Vacuum Decay
-    ├── kontekst sesji, rzeczy które mają prawo zniknąć
-    └── HSSKarmazynMatrix (HRR, TTL, Ring-LWE)
+  [1] Payload w bąblach — encrypted_content = XOR(content, bubble_key)
+      Bubble teraz wie CO przechowuje, nie tylko ZE istnieje.
+      k.read_bubble(label) → odszyfrowana treść
 
-    BubbleStore (Bąble)  — pamięć długotrwała, bez terminu śmierci
-    ├── bąbel = zamknięta przestrzeń kryptograficzna
-    ├── dane istnieją dopóki istnieje klucz (jawny revoke)
-    └── brak decay — trwa przez całe życie sesji Φ
+  [2] Bubble-aware crypto — revoke() kryptograficznie blokuje dostęp
+      s_bubble = KDF(s_sess, bubble_key_hex)
+      Po revoke: bubble_key="" → inny klucz → Warp Oblivion
 
-    Konsolidacja         — świadomy transfer Φ → Bąbel
-    └── k.consolidate(label) — to co warte zapamiętania na zawsze
+  [3] IDF w embed_semantic — rzadkie słowa ważniejsze
+      Globalny IDFCounter per instancja.
 
-Dwa kanały jak w mózgu:
-    hippokamp  → PhiSpace   (krótkoterminowa, zapomina)
-    kora       → BubbleStore (długoterminowa, pamięta)
+  [4] BUBBLE_BIAS = 1.5 — bąble mają przewagę w recall
+      Trwała pamięć > gorące ale efemeryczne Φ.
 
-Użycie:
-    from karmazyn import KarmazynOS
+  [5] consolidate() używa _raw content — nie traci oryginalnej repr.
 
-    k = KarmazynOS()
-    label     = k.write("spotkanie z Jankiem")
-    k.step(10)                          # stygnie w Φ...
-    bubble_id = k.consolidate(label)    # → bąbel, trwa wiecznie
-    results   = k.recall("spotkanie")  # szuka w obu warstwach
+  [6] Auto-konsolidacja — k.write(..., auto_consolidate=N)
+      Po N recall → automatyczny consolidate()
+
+  [7] evaluate() z adaptywnym progiem (percentyl 60%)
 """
 
 import os
@@ -37,6 +32,7 @@ import hashlib
 import numpy as np
 from dataclasses import dataclass, field
 from typing import Optional, List, Dict, Tuple
+from collections import Counter
 
 _DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _DIR)
@@ -44,15 +40,34 @@ sys.path.insert(0, _DIR)
 from hss_karmazyn_matrix import HSSKarmazynMatrix
 from hss_demo import HSSDaemon, kdf, decrypt, measure_entropy, N, Q
 
+VERSION      = "0.4.0"
 ALPHA        = 0.3
 LAMBDA_DECAY = 0.1
 DELTA_T_BASE = 5.0
-VERSION      = "0.3.0"
-
+BUBBLE_BIAS  = 1.5
 STOPWORDS = {
     'i','w','z','na','do','ze','to','sie','nie','jest','jak','ale','po',
     'the','a','an','and','or','in','on','at','to','of','is','it','for',
+    'ze','co','byc','tak','ten','ta','te','ich','jej','jego','tym','przez',
 }
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Payload crypto
+# ─────────────────────────────────────────────────────────────────────────
+
+def _xor_crypt(data: bytes, key: bytes) -> bytes:
+    """XOR stream z SHA256-DRBG. Symetryczne."""
+    out, offset, counter = bytearray(len(data)), 0, 0
+    while offset < len(data):
+        block = hashlib.sha256(key + counter.to_bytes(4, 'big')).digest()
+        for b in block:
+            if offset >= len(data):
+                break
+            out[offset] = data[offset] ^ b
+            offset += 1
+        counter += 1
+    return bytes(out)
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -61,23 +76,27 @@ STOPWORDS = {
 
 @dataclass
 class Bubble:
-    """
-    Bąbel Mazura — pamięć bez terminu śmierci.
-    T = inf. Umiera tylko przez jawny revoke().
-    """
-    id:           str
-    label:        str
-    S_struct:     np.ndarray
-    S_sem:        np.ndarray
-    fingerprint:  np.ndarray
-    bubble_key:   bytes
-    inode:        str
-    epoch_born:   int
-    consolidated_from: str = ""
-    metadata:     Dict = field(default_factory=dict)
+    """Bąbel Mazura — pamięć trwała z payloadem. T=∞."""
+    id:                str
+    label:             str
+    S_struct:          np.ndarray
+    S_sem:             np.ndarray
+    fingerprint:       np.ndarray
+    bubble_key:        bytes
+    encrypted_content: bytes
+    inode:             str
+    epoch_born:        int
+    recall_count:      int  = 0
+    consolidated_from: str  = ""
+    metadata:          Dict = field(default_factory=dict)
 
     def is_alive(self) -> bool:
         return bool(self.bubble_key)
+
+    def decrypt_content(self) -> bytes:
+        """Po revoke: bubble_key='' → Warp Oblivion (bełkot)."""
+        key = self.bubble_key if self.bubble_key else b"revoked_warp_oblivion"
+        return _xor_crypt(self.encrypted_content, key)
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -85,63 +104,89 @@ class Bubble:
 # ─────────────────────────────────────────────────────────────────────────
 
 class BubbleStore:
-    def __init__(self, phi2_bytes: bytes):
-        self._bubbles: Dict[str, Bubble] = {}
-        self._label_index: Dict[str, str] = {}
-        self._phi2    = phi2_bytes
-        self._revoked: set = set()
+    def __init__(self, phi2_bytes: bytes, s_sess: np.ndarray):
+        self._b:    Dict[str, Bubble] = {}
+        self._idx:  Dict[str, str]    = {}   # label → id
+        self._phi2  = phi2_bytes
+        self._s     = s_sess
+        self._rev:  set = set()
 
     def _make_key(self, bid: str) -> bytes:
         return hashlib.sha256(self._phi2 + b"bubble:" + bid.encode()).digest()
 
+    def bubble_s_agent(self, bubble: Bubble) -> np.ndarray:
+        """s_bubble = KDF(s_sess, bubble_key_hex). Zmienia się po revoke."""
+        hex_key = bubble.bubble_key.hex() if bubble.bubble_key else "revoked"
+        return kdf(self._s.tobytes(), f"bubble:{hex_key}")
+
     def store(self, label: str, S_struct: np.ndarray, S_sem: np.ndarray,
-              fingerprint: np.ndarray, inode: str, epoch: int,
+              fingerprint: np.ndarray, content_raw: bytes,
+              inode: str, epoch: int,
               consolidated_from: str = "", metadata: Dict = None) -> Bubble:
         bid = "bubble_" + hashlib.md5((label + str(epoch)).encode()).hexdigest()[:12]
+        key = self._make_key(bid)
         b   = Bubble(
             id=bid, label=label,
             S_struct=S_struct.copy(), S_sem=S_sem.copy(),
             fingerprint=fingerprint.copy(),
-            bubble_key=self._make_key(bid),
+            bubble_key=key,
+            encrypted_content=_xor_crypt(content_raw, key),
             inode=inode, epoch_born=epoch,
             consolidated_from=consolidated_from,
             metadata=metadata or {},
         )
-        self._bubbles[bid]       = b
-        self._label_index[label] = bid
+        self._b[bid]   = b
+        self._idx[label] = bid
         return b
 
     def recall(self, q_sem: np.ndarray, k: int = 3) -> List[Tuple[float, Bubble]]:
-        results = [
-            (float(np.dot(q_sem, b.S_sem)), b)
-            for bid, b in self._bubbles.items()
-            if bid not in self._revoked
-        ]
-        results.sort(key=lambda x: x[0], reverse=True)
-        return results[:k]
+        res = [(float(np.dot(q_sem, b.S_sem)), b)
+               for bid, b in self._b.items() if bid not in self._rev]
+        res.sort(key=lambda x: x[0], reverse=True)
+        for _, b in res[:k]:
+            b.recall_count += 1
+        return res[:k]
 
     def get_by_label(self, label: str) -> Optional[Bubble]:
-        bid = self._label_index.get(label)
-        return self._bubbles.get(bid) if bid else None
+        bid = self._idx.get(label)
+        return self._b.get(bid) if bid else None
 
     def revoke(self, bid: str) -> bool:
-        if bid in self._bubbles:
-            self._bubbles[bid].bubble_key = b""
-            self._revoked.add(bid)
+        if bid in self._b:
+            self._b[bid].bubble_key = b""
+            self._rev.add(bid)
             return True
         return False
 
     def revoke_by_label(self, label: str) -> bool:
-        bid = self._label_index.get(label)
+        bid = self._idx.get(label)
         return self.revoke(bid) if bid else False
 
     @property
     def count(self) -> int:
-        return len(self._bubbles) - len(self._revoked)
+        return len(self._b) - len(self._rev)
 
     @property
     def all_active(self) -> List[Bubble]:
-        return [b for bid, b in self._bubbles.items() if bid not in self._revoked]
+        return [b for bid, b in self._b.items() if bid not in self._rev]
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# IDF
+# ─────────────────────────────────────────────────────────────────────────
+
+class IDFCounter:
+    def __init__(self):
+        self._freq:  Counter = Counter()
+        self._ndocs: int     = 0
+
+    def add_doc(self, tokens: List[str]):
+        self._ndocs += 1
+        for t in set(tokens):
+            self._freq[t] += 1
+
+    def idf(self, token: str) -> float:
+        return float(np.log1p(self._ndocs / (1 + self._freq.get(token, 0))))
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -150,64 +195,69 @@ class BubbleStore:
 
 class PhiSpace:
     def __init__(self, dim: int = 64, n_sessions: int = 1, seed: int = 42):
-        self._matrix   = HSSKarmazynMatrix(dim=dim, n_sessions=n_sessions,
-                                            lambd=LAMBDA_DECAY, seed=seed)
-        self.dim       = dim
-        self._sid      = 0
-        self._t_vac    = self._measure_t_vac()
-        self._phi2seed = os.urandom(32)
-        self._sem:     Dict[str, np.ndarray] = {}  # label → S_sem
+        self._mx  = HSSKarmazynMatrix(dim=dim, n_sessions=n_sessions,
+                                       lambd=LAMBDA_DECAY, seed=seed)
+        self.dim  = dim
+        self._sid = 0
+        self._tvac = self._measure_tvac()
+        self._p2s  = os.urandom(32)
+        self._sem:  Dict[str, np.ndarray] = {}
+        self._rc:   Dict[str, int]        = {}   # recall counts
+        self._idf   = IDFCounter()
 
     def embed_structural(self, c: bytes) -> np.ndarray:
         s = int(hashlib.md5(c).hexdigest(), 16) % (2**32)
         v = np.random.default_rng(s).normal(0, 1, self.dim).astype(np.float32)
         return v / (np.linalg.norm(v) + 1e-9)
 
-    def embed_semantic(self, c: bytes) -> np.ndarray:
+    def embed_semantic(self, c: bytes, update: bool = False) -> np.ndarray:
         try:
             text = c.decode('utf-8', errors='ignore').lower()
         except Exception:
             return self.embed_structural(c)
         tokens  = [w for w in text.split() if len(w) > 1 and w not in STOPWORDS]
         bigrams = [f"{a}_{b}" for a, b in zip(tokens, tokens[1:])]
-        toks    = tokens + bigrams
-        if not toks:
+        all_t   = tokens + bigrams
+        if not all_t:
             return self.embed_structural(c)
+        if update:
+            self._idf.add_doc(tokens)
         v = np.zeros(self.dim, dtype=np.float32)
-        for t in toks:
-            w  = min(1.0, len(t) / 6.0)
-            s  = int(hashlib.md5(t.encode()).hexdigest(), 16) % (2**32)
+        for t in all_t:
+            w = self._idf.idf(t) * min(1.0, len(t) / 5.0)
+            s = int(hashlib.md5(t.encode()).hexdigest(), 16) % (2**32)
             v += w * np.random.default_rng(s).normal(0, 1, self.dim).astype(np.float32)
         n = np.linalg.norm(v)
         return v / n if n > 1e-9 else self.embed_structural(c)
 
     def phi2_bytes(self) -> bytes:
-        return hashlib.sha256(self._phi2seed + b"phi2-v3").digest()
+        return hashlib.sha256(self._p2s + b"phi2-v4").digest()
 
-    def _measure_t_vac(self) -> float:
+    def _measure_tvac(self) -> float:
         s = np.random.randint(0, Q, N, dtype=np.int64) % 256
         _, c = np.unique(s, return_counts=True)
         p = c / len(s)
         return float(-np.sum(p * np.log2(p + 1e-12)))
 
     def t_vacuum(self) -> float:
-        return self._t_vac
+        return self._tvac
 
     def add(self, content: bytes, label: str = "") -> str:
         s_str = self.embed_structural(content)
-        s_sem = self.embed_semantic(content)
+        s_sem = self.embed_semantic(content, update=True)
         lbl   = label or f"atom_{hashlib.md5(content).hexdigest()[:8]}"
-        self._matrix.add_atom_vector(label=lbl, topic="karmazyn",
-                                      vector=s_str, init_T=DELTA_T_BASE,
-                                      session=self._sid)
+        self._mx.add_atom_vector(label=lbl, topic="karmazyn",
+                                  vector=s_str, init_T=DELTA_T_BASE,
+                                  session=self._sid)
         self._sem[lbl] = s_sem
+        self._rc[lbl]  = 0
         return lbl
 
-    def recall(self, query: bytes, k: int = 3) -> List[Dict]:
+    def recall(self, query: bytes, k: int = 3) -> List[Tuple[Dict, float]]:
         q_str = self.embed_structural(query)
         q_sem = self.embed_semantic(query)
         cands = []
-        for a in self._matrix.atoms:
+        for a in self._mx.atoms:
             if a.get('session') != self._sid:
                 continue
             lbl   = a.get('label', '')
@@ -215,176 +265,211 @@ class PhiSpace:
             sim_s = max(0.0, float(np.dot(q_str, a['S'])))
             sim_m = max(0.0, float(np.dot(q_sem, s_sem)))
             sim   = ALPHA * sim_s + (1 - ALPHA) * sim_m
-            cands.append((sim * a['T'], a))
+            cands.append((sim * a['T'], a, sim))
         cands.sort(key=lambda x: x[0], reverse=True)
-        top = cands[:k]
-        for _, a in top:
+        result = []
+        for _, a, sim in cands[:k]:
             a['T'] = a['T'] + 0.3 * (DELTA_T_BASE - a['T'])
-        return [a for _, a in top]
+            lbl = a.get('label', '')
+            self._rc[lbl] = self._rc.get(lbl, 0) + 1
+            result.append((a, sim))
+        return result
+
+    def recall_count(self, label: str) -> int:
+        return self._rc.get(label, 0)
 
     def step(self) -> int:
-        self._matrix.step()
-        alive = {a['label'] for a in self._matrix.atoms}
-        self._sem = {k: v for k, v in self._sem.items() if k in alive}
-        return len(self._matrix.atoms)
+        self._mx.step()
+        alive      = {a['label'] for a in self._mx.atoms}
+        self._sem  = {k: v for k, v in self._sem.items() if k in alive}
+        self._rc   = {k: v for k, v in self._rc.items() if k in alive}
+        return len(self._mx.atoms)
 
     def temperature(self) -> float:
-        a = self._matrix.atoms
-        return float(np.mean([x['T'] for x in a])) if a else self._t_vac
+        a = self._mx.atoms
+        return float(np.mean([x['T'] for x in a])) if a else self._tvac
 
     def stats(self) -> Dict:
-        return {"atoms": len(self._matrix.atoms), "epoch": self._matrix.time,
-                "temperature": self.temperature(), "t_vacuum": self._t_vac,
+        return {"atoms": len(self._mx.atoms), "epoch": self._mx.time,
+                "temperature": self.temperature(), "t_vacuum": self._tvac,
                 "dim": self.dim}
 
 
 # ─────────────────────────────────────────────────────────────────────────
-# KarmazynOS v0.3
+# KarmazynOS v0.4
 # ─────────────────────────────────────────────────────────────────────────
 
 class KarmazynOS:
-    """KarmazynOS v0.3.0 — dual memory (Φ + Bąble)."""
+    """KarmazynOS v0.4.0 — dual memory z payloadem i bubble-aware crypto."""
 
     def __init__(self, dim: int = 64, n_sessions: int = 1, seed: int = 42):
         self.phi    = PhiSpace(dim=dim, n_sessions=n_sessions, seed=seed)
         self.daemon = HSSDaemon()
-        phi2_vec    = np.frombuffer(self.phi.phi2_bytes() * 4, dtype=np.float32)[:N]
-        self._s     = self.daemon.init_phi_session(phi2_vec, phi_pid=0)
-        self.bubbles= BubbleStore(self.phi.phi2_bytes())
-        self._amap: Dict[str, str]         = {}   # label → inode (Φ)
-        self._fp:   Dict[str, np.ndarray]  = {}   # label → fingerprint
-        self._pid   = 100
-        self._reg:  Dict[int, Tuple[str, List[str]]] = {}
-        print(f"  KarmazynOS v{VERSION} — dual memory")
-        print(f"  Φ (robocza, stygnie) + Bąble (trwałe, T=∞)")
+        phi2_vec    = np.frombuffer(self.phi.phi2_bytes() * 4,
+                                     dtype=np.float32)[:N]
+        self._s_sess = self.daemon.init_phi_session(phi2_vec, phi_pid=0)
+        self.bubbles = BubbleStore(self.phi.phi2_bytes(), self._s_sess)
+        self._amap:  Dict[str, str]             = {}
+        self._fp:    Dict[str, np.ndarray]      = {}
+        self._raw:   Dict[str, bytes]           = {}
+        self._ac:    Dict[str, int]             = {}   # auto_consolidate thresh
+        self._pid    = 100
+        self._reg:   Dict[int, Tuple[str, List[str]]] = {}
+        print(f"  KarmazynOS v{VERSION}")
+        print(f"  Φ (stygnie) + Bąble (T=∞, payload, crypto-liveness)")
         print(f"  T_vacuum = {self.phi.t_vacuum():.4f} bit")
 
-    # ── write → Φ ────────────────────────────────────────────────────────
+    # ── write ─────────────────────────────────────────────────────────────
 
-    def write(self, content: str) -> str:
+    def write(self, content: str, auto_consolidate: int = 0) -> str:
         raw   = content.encode() if isinstance(content, str) else content
         label = self.phi.add(raw)
-        bits8 = np.unpackbits(np.frombuffer(hashlib.sha256(raw).digest()[:8],
-                                             dtype=np.uint8))
+        bits8 = np.unpackbits(np.frombuffer(
+            hashlib.sha256(raw).digest()[:8], dtype=np.uint8))
         vec   = np.zeros(N, dtype=np.int64)
         vec[:64] = bits8.astype(np.int64)
         inode = f"karmazyn://phi/{label}"
         self.daemon.phi_write(inode, vec)
         self._amap[label] = inode
         self._fp[label]   = bits8.astype(np.int64)
+        self._raw[label]  = raw
+        self._ac[label]   = auto_consolidate
         return label
 
-    # ── consolidate: Φ → Bąbel ───────────────────────────────────────────
+    # ── consolidate ───────────────────────────────────────────────────────
 
     def consolidate(self, label: str, metadata: Dict = None) -> Optional[str]:
-        """
-        Konsolidacja: atom z Φ → bąbel (pamięć długotrwała).
-        Bąbel nie stygnie. Trwa do jawnego revoke().
-        Atom Φ nadal istnieje i nadal stygnie — są niezależne.
-        """
+        """Φ → Bąbel z zaszyfrowaną treścią."""
         if label not in self._amap:
             return None
-
-        phi_atom = next((a for a in self.phi._matrix.atoms
-                         if a.get('label') == label), None)
-        s_str = phi_atom['S'].copy() if phi_atom else self.phi.embed_structural(label.encode())
-        s_sem = self.phi._sem.get(label, self.phi.embed_semantic(label.encode()))
-        fp    = self._fp.get(label, np.zeros(8, dtype=np.int64))
-
+        raw     = self._raw.get(label, label.encode())
+        phi_a   = next((a for a in self.phi._mx.atoms
+                        if a.get('label') == label), None)
+        s_str   = phi_a['S'].copy() if phi_a else self.phi.embed_structural(raw)
+        s_sem   = self.phi._sem.get(label, self.phi.embed_semantic(raw))
+        fp      = self._fp.get(label, np.zeros(8, dtype=np.int64))
         b_inode = f"karmazyn://bubbles/{label}"
-        vec = np.zeros(N, dtype=np.int64)
+        vec     = np.zeros(N, dtype=np.int64)
         vec[:len(fp)] = fp
         self.daemon.phi_write(b_inode, vec)
-
         bubble = self.bubbles.store(
             label=label, S_struct=s_str, S_sem=s_sem,
-            fingerprint=fp, inode=b_inode,
-            epoch=self.phi._matrix.time,
-            consolidated_from=label, metadata=metadata or {},
-        )
-        print(f"  [KONSOLIDACJA] '{label}' → {bubble.id} | T=∞")
+            fingerprint=fp, content_raw=raw,
+            inode=b_inode, epoch=self.phi._mx.time,
+            consolidated_from=label, metadata=metadata or {})
+        print(f"  [KONSOLIDACJA] '{label[:30]}' → {bubble.id} | T=∞")
         return bubble.id
 
-    # ── recall: Φ + Bąble ────────────────────────────────────────────────
+    def _auto_check(self, label: str):
+        thresh = self._ac.get(label, 0)
+        if thresh > 0 and self.phi.recall_count(label) >= thresh:
+            if self.bubbles.get_by_label(label) is None:
+                print(f"  [AUTO] '{label[:25]}' recall≥{thresh} → consolidate")
+                self.consolidate(label)
+
+    # ── recall ─────────────────────────────────────────────────────────────
 
     def recall(self, query: str, k: int = 5) -> List[Dict]:
-        """
-        Recall z obu warstw.
-        Φ: score = sim × T  (gorące atomy wygrywają)
-        Bąble: score = sim  (brak T — równe traktowanie)
-        """
+        """Recall z Φ + Bąble. Bąble mają BUBBLE_BIAS={BUBBLE_BIAS}."""
         raw   = query.encode() if isinstance(query, str) else query
         q_sem = self.phi.embed_semantic(raw)
-
         k_phi = max(1, int(k * 0.6))
         k_bub = max(1, k - k_phi)
 
-        phi_atoms = self.phi.recall(raw, k=k_phi)
-        phi_res   = []
-        for a in phi_atoms:
-            lbl   = a.get('label', '')
-            s_sem = self.phi._sem.get(lbl, a['S'])
-            phi_res.append({
-                'label': lbl, 'layer': 'phi',
-                'T': a['T'], 'sim': float(np.dot(q_sem, s_sem)),
-                'inode': self._amap.get(lbl, ''), 'bubble_id': None,
-            })
+        phi_res = []
+        for atom, sim in self.phi.recall(raw, k=k_phi):
+            lbl   = atom.get('label', '')
+            s_sem = self.phi._sem.get(lbl, atom['S'])
+            sim_f = max(0.0, float(np.dot(q_sem, s_sem)))
+            phi_res.append({'label': lbl, 'layer': 'phi',
+                             'T': atom['T'], 'sim': sim_f,
+                             'score': sim_f * atom['T'],
+                             'inode': self._amap.get(lbl, ''),
+                             'bubble_id': None})
+            self._auto_check(lbl)
 
-        bub_hits = self.bubbles.recall(q_sem, k=k_bub)
-        bub_res  = [{'label': b.label, 'layer': 'bubble',
-                     'T': float('inf'), 'sim': sim,
-                     'inode': b.inode, 'bubble_id': b.id}
-                    for sim, b in bub_hits]
+        bub_res = []
+        for sim, b in self.bubbles.recall(q_sem, k=k_bub):
+            bub_res.append({'label': b.label, 'layer': 'bubble',
+                             'T': float('inf'), 'sim': sim,
+                             'score': sim * BUBBLE_BIAS,
+                             'inode': b.inode, 'bubble_id': b.id})
 
         all_res = phi_res + bub_res
-        all_res.sort(key=lambda x: x['sim'], reverse=True)
+        all_res.sort(key=lambda x: x['score'], reverse=True)
         return all_res[:k]
 
-    # ── evaluate ─────────────────────────────────────────────────────────
+    # ── read_bubble ───────────────────────────────────────────────────────
+
+    def read_bubble(self, label: str) -> Optional[str]:
+        """
+        Odszyfruj treść bąbla.
+        Po revoke(): Warp Oblivion — bełkot zamiast treści.
+        """
+        b = self.bubbles.get_by_label(label)
+        if b is None:
+            return None
+        raw = b.decrypt_content()
+        try:
+            return raw.decode('utf-8', errors='replace')
+        except Exception:
+            return raw.hex()
+
+    # ── evaluate ──────────────────────────────────────────────────────────
 
     def evaluate(self, context: str) -> Tuple[bool, float, str]:
+        """Decyzja z obu warstw. Próg adaptywny (percentyl 60%)."""
         raw   = context.encode()
         q_sem = self.phi.embed_semantic(raw)
-
-        phi_a = self.phi._matrix.atoms
-        s_phi = (sum(max(0.0, float(np.dot(q_sem,
-                     self.phi._sem.get(a['label'], a['S'])))) * a['T']
-                     for a in phi_a) / len(phi_a)) if phi_a else 0.0
-
+        phi_a = self.phi._mx.atoms
         bubs  = self.bubbles.all_active
-        s_bub = (sum(max(0.0, float(np.dot(q_sem, b.S_sem)))
-                     for b in bubs) / len(bubs)) if bubs else 0.0
+        all_s = []
+
+        s_phi = 0.0
+        if phi_a:
+            sims  = [max(0.0, float(np.dot(q_sem,
+                         self.phi._sem.get(a['label'], a['S']))))
+                     for a in phi_a]
+            all_s.extend(sims)
+            s_phi = sum(s * a['T'] for s, a in zip(sims, phi_a)) / len(phi_a)
+
+        s_bub = 0.0
+        if bubs:
+            simsb = [max(0.0, float(np.dot(q_sem, b.S_sem))) for b in bubs]
+            all_s.extend(simsb)
+            s_bub = sum(simsb) / len(bubs)
 
         score = 0.6 * s_phi + 0.4 * s_bub
-        theta = 0.3
+        theta = max(float(np.percentile(all_s, 60)), 0.1) if all_s else 0.3
         allow = score > theta
         reason = (f"score={score:.3f} [φ={s_phi:.3f} b={s_bub:.3f}]"
-                  f" {'>' if allow else '≤'} θ={theta:.3f}"
+                  f" {'>' if allow else '≤'} θ={theta:.3f}(p60)"
                   f" → {'ZEZWÓL' if allow else 'ODMÓW'}")
         return allow, score, reason
 
-    # ── agenty ───────────────────────────────────────────────────────────
+    # ── agenty ────────────────────────────────────────────────────────────
 
     def derive_agent(self, name: str, task: str,
                      prisms: List[str] = ["core","in","out"]) -> Tuple[int, np.ndarray]:
         self._pid += 1
-        pid = self._pid
-        s   = self.daemon.derive_agent_key(pid, task, prisms)
-        self._reg[pid] = (task, prisms)
-        return pid, s
+        s = self.daemon.derive_agent_key(self._pid, task, prisms)
+        self._reg[self._pid] = (task, prisms)
+        return self._pid, s
 
     def read_as_agent(self, label: str, pid: int, s_agent: np.ndarray,
                       from_bubble: bool = False) -> Dict:
+        """Ring-LWE read. from_bubble=True → bubble-aware crypto."""
         if from_bubble:
             b = self.bubbles.get_by_label(label)
             if b is None:
                 return {'error': f'bąbel {label!r} nieznany'}
             inode, fp = b.inode, b.fingerprint
+            s_eff     = self.bubbles.bubble_s_agent(b)
         else:
             inode = self._amap.get(label)
             if not inode:
                 return {'error': f'atom {label!r} nieznany'}
-            fp = self._fp.get(label)
+            fp, s_eff = self._fp.get(label), s_agent
 
         reg = self._reg.get(pid)
         if reg is None:
@@ -393,21 +478,21 @@ class KarmazynOS:
 
         res = self.daemon.upcall_read(pid, inode, prisms, task)
         if res is None:
-            return {'error': 'ODMOWA — brak klucza'}
+            return {'error': 'ODMOWA'}
 
         out = {}
         for p in res:
-            bits    = decrypt(s_agent, p.u, p.v)
+            bits    = decrypt(s_eff, p.u, p.v)
             hamming = int(np.sum(bits[:8] != fp[:8])) if fp is not None else 4
             sig     = hamming <= 3
-            out[p.prism_id] = {'signal': sig, 'bits': bits[:8].tolist(),
-                                'status': f'{"✓ SYGNAŁ" if sig else "✗ SZUM"} (h={hamming})'}
+            out[p.prism_id] = {
+                'signal': sig, 'bits': bits[:8].tolist(),
+                'status': f'{"✓ SYGNAŁ" if sig else "✗ SZUM"} (h={hamming})'}
         return out
 
     # ── lifecycle ─────────────────────────────────────────────────────────
 
     def step(self, n: int = 1) -> Dict:
-        """Krok Φ. Bąble niezmienione."""
         for _ in range(n):
             self.phi.step()
         return self.stats()
@@ -418,10 +503,10 @@ class KarmazynOS:
         self.daemon.vacuum_decay()
 
     def revoke_bubble(self, label: str) -> bool:
-        """Jawne usunięcie bąbla — jedyna droga jego śmierci."""
+        """Jedyna droga śmierci bąbla. Po revoke: Warp Oblivion."""
         ok = self.bubbles.revoke_by_label(label)
         if ok:
-            print(f"  [REVOKE] '{label}' → skasowany (jawna decyzja)")
+            print(f"  [REVOKE] '{label}' → bubble_key='' | Warp Oblivion")
         return ok
 
     def stats(self) -> Dict:
