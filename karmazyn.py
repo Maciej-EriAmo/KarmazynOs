@@ -53,7 +53,7 @@ ALPHA          = 0.3    # waga embed_structural w recall hybrydowym
 LAMBDA_DECAY   = 0.1    # stała zaniku temperatury
 DELTA_T_BASE   = 5.0    # energia startowa atomu
 EPSILON_FEP    = 0.05   # margines vacuum (×T_vac)
-VERSION        = "0.1.0"
+VERSION        = "0.2.0"
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -74,7 +74,11 @@ class PhiSpace:
             seed=seed,
         )
         self.dim = dim
-        self._session_id = 0    # domyślna sesja Φ
+        self._session_id = 0
+        # T_vacuum mierzone RAZ przy starcie — stabilna stała instancji
+        self._t_vac_measured = self._measure_t_vacuum()
+        # Stabilny seed Φ² — nie zmienia się przez całe życie instancji
+        self._phi2_seed = os.urandom(32)
 
     # ── embed_structural ────────────────────────────────────────────────
 
@@ -83,36 +87,70 @@ class PhiSpace:
         Deterministyczny embedding strukturalny.
         Kontrakt: ten sam content → ten sam wektor zawsze.
         Znormalizowany: |e|₂ = 1.0.
+        Używany wyłącznie do HRR trace — nie do recall semantycznego.
         """
         seed = int(hashlib.md5(content).hexdigest(), 16) % (2**32)
         rng  = np.random.default_rng(seed)
         v    = rng.normal(0, 1, self.dim).astype(np.float32)
         return v / (np.linalg.norm(v) + 1e-9)
 
+    def embed_semantic(self, content: bytes) -> np.ndarray:
+        """
+        Embedding semantyczny przez hashing trick na tokenach.
+        Deterministyczny. Brak LLM — działa offline.
+        Słowa podobne znaczeniowo → bliższe wektory niż MD5.
+
+        Metoda: każdy token → HMAC-based pozycja w R^D,
+        wektor = suma pozycji tokenów (bag-of-embeddings).
+        """
+        try:
+            text = content.decode('utf-8', errors='ignore').lower()
+        except Exception:
+            text = content.hex()
+
+        # Tokenizacja: słowa + bigramy (lepsze pokrycie semantyczne)
+        tokens = [w for w in text.split() if len(w) > 1]
+        bigrams = [f"{a}_{b}" for a, b in zip(tokens, tokens[1:])]
+        all_tokens = tokens + bigrams
+
+        if not all_tokens:
+            return self.embed_structural(content)  # fallback
+
+        v = np.zeros(self.dim, dtype=np.float32)
+        for token in all_tokens:
+            # Każdy token → deterministyczny wektor przez seed
+            seed = int(hashlib.md5(token.encode()).hexdigest(), 16) % (2**32)
+            rng  = np.random.default_rng(seed)
+            tv   = rng.normal(0, 1, self.dim).astype(np.float32)
+            v   += tv  # suma → bag-of-embeddings
+
+        n = np.linalg.norm(v)
+        if n < 1e-9:
+            return self.embed_structural(content)
+        return v / n
+
     # ── phi2_bytes — tożsamość Φ ─────────────────────────────────────────
 
     def phi2_bytes(self) -> bytes:
         """
         Φ² = stabilna tożsamość sesji.
-        Wyprowadzana z trace + T_vacuum.
-        Wejście do KDF → base_secret → root_key atomów.
+        Korzeń: _phi2_seed (losowy przy starcie, stały przez życie instancji).
+        Trace NIE wchodzi do Φ² — trace zmienia się, tożsamość nie.
         """
-        trace = self._matrix.traces[self._session_id]
-        t_vac = self._t_vacuum()
-        root  = trace.tobytes() + str(t_vac).encode()
-        return hashlib.sha256(root).digest()
+        return hashlib.sha256(self._phi2_seed + b"phi2-v2").digest()
 
     # ── T_vacuum ─────────────────────────────────────────────────────────
 
-    def _t_vacuum(self) -> float:
-        """Mierzone lokalnie — jedyna absolutna stała."""
+    def _measure_t_vacuum(self) -> float:
+        """Jednorazowy pomiar — wywoływany tylko przy __init__."""
         sample = np.random.randint(0, Q, N, dtype=np.int64) % 256
         vals, counts = np.unique(sample, return_counts=True)
         probs = counts / len(sample)
         return float(-np.sum(probs * np.log2(probs + 1e-12)))
 
     def t_vacuum(self) -> float:
-        return self._t_vacuum()  # mierzone, nie stała
+        """Stała instancji — mierzona raz przy starcie, nie zmienia się."""
+        return self._t_vac_measured
 
     # ── zapis atomu ──────────────────────────────────────────────────────
 
@@ -140,26 +178,27 @@ class PhiSpace:
     def recall(self, query: bytes, k: int = 3,
                alpha: float = ALPHA) -> List[Dict]:
         """
-        Hybrydowy recall: score = (α×struct + (1-α)×struct) × T(atom).
-        semantic_cache nie jest zaimplementowany w v0.1 — używamy structural.
-        Niestabilność po restarcie = zamierzona (historia somatyczna).
+        Hybrydowy recall: score = (α×struct + (1-α)×semantic) × T(atom)
+        embed_semantic: bag-of-words hashing trick — ma semantykę.
+        embed_structural: MD5-based — stabilna kotwica tożsamości.
         """
-        q_struct = self.embed_structural(query)
-        t_vac    = self.t_vacuum()
-        current  = self._matrix.time
+        q_struct   = self.embed_structural(query)
+        q_semantic = self.embed_semantic(query)
 
         candidates = []
         for atom in self._matrix.atoms:
             if atom.get('session') != self._session_id and self._session_id != -1:
                 continue
-            sim = float(np.dot(q_struct, atom['S']))
+            sim_s = float(np.dot(q_struct,   atom['S']))
+            sim_m = float(np.dot(q_semantic, atom['S']))
+            # Hybrydowy score — max(0,...) eliminuje ujemne korelacje
+            sim = alpha * max(0.0, sim_s) + (1 - alpha) * max(0.0, sim_m)
             T   = atom['T']
             candidates.append((sim * T, atom))
 
         candidates.sort(key=lambda x: x[0], reverse=True)
         top = candidates[:k]
 
-        # Ogrzewanie top-k
         for _, atom in top:
             self._heat(atom)
 
@@ -225,7 +264,9 @@ class KarmazynOS:
         self._s_sess = self.daemon.init_phi_session(phi2_vec, phi_pid=0)
 
         # ── mapa atom_label → inode ───────────────────────────────────────
-        self._atom_map: Dict[str, str] = {}  # label → inode
+        self._atom_map: Dict[str, str] = {}
+        # Wzorce SHA256 contentu dla detekcji sygnału
+        self._content_fingerprints: Dict[str, np.ndarray] = {}
 
         # ── licznik PID agentów ───────────────────────────────────────────
         self._pid_counter = 100
@@ -262,6 +303,8 @@ class KarmazynOS:
         inode = f"karmazyn://atoms/{label}"
         self.daemon.phi_write(inode, vec)
         self._atom_map[label] = inode
+        # Zapisz wzorzec dla detekcji sygnału w read_as_agent
+        self._content_fingerprints[label] = bits8.astype(np.int64)
 
         return label
 
@@ -341,19 +384,38 @@ class KarmazynOS:
         if result_prisms is None:
             return {'error': 'ODMOWA — brak klucza w keyring'}
 
+        # Oczekiwany wzorzec — SHA256 contentu (zapisany przy write)
+        # Agent który ma właściwy klucz odzyska ten wzorzec.
+        # Agent z złym kluczem odzyska pseudolosowe bity.
+        expected_bits = None
+        inode = self._atom_map.get(label, '')
+        for lbl, ino in self._atom_map.items():
+            if ino == inode and lbl == label:
+                # Wzorzec ze scache (jeśli mamy)
+                cached = self._content_fingerprints.get(label)
+                if cached is not None:
+                    expected_bits = cached
+                break
+
         output = {}
         for prism in result_prisms:
             bits = decrypt(s_agent, prism.u, prism.v)
-            # Sygnał = odszyfrowane bity mają strukturę (>2 bity z 8)
-            # Szum = deszyfrowanie złym kluczem = pseudolosowe bity
-            # Próg 2/8 jest zbyt niski — szum też trafia.
-            # Prawdziwy sygnał ma charakterystyczny wzór (sha256 hash).
-            # Warp Oblivion: B nie odróżni — ontologicznie nie ma dostępu.
-            sig  = int(np.sum(bits[:8])) > 0
+
+            if expected_bits is not None:
+                # Hamming distance: im bliżej 0 tym lepszy sygnał
+                hamming = int(np.sum(bits[:8] != expected_bits[:8]))
+                sig = hamming <= 3   # tolerancja na błędy LWE
+                status = f'✓ SYGNAŁ (hamming={hamming})' if sig else f'✗ SZUM (hamming={hamming})'
+            else:
+                # Fallback: entropia bitów — szum ma entropia ~0.5
+                n_ones = int(np.sum(bits[:16]))
+                sig = 4 <= n_ones <= 12  # bliżej 50% = szum, skrajności = sygnał
+                status = '✓ SYGNAŁ' if sig else '✗ SZUM'
+
             output[prism.prism_id] = {
                 'signal': sig,
                 'bits':   bits[:8].tolist(),
-                'status': '✓ SYGNAŁ' if sig else '✗ SZUM',
+                'status': status,
             }
         return output
 
@@ -362,28 +424,20 @@ class KarmazynOS:
     def evaluate(self, context: str) -> Tuple[bool, float, str]:
         """
         Φ ocenia kontekst przez recall + temperaturę.
-        score = Σ sim(query, atom) × T(atom)
-        θ     = T_vacuum × 1.5
-
-        Nie lista uprawnień — termodynamika decyzji.
-
-        UWAGA v0.1: z MD5-based embed_structural score bywa ujemny
-        (brak prawdziwej semantyki). W produkcji: KuRz lub MiniLM
-        jako embed_semantic zapewni sensowne wartości score.
+        score = Σ max(0, sim_semantic(query, atom)) × T(atom)
+        θ     = mean(T) × 0.5  (adaptywny, nie T_vacuum)
+        Używa embed_semantic — ma prawdziwą semantykę (bag-of-words).
         """
-        raw      = context.encode()
-        atoms    = self.phi.recall(raw, k=3, alpha=1.0)  # czysto strukturalne
-        t_vac    = self.phi.t_vacuum()
-        threshold = t_vac * 1.5
+        raw    = context.encode()
+        q_sem  = self.phi.embed_semantic(raw)
+        atoms  = self.phi._matrix.atoms
 
         if not atoms:
-            return False, 0.0, f"Φ nie zna kontekstu | θ={threshold:.3f}"
+            return False, 0.0, "Φ pusta"
 
-        q_emb = self.phi.embed_structural(raw)
-        score = sum(
-            float(np.dot(q_emb, a['S'])) * a['T']
-            for a in atoms
-        )
+        score     = sum(max(0.0, float(np.dot(q_sem, a['S']))) * a['T'] for a in atoms)
+        mean_T    = float(np.mean([a['T'] for a in atoms]))
+        threshold = mean_T * 0.5
 
         allow  = score > threshold
         reason = (
