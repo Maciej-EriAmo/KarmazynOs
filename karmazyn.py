@@ -40,7 +40,7 @@ sys.path.insert(0, _DIR)
 from hss_karmazyn_matrix import HSSKarmazynMatrix
 from hss_demo import HSSDaemon, kdf, decrypt, measure_entropy, N, Q
 
-VERSION      = "0.4.0"
+VERSION      = "0.5.0"
 ALPHA        = 0.3
 LAMBDA_DECAY = 0.1
 DELTA_T_BASE = 5.0
@@ -56,11 +56,11 @@ STOPWORDS = {
 # Payload crypto
 # ─────────────────────────────────────────────────────────────────────────
 
-def _xor_crypt(data: bytes, key: bytes) -> bytes:
-    """XOR stream z SHA256-DRBG. Symetryczne."""
+def _xor_crypt(data: bytes, key: bytes, nonce: bytes) -> bytes:
+    """XOR stream z SHA256-DRBG + nonce. Symetryczne."""
     out, offset, counter = bytearray(len(data)), 0, 0
     while offset < len(data):
-        block = hashlib.sha256(key + counter.to_bytes(4, 'big')).digest()
+        block = hashlib.sha256(key + nonce + counter.to_bytes(4, 'big')).digest()
         for b in block:
             if offset >= len(data):
                 break
@@ -68,6 +68,34 @@ def _xor_crypt(data: bytes, key: bytes) -> bytes:
             offset += 1
         counter += 1
     return bytes(out)
+
+def _make_hmac(key: bytes, data: bytes) -> bytes:
+    """HMAC-SHA256 dla integralności payloadu."""
+    import hmac as _hmac
+    return _hmac.new(key, data, hashlib.sha256).digest()
+
+def _payload_seal(content: bytes, key: bytes) -> Tuple[bytes, bytes, bytes]:
+    """
+    Zapieczętuj payload: (ciphertext, nonce, tag).
+    nonce = losowe 16 bajtów — unikalne per bąbel.
+    tag   = HMAC(key, nonce || ciphertext) — integralność.
+    """
+    nonce  = os.urandom(16)
+    ct     = _xor_crypt(content, key, nonce)
+    tag    = _make_hmac(key, nonce + ct)
+    return ct, nonce, tag
+
+def _payload_open(ct: bytes, nonce: bytes, tag: bytes,
+                  key: bytes) -> Tuple[Optional[bytes], bool]:
+    """
+    Otwórz payload. Zwraca (plaintext, ok).
+    ok=False: tag niezgodny → dane skompromitowane lub klucz zły.
+    """
+    expected = _make_hmac(key, nonce + ct)
+    import hmac as _hmac
+    if not _hmac.compare_digest(expected, tag):
+        return None, False
+    return _xor_crypt(ct, key, nonce), True
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -84,6 +112,8 @@ class Bubble:
     fingerprint:       np.ndarray
     bubble_key:        bytes
     encrypted_content: bytes
+    payload_nonce:     bytes        # losowy nonce — unikalne per bąbel
+    payload_tag:       bytes        # HMAC(key, nonce||ct) — integralność
     inode:             str
     epoch_born:        int
     recall_count:      int  = 0
@@ -93,10 +123,15 @@ class Bubble:
     def is_alive(self) -> bool:
         return bool(self.bubble_key)
 
-    def decrypt_content(self) -> bytes:
-        """Po revoke: bubble_key='' → Warp Oblivion (bełkot)."""
+    def decrypt_content(self) -> Tuple[Optional[bytes], bool]:
+        """
+        Odszyfruj i zweryfikuj.
+        Zwraca (plaintext, ok).
+        Po revoke: klucz inny → tag niezgodny → (None, False).
+        """
         key = self.bubble_key if self.bubble_key else b"revoked_warp_oblivion"
-        return _xor_crypt(self.encrypted_content, key)
+        return _payload_open(self.encrypted_content,
+                             self.payload_nonce, self.payload_tag, key)
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -125,12 +160,15 @@ class BubbleStore:
               consolidated_from: str = "", metadata: Dict = None) -> Bubble:
         bid = "bubble_" + hashlib.md5((label + str(epoch)).encode()).hexdigest()[:12]
         key = self._make_key(bid)
+        ct, nonce, tag = _payload_seal(content_raw, key)
         b   = Bubble(
             id=bid, label=label,
             S_struct=S_struct.copy(), S_sem=S_sem.copy(),
             fingerprint=fingerprint.copy(),
             bubble_key=key,
-            encrypted_content=_xor_crypt(content_raw, key),
+            encrypted_content=ct,
+            payload_nonce=nonce,
+            payload_tag=tag,
             inode=inode, epoch_born=epoch,
             consolidated_from=consolidated_from,
             metadata=metadata or {},
@@ -186,7 +224,10 @@ class IDFCounter:
             self._freq[t] += 1
 
     def idf(self, token: str) -> float:
-        return float(np.log1p(self._ndocs / (1 + self._freq.get(token, 0))))
+        # Standardowy IDF + 1 (unika 0), z górnym ograniczeniem
+        freq = self._freq.get(token, 0)
+        raw  = np.log((self._ndocs + 1) / (freq + 1)) + 1.0
+        return float(min(raw, 5.0))   # MAX_IDF = 5.0
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -403,17 +444,20 @@ class KarmazynOS:
 
     def read_bubble(self, label: str) -> Optional[str]:
         """
-        Odszyfruj treść bąbla.
-        Po revoke(): Warp Oblivion — bełkot zamiast treści.
+        Odszyfruj i zweryfikuj treść bąbla.
+        Po revoke(): tag niezgodny → zwraca None (nie bełkot).
+        Warp Oblivion: nie wiesz czy dane są poprawne bez klucza.
         """
         b = self.bubbles.get_by_label(label)
         if b is None:
             return None
-        raw = b.decrypt_content()
+        plaintext, ok = b.decrypt_content()
+        if not ok:
+            return None   # Warp Oblivion — klucz zły lub dane skompromitowane
         try:
-            return raw.decode('utf-8', errors='replace')
+            return plaintext.decode('utf-8', errors='replace')
         except Exception:
-            return raw.hex()
+            return plaintext.hex()
 
     # ── evaluate ──────────────────────────────────────────────────────────
 
@@ -495,6 +539,14 @@ class KarmazynOS:
     def step(self, n: int = 1) -> Dict:
         for _ in range(n):
             self.phi.step()
+        # Memory hygiene: usuń _raw/_fp/_amap dla martwych atomów
+        # Zachowaj jeśli atom ma bąbel (potrzebny dla consolidate)
+        alive_phi     = {a['label'] for a in self.phi._mx.atoms}
+        alive_bubbles = {b.consolidated_from for b in self.bubbles.all_active}
+        alive         = alive_phi | alive_bubbles
+        self._raw  = {k: v for k, v in self._raw.items()  if k in alive}
+        self._fp   = {k: v for k, v in self._fp.items()   if k in alive}
+        self._amap = {k: v for k, v in self._amap.items() if k in alive}
         return self.stats()
 
     def terminate_agent(self, pid: int, labels: List[str] = []):
