@@ -1,0 +1,37 @@
+# demo.karm — Demonstracja KarmazynOS
+# Uruchomienie: ksh> run demo.karm
+
+# 1. Tworzymy kilka atomów Φ
+write "KarmazynOS to termodynamiczne jądro pamięci."
+write "System posiada trzy warstwy: Phi, Bable, Hologramy."
+write "Phi to pamięć robocza z konkurencją uwagi."
+write "Bąble to pamięć trwała z wykładniczym zapominaniem."
+write "Hologramy to generatywne pola idei oparte na PCA."
+
+# 2. Sprawdzamy co zapamiętaliśmy
+recall "pamięć" 3
+
+# 3. Konsolidujemy pierwszy atom do bąbla (używamy dokładnej etykiety)
+# Po konsolidacji $LAST wskazuje na nowy bąbel
+consolidate atom_a261722b
+
+# 4. Tworzymy ideę z bąbla (używamy etykiety skonsolidowanego bąbla)
+idea "architektura" atom_a261722b
+
+# 5. Generujemy nową myśl z idei
+gen idea_architektura "bezpieczeństwo systemu" 0.4
+
+# 6. Przesuwamy czas o 10 epok
+step 10
+
+# 7. Sprawdzamy statystyki
+stats
+
+# 8. Zapisujemy stan
+save ./demo_state
+
+# 9. Wczytujemy stan (dla demonstracji)
+load ./demo_state
+
+# 10. Kończymy demonstrację
+exit
