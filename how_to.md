@@ -1,5 +1,3 @@
-
-```markdown
 # 📘 KarmazynOS — Przewodnik użytkownika
 
 **Wersja 1.0.0**
