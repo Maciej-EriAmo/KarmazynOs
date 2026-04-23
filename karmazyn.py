@@ -1,17 +1,18 @@
 """
-karmazyn.py — Thermodynamic Memory Kernel (KarmazynOS) v 1.0 stable
+karmazyn.py — Thermodynamic Memory Kernel (KarmazynOS) v1.0.0
 ===============================================================
 
-Trójwarstwowy system pamięci:
-  Φ (plazma)      – pamięć robocza, konkurencja, temperatura
+Stabilne wydanie trójwarstwowego systemu pamięci:
+
+  Φ (plazma)      – pamięć robocza, konkurencja uwagi, temperatura
   Bąbel (ciało)   – pamięć trwała jednostkowa, wykładniczy decay
   Hologram (pole) – generatywna idea (PCA + stochastyka)
 
-Zmiany v 1.0:
-  [1] Hologramy jako generatory idei (prototyp + kierunki PCA).
-  [2] recall_from_hologram() – projekcja + szum kierunkowy.
-  [3] Usunięto VSA binding/unbinding.
-  [4] Nowa metoda: generate_from_idea() – tworzy nowe atomy Φ.
+Nowości w v1.0.0:
+  - generate_from_idea() – tworzy nowe wektory z kontrolowaną temperaturą
+  - add_vector() w PhiSpace – umożliwia dodanie surowego wektora
+  - spawn w shellu – generuje i opcjonalnie konsoliduje nowe byty
+  - poprawiona dokumentacja i stabilność API
 """
 
 import os
@@ -30,7 +31,7 @@ sys.path.insert(0, _DIR)
 from hss_karmazyn_matrix import HSSKarmazynMatrix
 from hss_demo import HSSDaemon, kdf, decrypt, measure_entropy, N, Q
 
-VERSION      = "0.9.0"
+VERSION      = "1.0.0"
 ALPHA        = 0.3
 LAMBDA_DECAY = 0.1
 DELTA_T_BASE = 5.0
@@ -251,7 +252,7 @@ class PhiSpace:
         return v / n if n > 1e-9 else self.embed_structural(c)
 
     def phi2_bytes(self) -> bytes:
-        return hashlib.sha256(self._p2s + b"phi2-v9").digest()
+        return hashlib.sha256(self._p2s + b"phi2-v1").digest()
 
     def _measure_tvac(self) -> float:
         s = np.random.randint(0, Q, N, dtype=np.int64) % 256
@@ -268,6 +269,15 @@ class PhiSpace:
         self._mx.add_atom_vector(label=lbl, topic="karmazyn", vector=s_str, init_T=init_T, session=self._sid)
         self._sem[lbl] = s_sem.copy()
         self._rc[lbl]  = 0
+        return lbl
+
+    def add_vector(self, vector: np.ndarray, label: str = "", init_T: float = DELTA_T_BASE) -> str:
+        """Dodaje gotowy wektor semantyczny jako atom Φ."""
+        lbl = label or f"atom_{hashlib.md5(vector.tobytes()).hexdigest()[:8]}"
+        s_str = vector.copy()
+        self._mx.add_atom_vector(label=lbl, topic="karmazyn", vector=s_str, init_T=init_T, session=self._sid)
+        self._sem[lbl] = vector.copy()
+        self._rc[lbl] = 0
         return lbl
 
     def recall(self, query: bytes, k: int = 3) -> List[Tuple[Dict, float]]:
@@ -321,6 +331,7 @@ class Hologram:
     proto: np.ndarray               # centroid
     generators: List[np.ndarray]    # główne kierunki PCA
     weights: List[float]            # wartości własne (siła kierunku)
+    bubble_labels: List[str]        # etykiety źródłowych bąbli
     epoch_created: int
     decay_rate: float = 0.001
     metadata: Dict = field(default_factory=dict)
@@ -330,7 +341,7 @@ class Hologram:
         return math.exp(-self.decay_rate * elapsed)
 
 # -------------------------------------------------------------------------
-# KarmazynOS v0.9.0
+# KarmazynOS v1.0.0
 # -------------------------------------------------------------------------
 class KarmazynOS:
     def __init__(self, dim: int = 64, n_sessions: int = 1, seed: int = 42,
@@ -350,8 +361,8 @@ class KarmazynOS:
         self._steps_since_cleanup = 0
         self.holograms: Dict[str, Hologram] = {}
 
-        print(f"  Thermodynamic Memory Kernel v{VERSION}")
-        print(f"  Φ + Bąble + Hologramy generatywne (PCA) | T_vacuum = {self.phi.t_vacuum():.4f} bit")
+        print(f"  KarmazynOS v{VERSION} — Thermodynamic Memory Kernel")
+        print(f"  Φ + Bąble + Hologramy generatywne | T_vacuum = {self.phi.t_vacuum():.4f} bit")
 
     def _bubble_bias(self) -> float:
         n_eff_b = sum(b.liveliness(self.phi.epoch) for b in self.bubbles.all_active)
@@ -510,7 +521,7 @@ class KarmazynOS:
         if ok: print(f"  [REVOKE] '{label}' → Warp Oblivion")
         return ok
 
-    # --------------------- Hologramy v0.9 (generatywne) --------------------
+    # --------------------- Hologramy generatywne --------------------
     def archive_bubbles_to_hologram(self, topic: str, bubble_labels: List[str],
                                     remove_originals: bool = False, n_components: int = 5) -> Optional[str]:
         vectors = []
@@ -524,7 +535,6 @@ class KarmazynOS:
         data = np.array(vectors)
         proto = np.mean(data, axis=0)
         proto /= np.linalg.norm(proto) + 1e-9
-        # PCA
         centered = data - proto
         cov = centered.T @ centered / len(data)
         eigvals, eigvecs = np.linalg.eigh(cov)
@@ -536,47 +546,62 @@ class KarmazynOS:
         weights = [w/max_w for w in weights]
 
         hid = f"idea_{topic}_{self.phi.epoch}_{hashlib.md5(topic.encode()).hexdigest()[:6]}"
-        self.holograms[hid] = Hologram(id=hid, topic=topic, proto=proto,
-                                       generators=generators, weights=weights,
-                                       epoch_created=self.phi.epoch)
-        print(f"  [IDEA] Utworzono hologram '{hid}' z {len(labels)} bąbli (temat: {topic})")
+        self.holograms[hid] = Hologram(
+            id=hid, topic=topic, proto=proto,
+            generators=generators, weights=weights,
+            bubble_labels=labels, epoch_created=self.phi.epoch
+        )
+        print(f"  [IDEA] Utworzono '{hid}' z {len(labels)} bąbli.")
         if remove_originals:
-            for lbl in labels: self.bubbles.remove_bubble(lbl)
+            for lbl in labels:
+                self.bubbles.remove_bubble(lbl)
             print(f"  [IDEA] Usunięto oryginalne bąble.")
         return hid
 
-    def recall_from_hologram(self, hologram_id: str, cue: str, temperature: float = 0.2,
-                             k: int = 1) -> List[np.ndarray]:
+    def recall_from_hologram(self, hologram_id: str, cue: str, k: int = 3) -> List[Dict]:
+        """Wyszukuje podobieństwo zapytania do wektorów źródłowych (jeśli istnieją)."""
         h = self.holograms.get(hologram_id)
-        if not h: return []
+        if not h:
+            return []
         q_sem = self.phi.embed_semantic(cue.encode())
-        results = []
-        for _ in range(k):
-            base = h.proto * np.dot(q_sem, h.proto)
-            noise = np.zeros_like(base)
-            for g, w in zip(h.generators, h.weights):
-                coeff = np.dot(q_sem, g) * w * temperature
-                noise += g * coeff
-            iso = np.random.normal(0, 0.05 * temperature, size=base.shape)
-            synthetic = base + noise + iso
-            synthetic /= np.linalg.norm(synthetic) + 1e-9
-            results.append(synthetic)
-        return results
+        scores = []
+        for lbl in h.bubble_labels:
+            b = self.bubbles.get_by_label(lbl)
+            if b:
+                sim = float(np.dot(q_sem, b.S_sem))
+                scores.append((sim, b))
+        scores.sort(reverse=True)
+        return [{'label': b.label, 'sim': sim} for sim, b in scores[:k]]
 
-    def generate_from_idea(self, hologram_id: str, prompt: str, temperature: float = 0.3,
-                           create_atom: bool = True) -> List[str]:
-        vectors = self.recall_from_hologram(hologram_id, prompt, temperature=temperature, k=1)
-        if not vectors: return []
-        generated = []
-        for vec in vectors:
-            # wektor semantyczny -> można by zdekodować do tekstu, tu uproszczone
-            if create_atom:
-                label = f"gen_{hologram_id}_{self.phi.epoch}"
-                self.phi._sem[label] = vec
-                generated.append(label)
-            else:
-                generated.append(str(vec[:8]))
-        return generated
+    def generate_from_idea(self, hologram_id: str, prompt: str, temperature: float = 0.3) -> Optional[np.ndarray]:
+        """Generuje nowy wektor semantyczny na podstawie idei i promptu."""
+        h = self.holograms.get(hologram_id)
+        if not h:
+            return None
+        q_sem = self.phi.embed_semantic(prompt.encode())
+        proj = float(np.dot(q_sem, h.proto))
+        base = h.proto * proj
+        noise = np.zeros_like(base)
+        for g, w in zip(h.generators, h.weights):
+            coeff = np.dot(q_sem, g) * w * temperature
+            noise += g * coeff
+        iso = np.random.normal(0, 0.05 * temperature, size=base.shape)
+        synthetic = base + noise + iso
+        synthetic /= np.linalg.norm(synthetic) + 1e-9
+        return synthetic
+
+    def rehydrate_hologram(self, hologram_id: str) -> List[str]:
+        h = self.holograms.get(hologram_id)
+        if not h:
+            return []
+        restored = []
+        for i in range(len(h.generators)):
+            # rekonstrukcja przybliżona – w praktyce można by użyć kombinacji liniowej
+            vec = h.proto.copy()
+            label = f"rehyd_{h.id}_{i}"
+            self.phi.add_vector(vec, label=label)
+            restored.append(label)
+        return restored
 
     def step(self, n: int = 1) -> Dict:
         for _ in range(n):
@@ -599,5 +624,5 @@ class KarmazynOS:
 
     def __repr__(self) -> str:
         s = self.stats()
-        return (f"ThermodynamicMemoryKernel(v{VERSION} | φ={s['atoms_phi']} T={s['temperature']:.2f} | "
+        return (f"KarmazynOS(v{VERSION} | φ={s['atoms_phi']} T={s['temperature']:.2f} | "
                 f"bubbles={s['bubbles']} bias={s['bubble_bias']:.2f} | ideas={s['holograms']} | epoch={s['epoch']})")
