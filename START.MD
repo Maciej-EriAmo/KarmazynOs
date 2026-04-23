@@ -130,7 +130,7 @@ karmazyn-os/
 ## 🚀 What Next?
 
 - Read [HOWTO.md](HOWTO.md) — complete user guide.
-- Read [ARCHITECTURE.md](ARCHITECTURE.md) — understand the mathematics.
+- Read [ARCHITECTURE.md](docs/ARCHITECTURE.md) — understand the mathematics.
 - Run `ksh> run examples/demo.karm` — see an automated demo.
 - Experiment with `gen` and `spawn` — watch the system create new thoughts.
 
