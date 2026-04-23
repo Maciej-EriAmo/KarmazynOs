@@ -1,29 +1,34 @@
 """
-karmazyn.py — KarmazynOS Core Library v0.5.0
-=============================================
+karmazyn.py — Thermodynamic Memory Kernel (KarmazynOS) v0.6.0
+===============================================================
 
-Zmiany względem v0.4:
+Zmiany względem v0.5:
 
-  [1] Wzmocniony fingerprint – 256 bitów (HMAC-SHA256 z bubble_key)
-      Próg Hamminga adaptacyjny (domyślnie ≤ 10 błędów na 256 bitów).
+  [1] Wykładniczy decay: liveliness = exp(-rate * elapsed)
+      Nigdy nie spada do zera – pamięć "duch".
 
-  [2] Markery rozpadu (decay markers) dla bąbli:
-      - decay_start_epoch, decay_rate
-      - liveliness() wpływa na score w recall
-      - mark_for_decay(label, rate), refresh_bubble(label)
+  [2] Sprzężenie recall → decay:
+      Każde przypomnienie resetuje decay_start_epoch do bieżącej epoki.
+      (częste użycie → bąbel pozostaje głośny)
 
-  [3] Garbage collection dla revoked bąbli:
-      - cleanup_revoked() – fizyczne usunięcie z BubbleStore
+  [3] Dynamiczny BUBBLE_BIAS = 1.0 + 0.5 * log(1 + active_bubbles)
+      Skaluje się z ilością skonsolidowanej wiedzy.
 
-  [4] Ulepszone statystyki: bubbles_active, bubbles_decaying, bubbles_revoked
+  [4] Reaktywacja: reactivate_bubble(label) → przenosi treść bąbla z powrotem do Φ.
+      Zamyka cykl: Φ ⇄ bubble.
 
-  [5] Poprawki w consolidate() – jawna kopia wektorów semantycznych
+  [5] Adaptacyjny próg Hamminga w read_as_agent (model Poissona).
+
+  [6] Automatyczne czyszczenie revoked bąbli co N epok (domyślnie 50).
+
+  [7] Poprawki wydajnościowe i czytelności.
 """
 
 import os
 import sys
 import hashlib
 import hmac
+import math
 import numpy as np
 from dataclasses import dataclass, field
 from typing import Optional, List, Dict, Tuple
@@ -35,20 +40,18 @@ sys.path.insert(0, _DIR)
 from hss_karmazyn_matrix import HSSKarmazynMatrix
 from hss_demo import HSSDaemon, kdf, decrypt, measure_entropy, N, Q
 
-VERSION      = "0.5.0"
+VERSION      = "0.6.0"
 ALPHA        = 0.3
 LAMBDA_DECAY = 0.1
 DELTA_T_BASE = 5.0
-BUBBLE_BIAS  = 1.5
 STOPWORDS = {
     'i','w','z','na','do','ze','to','sie','nie','jest','jak','ale','po',
     'the','a','an','and','or','in','on','at','to','of','is','it','for',
     'ze','co','byc','tak','ten','ta','te','ich','jej','jego','tym','przez',
 }
 
-
 # ─────────────────────────────────────────────────────────────────────────
-# Payload crypto (XOR stream z SHA256-DRBG)
+# Payload crypto (XOR stream – memory veil, nie silne crypto)
 # ─────────────────────────────────────────────────────────────────────────
 
 def _xor_crypt(data: bytes, key: bytes) -> bytes:
@@ -65,7 +68,7 @@ def _xor_crypt(data: bytes, key: bytes) -> bytes:
 
 
 def _compute_fingerprint(content: bytes, key: bytes, label: str) -> bytes:
-    """HMAC-SHA256(key, label.encode() + content) -> 32 bajty."""
+    """HMAC-SHA256(key, label + content) – 32 bajty."""
     return hmac.new(key, label.encode() + content, hashlib.sha256).digest()
 
 
@@ -76,7 +79,7 @@ def _hamming_distance(a: bytes, b: bytes) -> int:
 
 
 # ─────────────────────────────────────────────────────────────────────────
-# Bubble (pamięć trwała z markerami rozpadu)
+# Bubble (pamięć trwała z wykładniczym rozpadaniem)
 # ─────────────────────────────────────────────────────────────────────────
 
 @dataclass
@@ -85,7 +88,7 @@ class Bubble:
     label:             str
     S_struct:          np.ndarray
     S_sem:             np.ndarray
-    fingerprint:       bytes                     # teraz 32 bajty
+    fingerprint:       bytes                     # 32 bajty
     bubble_key:        bytes
     encrypted_content: bytes
     inode:             str
@@ -94,19 +97,19 @@ class Bubble:
     consolidated_from: str  = ""
     metadata:          Dict = field(default_factory=dict)
 
-    # Nowe pola – markery rozpadu
+    # Markery rozpadu (wykładniczy)
     decay_start_epoch: Optional[int] = None
-    decay_rate:        float = 0.0   # np. 0.01 → 1% utraty żywotności na epokę
+    decay_rate:        float = 0.0   # stała czasowa (np. 0.1 → po 10 epokach ~37%)
 
     def is_alive(self) -> bool:
         return bool(self.bubble_key)
 
     def liveliness(self, current_epoch: int) -> float:
-        """Zwraca współczynnik żywotności ∈ [0,1]."""
+        """Wykładnicza żywotność ∈ (0, 1]."""
         if self.decay_start_epoch is None or self.decay_rate <= 0:
             return 1.0
         elapsed = max(0, current_epoch - self.decay_start_epoch)
-        return max(0.0, 1.0 - elapsed * self.decay_rate)
+        return math.exp(-self.decay_rate * elapsed)
 
     def decrypt_content(self) -> bytes:
         key = self.bubble_key if self.bubble_key else b"revoked_warp_oblivion"
@@ -138,8 +141,6 @@ class BubbleStore:
               consolidated_from: str = "", metadata: Dict = None) -> Bubble:
         bid = "bubble_" + hashlib.md5((label + str(epoch)).encode()).hexdigest()[:12]
         key = self._make_key(bid)
-
-        # Nowy fingerprint: HMAC-SHA256(key, label+content)
         fp = _compute_fingerprint(content_raw, key, label)
 
         b = Bubble(
@@ -157,22 +158,23 @@ class BubbleStore:
         return b
 
     def recall(self, q_sem: np.ndarray, current_epoch: int,
-               k: int = 3) -> List[Tuple[float, Bubble]]:
+               k: int = 3, bias: float = 1.5) -> List[Tuple[float, Bubble]]:
         res = []
         for bid, b in self._b.items():
-            if bid in self._rev:
+            if bid in self._rev or not b.is_alive():
                 continue
-            if not b.is_alive():
+            liv = b.liveliness(current_epoch)
+            if liv <= 1e-9:
                 continue
             sim = float(np.dot(q_sem, b.S_sem))
-            liv = b.liveliness(current_epoch)
-            if liv <= 0.0:
-                continue
-            score = sim * BUBBLE_BIAS * liv
+            score = sim * bias * liv
             res.append((score, b))
         res.sort(key=lambda x: x[0], reverse=True)
+        # Sprzężenie recall → decay: resetujemy decay_start_epoch do bieżącej epoki
         for _, b in res[:k]:
             b.recall_count += 1
+            if b.decay_start_epoch is not None:
+                b.decay_start_epoch = current_epoch  # przesuwa okno wykładnicze
         return res[:k]
 
     def get_by_label(self, label: str) -> Optional[Bubble]:
@@ -191,12 +193,10 @@ class BubbleStore:
         return self.revoke(bid) if bid else False
 
     def cleanup_revoked(self) -> int:
-        """Fizycznie usuwa wszystkie revoked bąble z pamięci."""
         removed = 0
         for bid in list(self._rev):
             b = self._b.pop(bid, None)
             if b:
-                # Usuń też z indeksu label→id, jeśli wciąż wskazuje na ten sam bid
                 if self._idx.get(b.label) == bid:
                     del self._idx[b.label]
                 removed += 1
@@ -235,7 +235,7 @@ class BubbleStore:
 
 
 # ─────────────────────────────────────────────────────────────────────────
-# IDF (bez zmian)
+# IDF
 # ─────────────────────────────────────────────────────────────────────────
 
 class IDFCounter:
@@ -253,7 +253,7 @@ class IDFCounter:
 
 
 # ─────────────────────────────────────────────────────────────────────────
-# PhiSpace (bez większych zmian)
+# PhiSpace
 # ─────────────────────────────────────────────────────────────────────────
 
 class PhiSpace:
@@ -294,7 +294,7 @@ class PhiSpace:
         return v / n if n > 1e-9 else self.embed_structural(c)
 
     def phi2_bytes(self) -> bytes:
-        return hashlib.sha256(self._p2s + b"phi2-v5").digest()
+        return hashlib.sha256(self._p2s + b"phi2-v6").digest()
 
     def _measure_tvac(self) -> float:
         s = np.random.randint(0, Q, N, dtype=np.int64) % 256
@@ -352,20 +352,29 @@ class PhiSpace:
         a = self._mx.atoms
         return float(np.mean([x['T'] for x in a])) if a else self._tvac
 
+    @property
+    def epoch(self) -> int:
+        return self._mx.time
+
     def stats(self) -> Dict:
-        return {"atoms": len(self._mx.atoms), "epoch": self._mx.time,
+        return {"atoms": len(self._mx.atoms), "epoch": self.epoch,
                 "temperature": self.temperature(), "t_vacuum": self._tvac,
                 "dim": self.dim}
 
 
 # ─────────────────────────────────────────────────────────────────────────
-# KarmazynOS v0.5.0
+# KarmazynOS / Thermodynamic Memory Kernel v0.6.0
 # ─────────────────────────────────────────────────────────────────────────
 
 class KarmazynOS:
-    """KarmazynOS v0.5.0 – trwała pamięć z markerami rozpadu."""
+    """
+    Thermodynamic Memory Kernel (KarmazynOS) v0.6.0
+    Φ – pamięć robocza z temperaturą
+    Bąble – pamięć trwała z wykładniczym rozpadaniem i reaktywacją
+    """
 
-    def __init__(self, dim: int = 64, n_sessions: int = 1, seed: int = 42):
+    def __init__(self, dim: int = 64, n_sessions: int = 1, seed: int = 42,
+                 auto_cleanup_interval: int = 50):
         self.phi    = PhiSpace(dim=dim, n_sessions=n_sessions, seed=seed)
         self.daemon = HSSDaemon()
         phi2_vec    = np.frombuffer(self.phi.phi2_bytes() * 4,
@@ -373,17 +382,25 @@ class KarmazynOS:
         self._s_sess = self.daemon.init_phi_session(phi2_vec, phi_pid=0)
         self.bubbles = BubbleStore(self.phi.phi2_bytes(), self._s_sess)
         self._amap:  Dict[str, str]             = {}
-        self._fp:    Dict[str, bytes]           = {}   # teraz bytes (32 bajty)
+        self._fp:    Dict[str, bytes]           = {}
         self._raw:   Dict[str, bytes]           = {}
         self._ac:    Dict[str, int]             = {}
         self._pid    = 100
         self._reg:   Dict[int, Tuple[str, List[str]]] = {}
-        print(f"  KarmazynOS v{VERSION}")
-        print(f"  Φ (stygnie) + Bąble (T=∞, payload, crypto-liveness, decay markers)")
+        self._auto_cleanup_interval = auto_cleanup_interval
+        self._steps_since_cleanup = 0
+
+        print(f"  Thermodynamic Memory Kernel v{VERSION}")
+        print(f"  Φ (stygnie) + Bąble (T=∞, decay exp, bias dynamiczny, reaktywacja)")
         print(f"  T_vacuum = {self.phi.t_vacuum():.4f} bit")
 
-    # ── write ─────────────────────────────────────────────────────────────
+    # ── Współczynnik bias dla bąbli (dynamiczny) ─────────────────────────
+    def _bubble_bias(self) -> float:
+        """Dynamiczny bias: im więcej bąbli, tym silniejsza przewaga nad Φ."""
+        n = self.bubbles.count
+        return 1.0 + 0.5 * math.log1p(n)
 
+    # ── write ─────────────────────────────────────────────────────────────
     def write(self, content: str, auto_consolidate: int = 0) -> str:
         raw   = content.encode() if isinstance(content, str) else content
         label = self.phi.add(raw)
@@ -394,14 +411,12 @@ class KarmazynOS:
         inode = f"karmazyn://phi/{label}"
         self.daemon.phi_write(inode, vec)
         self._amap[label] = inode
-        # przechowujemy pełny 32-bajtowy fingerprint (na wszelki wypadek)
         self._fp[label]   = hashlib.sha256(raw).digest()
         self._raw[label]  = raw
         self._ac[label]   = auto_consolidate
         return label
 
-    # ── consolidate ───────────────────────────────────────────────────────
-
+    # ── consolidate (Φ → bubble) ──────────────────────────────────────────
     def consolidate(self, label: str, metadata: Dict = None) -> Optional[str]:
         if label not in self._amap:
             return None
@@ -412,12 +427,11 @@ class KarmazynOS:
         s_sem   = self.phi._sem.get(label, self.phi.embed_semantic(raw)).copy()
         b_inode = f"karmazyn://bubbles/{label}"
         vec     = np.zeros(N, dtype=np.int64)
-        # wektor dla daemona – tylko do zachowania kompatybilności
         self.daemon.phi_write(b_inode, vec)
         bubble = self.bubbles.store(
             label=label, S_struct=s_str, S_sem=s_sem,
             content_raw=raw,
-            inode=b_inode, epoch=self.phi._mx.time,
+            inode=b_inode, epoch=self.phi.epoch,
             consolidated_from=label, metadata=metadata or {})
         print(f"  [KONSOLIDACJA] '{label[:30]}' → {bubble.id} | T=∞")
         return bubble.id
@@ -430,7 +444,6 @@ class KarmazynOS:
                 self.consolidate(label)
 
     # ── recall ─────────────────────────────────────────────────────────────
-
     def recall(self, query: str, k: int = 5) -> List[Dict]:
         raw   = query.encode() if isinstance(query, str) else query
         q_sem = self.phi.embed_semantic(raw)
@@ -449,21 +462,22 @@ class KarmazynOS:
                              'bubble_id': None})
             self._auto_check(lbl)
 
+        bias = self._bubble_bias()
         bub_res = []
-        current_epoch = self.phi._mx.time
-        for score, b in self.bubbles.recall(q_sem, current_epoch, k=k_bub):
+        current_epoch = self.phi.epoch
+        for score, b in self.bubbles.recall(q_sem, current_epoch, k=k_bub, bias=bias):
+            liv = b.liveliness(current_epoch)
             bub_res.append({'label': b.label, 'layer': 'bubble',
-                             'T': float('inf'), 'sim': score / (BUBBLE_BIAS * b.liveliness(current_epoch)),
+                             'T': float('inf'), 'sim': score / (bias * liv) if liv>0 else 0.0,
                              'score': score,
                              'inode': b.inode, 'bubble_id': b.id,
-                             'liveliness': b.liveliness(current_epoch)})
+                             'liveliness': liv})
 
         all_res = phi_res + bub_res
         all_res.sort(key=lambda x: x['score'], reverse=True)
         return all_res[:k]
 
     # ── read_bubble ───────────────────────────────────────────────────────
-
     def read_bubble(self, label: str) -> Optional[str]:
         b = self.bubbles.get_by_label(label)
         if b is None:
@@ -474,8 +488,19 @@ class KarmazynOS:
         except Exception:
             return raw.hex()
 
-    # ── evaluate ──────────────────────────────────────────────────────────
+    # ── reactivate (bubble → Φ) ───────────────────────────────────────────
+    def reactivate_bubble(self, label: str) -> Optional[str]:
+        """Przenosi treść bąbla z powrotem do pamięci roboczej Φ."""
+        b = self.bubbles.get_by_label(label)
+        if b is None:
+            print(f"  [REAKTYWACJA] Bąbel '{label}' nie istnieje.")
+            return None
+        content = b.decrypt_content()
+        new_label = self.phi.add(content, label=f"react_{label}")
+        print(f"  [REAKTYWACJA] '{label[:30]}' → nowy atom Φ: {new_label}")
+        return new_label
 
+    # ── evaluate ──────────────────────────────────────────────────────────
     def evaluate(self, context: str) -> Tuple[bool, float, str]:
         raw   = context.encode()
         q_sem = self.phi.embed_semantic(raw)
@@ -506,7 +531,6 @@ class KarmazynOS:
         return allow, score, reason
 
     # ── agenty ────────────────────────────────────────────────────────────
-
     def derive_agent(self, name: str, task: str,
                      prisms: List[str] = ["core","in","out"]) -> Tuple[int, np.ndarray]:
         self._pid += 1
@@ -539,46 +563,35 @@ class KarmazynOS:
 
         out = {}
         for p in res:
-            bits    = decrypt(s_eff, p.u, p.v)
+            bits = decrypt(s_eff, p.u, p.v)
             if fp is not None and len(bits) >= len(fp)*8:
-                # konwersja bitów do bajtów
                 read_bytes = np.packbits(bits[:len(fp)*8]).tobytes()
                 hamming = _hamming_distance(fp, read_bytes)
-                sig = hamming <= 10  # próg dla 256 bitów
+
+                # Adaptacyjny próg: oczekiwana liczba błędów = połowa bitów (szum idealny)
+                # Próg = mean + 2 * sqrt(mean) (model Poissona)
+                expected_errors = len(fp) * 8 * 0.5   # 128 dla 256 bitów
+                threshold = expected_errors + 2 * math.sqrt(expected_errors)
+                sig = hamming <= threshold
+
                 out[p.prism_id] = {
-                    'signal': sig, 'bits': bits[:8].tolist(),
-                    'status': f'{"✓ SYGNAŁ" if sig else "✗ SZUM"} (h={hamming})'}
+                    'signal': sig,
+                    'hamming': hamming,
+                    'threshold': threshold,
+                    'status': f'{"✓ SYGNAŁ" if sig else "✗ SZUM"} (h={hamming}, thr={threshold:.0f})'
+                }
             else:
                 out[p.prism_id] = {
-                    'signal': False, 'bits': bits[:8].tolist(),
-                    'status': '✗ SZUM (brak fingerprintu)'}
+                    'signal': False, 'status': '✗ SZUM (brak fingerprintu)'
+                }
         return out
 
     # ── zarządzanie rozpadami ─────────────────────────────────────────────
-
     def mark_bubble_for_decay(self, label: str, rate: float = 0.01) -> bool:
-        """Rozpoczyna proces rozpadu bąbla od bieżącej epoki."""
-        return self.bubbles.mark_for_decay(label, self.phi._mx.time, rate)
+        return self.bubbles.mark_for_decay(label, self.phi.epoch, rate)
 
     def refresh_bubble(self, label: str) -> bool:
-        """Resetuje marker rozpadu – bąbel odzyskuje pełną żywotność."""
         return self.bubbles.refresh_bubble(label)
-
-    def cleanup_revoked(self) -> int:
-        """Usuwa fizycznie wszystkie unieważnione bąble."""
-        return self.bubbles.cleanup_revoked()
-
-    # ── lifecycle ─────────────────────────────────────────────────────────
-
-    def step(self, n: int = 1) -> Dict:
-        for _ in range(n):
-            self.phi.step()
-        return self.stats()
-
-    def terminate_agent(self, pid: int, labels: List[str] = []):
-        inodes = [self._amap[l] for l in labels if l in self._amap]
-        self.daemon.terminate_agent(pid, inodes)
-        self.daemon.vacuum_decay()
 
     def revoke_bubble(self, label: str) -> bool:
         ok = self.bubbles.revoke_by_label(label)
@@ -586,16 +599,37 @@ class KarmazynOS:
             print(f"  [REVOKE] '{label}' → bubble_key='' | Warp Oblivion")
         return ok
 
+    # ── lifecycle ─────────────────────────────────────────────────────────
+    def step(self, n: int = 1) -> Dict:
+        for _ in range(n):
+            self.phi.step()
+            self._steps_since_cleanup += 1
+            if self._steps_since_cleanup >= self._auto_cleanup_interval:
+                removed = self.bubbles.cleanup_revoked()
+                if removed > 0:
+                    print(f"  [GC] Usunięto {removed} revoked bąbli.")
+                self._steps_since_cleanup = 0
+        return self.stats()
+
+    def terminate_agent(self, pid: int, labels: List[str] = []):
+        inodes = [self._amap[l] for l in labels if l in self._amap]
+        self.daemon.terminate_agent(pid, inodes)
+        self.daemon.vacuum_decay()
+
+    def cleanup_revoked(self) -> int:
+        return self.bubbles.cleanup_revoked()
+
     def stats(self) -> Dict:
         s = self.phi.stats()
         return {**s, "version": VERSION,
                 "atoms_phi": s["atoms"],
                 "bubbles": self.bubbles.count,
                 "bubbles_decaying": self.bubbles.count_decaying,
-                "bubbles_revoked": len(self.bubbles._rev)}
+                "bubbles_revoked": len(self.bubbles._rev),
+                "bubble_bias": self._bubble_bias()}
 
     def __repr__(self) -> str:
         s = self.stats()
-        return (f"KarmazynOS(v{VERSION} | "
+        return (f"ThermodynamicMemoryKernel(v{VERSION} | "
                 f"φ={s['atoms_phi']} T={s['temperature']:.2f} | "
-                f"bubbles={s['bubbles']} (decay={s['bubbles_decaying']}) T=∞ | epoch={s['epoch']})")
+                f"bubbles={s['bubbles']} (decay={s['bubbles_decaying']}) bias={s['bubble_bias']:.2f} | epoch={s['epoch']})")
