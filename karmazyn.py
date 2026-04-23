@@ -1,20 +1,18 @@
 """
-karmazyn.py — Thermodynamic Memory Kernel (KarmazynOS) v0.7.0
+karmazyn.py — Thermodynamic Memory Kernel (KarmazynOS) v0.8.0
 ===============================================================
 
-Hierarchia pamięci:
+Trójwarstwowy system pamięci:
   Φ (plazma)      – pamięć robocza, konkurencja, temperatura
   Bąbel (ciało)   – pamięć trwała jednostkowa, wykładniczy decay, bias
-  Hologram (kryształ) – skompresowane archiwum tematyczne (superpozycja)
+  Hologram (kryształ) – skompresowane archiwum VSA z możliwością dekodowania
 
-Zmiany v0.7.0:
-  [1] Poprawiony próg Hamminga – rozkład dwumianowy zamiast Poissona.
-  [2] Częściowa regeneracja decay przy recall (efektywny upływ = 70%).
-  [3] Efektywna liczba bąbli dla biasu (suma liveliness).
-  [4] Reaktywacja z transferem temperatury zależnym od historii bąbla.
-  [5] Nowość: Hologramy – archiwizacja grupy bąbli w jeden wektor.
-  [6] Metody: archive_bubbles_to_hologram(), recall_from_hologram(),
-      rehydrate_hologram().
+Zmiany v0.8.0:
+  [1] Hologramy odwracalne – VSA binding/unbinding (circular convolution).
+  [2] recall_from_hologram() używa unbind do odtworzenia wektorów.
+  [3] rehydrate_hologram() odtwarza przybliżone wektory bąbli.
+  [4] Bias uwzględnia ważoną żywotność hologramów.
+  [5] Drobne optymalizacje (FFT dla VSA) i poprawki stabilności.
 """
 
 import os
@@ -33,7 +31,7 @@ sys.path.insert(0, _DIR)
 from hss_karmazyn_matrix import HSSKarmazynMatrix
 from hss_demo import HSSDaemon, kdf, decrypt, measure_entropy, N, Q
 
-VERSION      = "0.7.0"
+VERSION      = "0.8.0"
 ALPHA        = 0.3
 LAMBDA_DECAY = 0.1
 DELTA_T_BASE = 5.0
@@ -71,6 +69,39 @@ def _hamming_distance(a: bytes, b: bytes) -> int:
 
 
 # ─────────────────────────────────────────────────────────────────────────
+# VSA operations (circular convolution / correlation) with FFT
+# ─────────────────────────────────────────────────────────────────────────
+
+def _next_power_of_2(n: int) -> int:
+    return 1 << (n - 1).bit_length()
+
+def circular_convolution(a: np.ndarray, b: np.ndarray) -> np.ndarray:
+    """Bind: splot kołowy (circular convolution) przy użyciu FFT."""
+    n = len(a)
+    m = _next_power_of_2(2 * n - 1)
+    A = np.fft.fft(a, m)
+    B = np.fft.fft(b, m)
+    C = np.fft.ifft(A * B).real
+    # Zawijanie do długości n
+    result = C[:n]
+    for i in range(n, len(C)):
+        result[i % n] += C[i]
+    return result.astype(np.float32)
+
+def circular_correlation(a: np.ndarray, b: np.ndarray) -> np.ndarray:
+    """Unbind: korelacja kołowa (circular correlation) przy użyciu FFT."""
+    n = len(a)
+    m = _next_power_of_2(2 * n - 1)
+    A = np.fft.fft(a, m)
+    B = np.fft.fft(b, m)
+    C = np.fft.ifft(A * np.conj(B)).real
+    result = C[:n]
+    for i in range(n, len(C)):
+        result[i % n] += C[i]
+    return result.astype(np.float32)
+
+
+# ─────────────────────────────────────────────────────────────────────────
 # Bubble (pamięć trwała z wykładniczym rozpadaniem)
 # ─────────────────────────────────────────────────────────────────────────
 
@@ -80,7 +111,7 @@ class Bubble:
     label:             str
     S_struct:          np.ndarray
     S_sem:             np.ndarray
-    fingerprint:       bytes                     # 32 bajty
+    fingerprint:       bytes
     bubble_key:        bytes
     encrypted_content: bytes
     inode:             str
@@ -89,9 +120,8 @@ class Bubble:
     consolidated_from: str  = ""
     metadata:          Dict = field(default_factory=dict)
 
-    # Markery rozpadu (wykładniczy)
     decay_start_epoch: Optional[int] = None
-    decay_rate:        float = 0.0   # stała czasowa
+    decay_rate:        float = 0.0
 
     def is_alive(self) -> bool:
         return bool(self.bubble_key)
@@ -114,7 +144,7 @@ class Bubble:
 class BubbleStore:
     def __init__(self, phi2_bytes: bytes, s_sess: np.ndarray):
         self._b:    Dict[str, Bubble] = {}
-        self._idx:  Dict[str, str]    = {}   # label → id
+        self._idx:  Dict[str, str]    = {}
         self._phi2  = phi2_bytes
         self._s     = s_sess
         self._rev:  set = set()
@@ -162,12 +192,11 @@ class BubbleStore:
             res.append((score, b))
         res.sort(key=lambda x: x[0], reverse=True)
 
-        # Częściowa regeneracja przy przypomnieniu
         for _, b in res[:k]:
             b.recall_count += 1
             if b.decay_start_epoch is not None:
                 elapsed = current_epoch - b.decay_start_epoch
-                effective_elapsed = elapsed * 0.7   # 30% regeneracji
+                effective_elapsed = elapsed * 0.7
                 b.decay_start_epoch = current_epoch - effective_elapsed
         return res[:k]
 
@@ -214,7 +243,6 @@ class BubbleStore:
         return True
 
     def remove_bubble(self, label: str) -> bool:
-        """Fizycznie usuwa bąbel (używane przy archiwizacji do hologramu)."""
         bid = self._idx.get(label)
         if bid and bid in self._b:
             del self._b[bid]
@@ -257,7 +285,7 @@ class IDFCounter:
 
 
 # ─────────────────────────────────────────────────────────────────────────
-# PhiSpace (z opcjonalnym init_T)
+# PhiSpace
 # ─────────────────────────────────────────────────────────────────────────
 
 class PhiSpace:
@@ -298,7 +326,7 @@ class PhiSpace:
         return v / n if n > 1e-9 else self.embed_structural(c)
 
     def phi2_bytes(self) -> bytes:
-        return hashlib.sha256(self._p2s + b"phi2-v7").digest()
+        return hashlib.sha256(self._p2s + b"phi2-v8").digest()
 
     def _measure_tvac(self) -> float:
         s = np.random.randint(0, Q, N, dtype=np.int64) % 256
@@ -367,29 +395,31 @@ class PhiSpace:
 
 
 # ─────────────────────────────────────────────────────────────────────────
-# Hologram (archiwum tematyczne)
+# Hologram (odwracalne archiwum VSA)
 # ─────────────────────────────────────────────────────────────────────────
 
 @dataclass
 class Hologram:
     id: str
     topic: str
-    S_composite: np.ndarray          # superpozycja S_sem
-    bubble_ids: List[str]             # ID oryginalnych bąbli
-    weights: List[float]              # wagi użyte przy superpozycji
+    S_composite: np.ndarray          # Σ bind(K_i, S_sem_i)
+    keys: List[np.ndarray]           # klucze VSA
+    bubble_labels: List[str]
     epoch_created: int
+    decay_rate: float = 0.001        # bardzo wolny rozpad
     metadata: Dict = field(default_factory=dict)
+
+    def liveliness(self, current_epoch: int) -> float:
+        elapsed = max(0, current_epoch - self.epoch_created)
+        return math.exp(-self.decay_rate * elapsed)
 
 
 # ─────────────────────────────────────────────────────────────────────────
-# KarmazynOS / Thermodynamic Memory Kernel v0.7.0
+# KarmazynOS / Thermodynamic Memory Kernel v0.8.0
 # ─────────────────────────────────────────────────────────────────────────
 
 class KarmazynOS:
-    """
-    Thermodynamic Memory Kernel (KarmazynOS) v0.7.0
-    Φ – pamięć robocza, Bąble – trwałe, Hologramy – archiwa.
-    """
+    """Thermodynamic Memory Kernel (KarmazynOS) v0.8.0"""
 
     def __init__(self, dim: int = 64, n_sessions: int = 1, seed: int = 42,
                  auto_cleanup_interval: int = 50):
@@ -408,17 +438,16 @@ class KarmazynOS:
         self._auto_cleanup_interval = auto_cleanup_interval
         self._steps_since_cleanup = 0
 
-        # Hologramy
         self.holograms: Dict[str, Hologram] = {}
 
         print(f"  Thermodynamic Memory Kernel v{VERSION}")
-        print(f"  Φ (stygnie) + Bąble (T=∞, decay exp, bias dynamiczny) + Hologramy")
-        print(f"  T_vacuum = {self.phi.t_vacuum():.4f} bit")
+        print(f"  Φ + Bąble + Hologramy VSA | T_vacuum = {self.phi.t_vacuum():.4f} bit")
 
-    # ── Współczynnik bias dla bąbli (efektywna liczba) ─────────────────
+    # ── bias uwzględniający hologramy ───────────────────────────────────
     def _bubble_bias(self) -> float:
-        n_eff = sum(b.liveliness(self.phi.epoch) for b in self.bubbles.all_active)
-        return 1.0 + 0.5 * math.log1p(n_eff)
+        n_eff_b = sum(b.liveliness(self.phi.epoch) for b in self.bubbles.all_active)
+        n_eff_h = sum(h.liveliness(self.phi.epoch) * 0.5 for h in self.holograms.values())
+        return 1.0 + 0.5 * math.log1p(n_eff_b + n_eff_h)
 
     # ── write ─────────────────────────────────────────────────────────────
     def write(self, content: str, auto_consolidate: int = 0) -> str:
@@ -436,7 +465,7 @@ class KarmazynOS:
         self._ac[label]   = auto_consolidate
         return label
 
-    # ── consolidate (Φ → bubble) ──────────────────────────────────────────
+    # ── consolidate ───────────────────────────────────────────────────────
     def consolidate(self, label: str, metadata: Dict = None) -> Optional[str]:
         if label not in self._amap:
             return None
@@ -453,7 +482,7 @@ class KarmazynOS:
             content_raw=raw,
             inode=b_inode, epoch=self.phi.epoch,
             consolidated_from=label, metadata=metadata or {})
-        print(f"  [KONSOLIDACJA] '{label[:30]}' → {bubble.id} | T=∞")
+        print(f"  [KONSOLIDACJA] '{label[:30]}' → {bubble.id}")
         return bubble.id
 
     def _auto_check(self, label: str):
@@ -508,7 +537,7 @@ class KarmazynOS:
         except Exception:
             return raw.hex()
 
-    # ── reactivate (bubble → Φ) z transferem temperatury ─────────────────
+    # ── reactivate (z transferem temperatury) ────────────────────────────
     def reactivate_bubble(self, label: str) -> Optional[str]:
         b = self.bubbles.get_by_label(label)
         if b is None:
@@ -614,89 +643,82 @@ class KarmazynOS:
     def revoke_bubble(self, label: str) -> bool:
         ok = self.bubbles.revoke_by_label(label)
         if ok:
-            print(f"  [REVOKE] '{label}' → bubble_key='' | Warp Oblivion")
+            print(f"  [REVOKE] '{label}' → Warp Oblivion")
         return ok
 
-    # ── Hologramy (v0.7.0) ───────────────────────────────────────────────
+    # ── Hologramy VSA (v0.8.0) ───────────────────────────────────────────
     def archive_bubbles_to_hologram(self, topic: str, bubble_labels: List[str],
                                     remove_originals: bool = False) -> Optional[str]:
-        """
-        Łączy wiele bąbli w jeden hologram.
-        Jeśli remove_originals=True, oryginalne bąble są usuwane (zwalnianie pamięci).
-        """
         vectors = []
-        ids = []
-        weights = []
-        for label in bubble_labels:
-            b = self.bubbles.get_by_label(label)
+        labels = []
+        for lbl in bubble_labels:
+            b = self.bubbles.get_by_label(lbl)
             if b:
                 vectors.append(b.S_sem)
-                ids.append(b.id)
-                w = 1.0 / (b.decay_rate + 0.01)  # ważniejsze = wolniejszy rozpad
-                weights.append(w)
+                labels.append(lbl)
         if not vectors:
             return None
-        composite = np.sum([w * v for w, v in zip(weights, vectors)], axis=0)
+
+        dim = self.phi.dim
+        keys = []
+        composite = np.zeros(dim, dtype=np.float32)
+        for i, v in enumerate(vectors):
+            seed = int(hashlib.md5(f"{topic}_{labels[i]}".encode()).hexdigest(), 16) % (2**32)
+            key = np.random.default_rng(seed).normal(0, 1, dim).astype(np.float32)
+            key /= np.linalg.norm(key) + 1e-9
+            keys.append(key)
+            composite += circular_convolution(key, v)
         composite /= np.linalg.norm(composite) + 1e-9
 
         hid = f"hologram_{topic}_{self.phi.epoch}_{hashlib.md5(topic.encode()).hexdigest()[:6]}"
         self.holograms[hid] = Hologram(
             id=hid, topic=topic,
             S_composite=composite,
-            bubble_ids=ids,
-            weights=weights,
+            keys=keys,
+            bubble_labels=labels,
             epoch_created=self.phi.epoch
         )
-        print(f"  [HOLOGRAM] Utworzono '{hid}' z {len(ids)} bąbli (temat: {topic})")
+        print(f"  [HOLOGRAM] Utworzono '{hid}' z {len(labels)} bąbli (temat: {topic})")
 
         if remove_originals:
-            for label in bubble_labels:
-                self.bubbles.remove_bubble(label)
+            for lbl in labels:
+                self.bubbles.remove_bubble(lbl)
             print(f"  [HOLOGRAM] Usunięto oryginalne bąble.")
 
         return hid
 
     def recall_from_hologram(self, hologram_id: str, cue: str, k: int = 3) -> List[Dict]:
-        """Przypomina bąble z hologramu na podstawie zapytania (cue)."""
         h = self.holograms.get(hologram_id)
         if not h:
             return []
         q_sem = self.phi.embed_semantic(cue.encode())
-        # Prosty model: podobieństwo do composite * waga? Ale potrzebujemy osobnych bąbli.
-        # Zakładamy, że oryginalne bąble mogą już nie istnieć – wtedy używamy composite.
-        # W tej implementacji szukamy tylko wśród istniejących bąbli z listy ID.
         scores = []
-        for bid in h.bubble_ids:
-            b = self.bubbles._b.get(bid)
-            if b:
-                sim = float(np.dot(q_sem, b.S_sem))
-                scores.append((sim, b))
+        for i, key in enumerate(h.keys):
+            recovered = circular_correlation(h.S_composite, key)
+            recovered /= np.linalg.norm(recovered) + 1e-9
+            sim = float(np.dot(q_sem, recovered))
+            scores.append((sim, i, recovered))
         scores.sort(reverse=True)
-        res = []
-        for sim, b in scores[:k]:
-            res.append({'label': b.label, 'sim': sim, 'layer': 'hologram',
-                        'bubble_id': b.id})
-        return res
+        result = []
+        for sim, idx, recovered in scores[:k]:
+            label = f"hrecall_{h.id}_{idx}"
+            self.phi._sem[label] = recovered
+            result.append({'label': h.bubble_labels[idx], 'sim': sim,
+                           'synthetic_label': label})
+        return result
 
     def rehydrate_hologram(self, hologram_id: str) -> List[str]:
-        """
-        Odtwarza bąble z hologramu. Wymaga, aby oryginalne treści były dostępne
-        (np. zapisane w metadanych lub zewnętrznym storage). W tej wersji
-        odtwarzamy tylko te, które nadal istnieją – pełna rehydratacja
-        wymagałaby przechowywania skompresowanych treści w hologramie.
-        """
         h = self.holograms.get(hologram_id)
         if not h:
             return []
         restored = []
-        for bid in h.bubble_ids:
-            b = self.bubbles._b.get(bid)
-            if b:
-                restored.append(b.label)
-            else:
-                # TODO: prawdziwa rehydratacja z backupu
-                pass
-        print(f"  [REHYDRATACJA] Hologram {hologram_id}: odzyskano {len(restored)} bąbli.")
+        for i, key in enumerate(h.keys):
+            recovered = circular_correlation(h.S_composite, key)
+            recovered /= np.linalg.norm(recovered) + 1e-9
+            label = f"rehyd_{h.id}_{i}"
+            self.phi._sem[label] = recovered
+            restored.append(label)
+        print(f"  [REHYDRATACJA] Hologram {hologram_id}: odtworzono {len(restored)} wektorów.")
         return restored
 
     # ── lifecycle ─────────────────────────────────────────────────────────
@@ -733,5 +755,5 @@ class KarmazynOS:
         s = self.stats()
         return (f"ThermodynamicMemoryKernel(v{VERSION} | "
                 f"φ={s['atoms_phi']} T={s['temperature']:.2f} | "
-                f"bubbles={s['bubbles']} (decay={s['bubbles_decaying']}) bias={s['bubble_bias']:.2f} | "
+                f"bubbles={s['bubbles']} bias={s['bubble_bias']:.2f} | "
                 f"holograms={s['holograms']} | epoch={s['epoch']})")
