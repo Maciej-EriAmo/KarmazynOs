@@ -1,4 +1,3 @@
-Oto gotowy, czysty plik Markdown z Twojego przewodnika:
 
 ```markdown
 # 📘 KarmazynOS — Przewodnik użytkownika
@@ -219,5 +218,3 @@ ksh> agent read 101 atom_abc123 --bubble
 
 **Z KarmazynOS nie tylko przechowujesz dane — hodujesz myśli.**
 ```
-
-Gotowe! Możesz skopiować całą powyższą zawartość i zapisać jako `KarmazynOS-Przewodnik.md`.
