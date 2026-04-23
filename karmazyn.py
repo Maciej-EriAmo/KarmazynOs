@@ -1,5 +1,5 @@
 """
-karmazyn.py — Thermodynamic Memory Kernel (KarmazynOS) v0.9.0
+karmazyn.py — Thermodynamic Memory Kernel (KarmazynOS) v 1.0 stable
 ===============================================================
 
 Trójwarstwowy system pamięci:
@@ -7,7 +7,7 @@ Trójwarstwowy system pamięci:
   Bąbel (ciało)   – pamięć trwała jednostkowa, wykładniczy decay
   Hologram (pole) – generatywna idea (PCA + stochastyka)
 
-Zmiany v0.9.0:
+Zmiany v 1.0:
   [1] Hologramy jako generatory idei (prototyp + kierunki PCA).
   [2] recall_from_hologram() – projekcja + szum kierunkowy.
   [3] Usunięto VSA binding/unbinding.
