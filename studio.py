@@ -36,7 +36,10 @@ except ImportError:
     print("Błąd: brak numpy")
     sys.exit(1)
 
-STUDIO_VERSION = "1.0.0"
+STUDIO_VERSION = "1.1.0"
+
+# ─── Katalog static ───────────────────────────────────────────────────────────
+_STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 
 # ─── Globalny stan ────────────────────────────────────────────────────────────
 
@@ -181,33 +184,13 @@ STUDIO_HTML = r"""<!DOCTYPE html>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>KarmazynOS Studio</title>
+<link rel="stylesheet" href="/static/karmazyn.css">
+<script src="/static/karmazyn_tokens.js"></script>
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Bebas+Neue&display=swap');
-
-  :root {
-    --bg:        #0a0a0c;
-    --bg2:       #111116;
-    --bg3:       #1a1a22;
-    --red:       #c0392b;
-    --red2:      #e74c3c;
-    --red3:      #ff6b6b;
-    --gold:      #f39c12;
-    --dim:       #4a4a5a;
-    --text:      #d0d0e0;
-    --text2:     #8888aa;
-    --hot:       #ff4444;
-    --warm:      #ff9944;
-    --cool:      #4488ff;
-    --mono:      'Share Tech Mono', monospace;
-    --display:   'Bebas Neue', sans-serif;
-  }
-
-  * { box-sizing: border-box; margin: 0; padding: 0; }
+  /* ── Studio layout — specyficzny dla Studio, nie w Design Language ── */
 
   body {
-    background: var(--bg);
-    color: var(--text);
-    font-family: var(--mono);
+    font-family: var(--font-mono);
     font-size: 13px;
     height: 100vh;
     overflow: hidden;
@@ -219,253 +202,212 @@ STUDIO_HTML = r"""<!DOCTYPE html>
       "left   main   right";
   }
 
-  /* ── Header ── */
   header {
     grid-area: header;
-    background: var(--bg2);
-    border-bottom: 1px solid var(--red);
+    background: var(--entropy-surface);
+    border-bottom: 1px solid var(--phi-core);
     display: flex;
     align-items: center;
     padding: 0 20px;
     gap: 20px;
-    position: relative;
   }
   header h1 {
-    font-family: var(--display);
+    font-family: var(--font-display);
     font-size: 28px;
-    color: var(--red2);
+    color: var(--phi-bright);
     letter-spacing: 3px;
   }
-  header h1 span { color: var(--gold); }
+  header h1 span { color: var(--phi-thermal); }
   .header-stats {
     display: flex; gap: 16px; margin-left: auto;
-    font-size: 11px; color: var(--text2);
+    font-size: 11px; color: var(--type-secondary);
   }
-  .header-stats b { color: var(--red3); }
+  .header-stats b { color: var(--phi-ember); }
   .pulse {
     width: 8px; height: 8px; border-radius: 50%;
-    background: var(--red2);
-    animation: pulse 2s infinite;
-  }
-  @keyframes pulse {
-    0%,100% { opacity:1; box-shadow: 0 0 0 0 rgba(192,57,43,.7); }
-    50%      { opacity:.7; box-shadow: 0 0 0 6px rgba(192,57,43,0); }
+    background: var(--phi-bright);
+    animation: phi-pulse var(--dur-pulse) infinite;
   }
 
-  /* ── Panels ── */
   .panel {
-    background: var(--bg2);
-    border-right: 1px solid #222230;
+    background: var(--entropy-surface);
+    border-right: 1px solid var(--entropy-border);
     overflow-y: auto;
     display: flex;
     flex-direction: column;
   }
   .panel-title {
-    font-family: var(--display);
+    font-family: var(--font-display);
     font-size: 16px;
-    color: var(--red);
+    color: var(--phi-core);
     letter-spacing: 2px;
     padding: 12px 14px 8px;
-    border-bottom: 1px solid #222230;
+    border-bottom: 1px solid var(--entropy-border);
     position: sticky; top: 0;
-    background: var(--bg2);
+    background: var(--entropy-surface);
     z-index: 1;
   }
 
-  /* ── Left: Φ atoms ── */
   #panel-left { grid-area: left; }
   .atom-item {
     padding: 6px 14px;
-    border-bottom: 1px solid #1a1a24;
+    border-bottom: 1px solid var(--entropy-bg);
     cursor: pointer;
-    transition: background .15s;
-    display: flex;
-    align-items: center;
-    gap: 8px;
+    transition: background var(--dur-fast) var(--ease-phi);
+    display: flex; align-items: center; gap: 8px;
   }
-  .atom-item:hover { background: var(--bg3); }
-  .atom-label { flex: 1; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .atom-item:hover { background: var(--entropy-raised); }
+  .atom-label {
+    flex: 1; color: var(--type-primary);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
   .temp-bar {
     width: 40px; height: 6px;
-    background: var(--bg3);
-    border-radius: 3px;
-    overflow: hidden;
-    flex-shrink: 0;
+    background: var(--entropy-raised);
+    border-radius: var(--radius-sm);
+    overflow: hidden; flex-shrink: 0;
   }
   .temp-fill {
     height: 100%;
-    border-radius: 3px;
-    transition: width .5s, background .5s;
+    border-radius: var(--radius-sm);
+    transition: width var(--dur-slow) var(--ease-phi),
+                background var(--dur-slow) var(--ease-phi);
   }
   .tab-bar {
     display: flex;
-    border-bottom: 1px solid #222230;
-    background: var(--bg2);
+    border-bottom: 1px solid var(--entropy-border);
+    background: var(--entropy-surface);
   }
   .tab {
     padding: 7px 14px;
     cursor: pointer;
-    color: var(--text2);
-    font-size: 11px;
-    letter-spacing: 1px;
+    color: var(--type-secondary);
+    font-size: 11px; letter-spacing: 1px;
     border-bottom: 2px solid transparent;
-    transition: all .2s;
+    transition: all var(--dur-mid) var(--ease-phi);
   }
-  .tab.active { color: var(--red3); border-bottom-color: var(--red2); }
+  .tab.active { color: var(--phi-ember); border-bottom-color: var(--phi-bright); }
 
-  /* ── Main: editor + output ── */
   #panel-main {
     grid-area: main;
     display: grid;
     grid-template-rows: 1fr 1fr;
-    background: var(--bg);
-    border: none;
+    background: var(--entropy-bg);
   }
   .editor-area {
-    display: flex;
-    flex-direction: column;
-    border-bottom: 2px solid var(--red);
+    display: flex; flex-direction: column;
+    border-bottom: 2px solid var(--phi-core);
   }
   .editor-toolbar {
-    display: flex;
-    align-items: center;
-    gap: 8px;
+    display: flex; align-items: center; gap: 8px;
     padding: 6px 12px;
-    background: var(--bg2);
-    border-bottom: 1px solid #222230;
+    background: var(--entropy-surface);
+    border-bottom: 1px solid var(--entropy-border);
   }
   .editor-mode {
-    font-size: 10px;
-    letter-spacing: 2px;
-    color: var(--text2);
+    font-size: 10px; letter-spacing: 2px;
+    color: var(--type-secondary);
   }
   .btn {
     padding: 4px 12px;
     background: transparent;
-    border: 1px solid var(--red);
-    color: var(--red3);
-    font-family: var(--mono);
-    font-size: 11px;
-    cursor: pointer;
-    letter-spacing: 1px;
-    transition: all .15s;
+    border: 1px solid var(--phi-core);
+    color: var(--phi-ember);
+    font-family: var(--font-mono);
+    font-size: 11px; cursor: pointer; letter-spacing: 1px;
+    transition: all var(--dur-fast) var(--ease-phi);
   }
-  .btn:hover { background: var(--red); color: #fff; }
-  .btn.gold { border-color: var(--gold); color: var(--gold); }
-  .btn.gold:hover { background: var(--gold); color: #000; }
+  .btn:hover { background: var(--phi-core); color: var(--type-primary); }
+  .btn.gold { border-color: var(--phi-thermal); color: var(--phi-thermal); }
+  .btn.gold:hover { background: var(--phi-thermal); color: var(--entropy-void); }
+
   #editor {
     flex: 1;
-    background: var(--bg);
-    color: var(--text);
-    font-family: var(--mono);
+    background: var(--entropy-bg);
+    color: var(--type-primary);
+    font-family: var(--font-mono);
     font-size: 13px;
-    border: none;
-    outline: none;
-    padding: 14px;
-    resize: none;
-    line-height: 1.6;
-    tab-size: 4;
+    border: none; outline: none;
+    padding: 14px; resize: none;
+    line-height: 1.6; tab-size: 4;
   }
-  #editor::placeholder { color: var(--dim); }
+  #editor::placeholder { color: var(--type-muted); }
 
-  .output-area {
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-  }
+  .output-area { display: flex; flex-direction: column; overflow: hidden; }
   .output-header {
     padding: 6px 14px;
-    background: var(--bg2);
-    border-bottom: 1px solid #222230;
-    font-size: 11px;
-    color: var(--text2);
+    background: var(--entropy-surface);
+    border-bottom: 1px solid var(--entropy-border);
+    font-size: 11px; color: var(--type-secondary);
     letter-spacing: 1px;
-    display: flex;
-    align-items: center;
-    gap: 10px;
+    display: flex; align-items: center; gap: 10px;
   }
   #output {
-    flex: 1;
-    overflow-y: auto;
+    flex: 1; overflow-y: auto;
     padding: 12px 14px;
-    font-size: 12px;
-    line-height: 1.7;
+    font-size: 12px; line-height: 1.7;
   }
-  .out-ok   { color: #88ff88; }
-  .out-err  { color: var(--red3); }
-  .out-info { color: var(--text2); }
-  .out-result { color: var(--gold); }
+  .out-ok     { color: var(--phi-stable); }
+  .out-err    { color: var(--phi-ember); }
+  .out-info   { color: var(--type-secondary); }
+  .out-result { color: var(--phi-thermal); }
 
-  /* ── Right: bubbles + media ── */
   #panel-right {
     grid-area: right;
     border-right: none;
-    border-left: 1px solid #222230;
+    border-left: 1px solid var(--entropy-border);
   }
   .bubble-item {
     padding: 6px 14px;
-    border-bottom: 1px solid #1a1a24;
+    border-bottom: 1px solid var(--entropy-bg);
     cursor: pointer;
   }
-  .bubble-item:hover { background: var(--bg3); }
-  .bubble-label { color: var(--text); font-size: 12px; }
-  .bubble-meta  { color: var(--text2); font-size: 10px; margin-top: 2px; }
+  .bubble-item:hover { background: var(--entropy-raised); }
+  .bubble-label { color: var(--type-primary); font-size: 12px; }
+  .bubble-meta  { color: var(--type-secondary); font-size: 10px; margin-top: 2px; }
   .liv-dot {
     display: inline-block;
     width: 6px; height: 6px;
-    border-radius: 50%;
-    margin-right: 4px;
+    border-radius: 50%; margin-right: 4px;
   }
 
-  /* ── Canvas area (media) ── */
   #media-canvas {
-    width: 100%;
-    aspect-ratio: 16/9;
-    background: #000;
-    display: block;
+    width: 100%; aspect-ratio: 16/9;
+    background: var(--entropy-void); display: block;
   }
 
-  /* ── Scrollbar ── */
   ::-webkit-scrollbar { width: 4px; }
-  ::-webkit-scrollbar-track { background: var(--bg); }
-  ::-webkit-scrollbar-thumb { background: var(--red); border-radius: 2px; }
+  ::-webkit-scrollbar-track { background: var(--entropy-bg); }
+  ::-webkit-scrollbar-thumb { background: var(--phi-core); border-radius: 2px; }
 
-  /* ── Shell input ── */
   .shell-row {
-    display: flex;
-    align-items: center;
+    display: flex; align-items: center;
     padding: 6px 12px;
-    border-top: 1px solid var(--red);
-    background: var(--bg2);
+    border-top: 1px solid var(--phi-core);
+    background: var(--entropy-surface);
     gap: 8px;
   }
-  .shell-prompt { color: var(--red2); font-size: 12px; }
+  .shell-prompt { color: var(--phi-bright); font-size: 12px; }
   #shell-input {
-    flex: 1;
-    background: transparent;
-    border: none;
-    outline: none;
-    color: var(--text);
-    font-family: var(--mono);
-    font-size: 12px;
+    flex: 1; background: transparent;
+    border: none; outline: none;
+    color: var(--type-primary);
+    font-family: var(--font-mono); font-size: 12px;
   }
 
-  /* ── Animations ── */
   @keyframes fadeIn {
     from { opacity: 0; transform: translateY(4px); }
     to   { opacity: 1; transform: translateY(0); }
   }
-  .fade-in { animation: fadeIn .3s ease; }
+  .fade-in { animation: fadeIn var(--dur-mid) var(--ease-enter); }
 
-  /* ── Φ canvas visualization ── */
   #phi-canvas {
-    width: 100%;
-    height: 140px;
-    display: block;
-    cursor: crosshair;
+    width: 100%; height: 140px;
+    display: block; cursor: crosshair;
   }
 </style>
 </head>
+
 <body>
 
 <header>
@@ -844,9 +786,37 @@ class StudioHandler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         if path in ("/", "/index.html"):
             self._send_html(STUDIO_HTML)
+        elif path.startswith("/static/"):
+            self._send_static(path)
         else:
             self.send_response(404)
             self.end_headers()
+
+    def _send_static(self, url_path: str):
+        """Serwuje pliki z katalogu static/."""
+        rel   = url_path.lstrip("/")          # "static/karmazyn.css"
+        fpath = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), rel
+        )
+        if not os.path.isfile(fpath):
+            self.send_response(404)
+            self.end_headers()
+            return
+        ext = os.path.splitext(fpath)[1].lower()
+        mime = {
+            ".css": "text/css; charset=utf-8",
+            ".js":  "application/javascript; charset=utf-8",
+            ".json":"application/json; charset=utf-8",
+            ".html":"text/html; charset=utf-8",
+        }.get(ext, "application/octet-stream")
+        with open(fpath, "rb") as f:
+            body = f.read()
+        self.send_response(200)
+        self.send_header("Content-Type", mime)
+        self.send_header("Content-Length", len(body))
+        self.send_header("Cache-Control", "no-cache")
+        self.end_headers()
+        self.wfile.write(body)
 
     def do_POST(self):
         length = int(self.headers.get("Content-Length", 0))
