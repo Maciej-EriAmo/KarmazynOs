@@ -1,12 +1,10 @@
 """
-karmazyn.py — Thermodynamic Memory Kernel (KarmazynOS) v1.1.0
+karmazyn.py — Thermodynamic Memory Kernel (KarmazynOS) v1.1.1
 ===============================================================
 
-Nowości w v1.1.0:
-  - Warstwa trwałości: save(path), load(path)
-  - add_semantic_vector() – poprawnie rozdziela wektor semantyczny od strukturalnego
-  - generate_from_idea() uwzględnia liveliness hologramu
-  - Drobne poprawki stabilności
+Zmiany v1.1.1:
+  [fix] Zapis i odczyt phi._p2s w save()/load()
+        (bez tego klucze bąbli nie przechodziły restartu)
 """
 
 import os
@@ -27,7 +25,7 @@ sys.path.insert(0, _DIR)
 from hss_karmazyn_matrix import HSSKarmazynMatrix
 from hss_demo import HSSDaemon, kdf, decrypt, N, Q
 
-VERSION      = "1.1.0"
+VERSION      = "1.1.1"
 ALPHA        = 0.3
 LAMBDA_DECAY = 0.1
 DELTA_T_BASE = 5.0
@@ -146,7 +144,8 @@ class IDFCounter:
 class PhiSpace:
     def __init__(self, dim=64, n_sessions=1, seed=42):
         self._mx = HSSKarmazynMatrix(dim=dim, n_sessions=n_sessions, lambd=LAMBDA_DECAY, seed=seed)
-        self.dim = dim; self._sid = 0; self._tvac = self._measure_tvac(); self._p2s = os.urandom(32)
+        self.dim = dim; self._sid = 0; self._tvac = self._measure_tvac()
+        self._p2s = os.urandom(32)  # ← TEN ATRYBUT MUSI BYĆ ZAPISYWANY
         self._sem: Dict[str,np.ndarray] = {}; self._rc: Dict[str,int] = {}; self._idf = IDFCounter()
     def embed_structural(self, c: bytes):
         s = int(hashlib.md5(c).hexdigest(),16)%(2**32)
@@ -444,7 +443,7 @@ class KarmazynOS:
                 "bubbles_decaying": self.bubbles.count_decaying, "bubbles_revoked": len(self.bubbles._rev),
                 "holograms": len(self.holograms), "bubble_bias": self._bubble_bias()}
 
-    # ----------------------------- PERSISTENCE -----------------------------
+    # ──────────────────────────── PERSISTENCE ────────────────────────────
     def save(self, path="./karmazyn_data"):
         os.makedirs(path, exist_ok=True)
         # Φ
@@ -470,9 +469,14 @@ class KarmazynOS:
             }
         with open(os.path.join(path, "holograms.json"), "w") as f:
             json.dump(holo_dict, f, indent=2)
-        # meta
-        meta = {"epoch": self.phi.epoch, "temperature": self.phi.temperature(),
-                "pid": self._pid, "version": VERSION}
+        # Meta – zawiera teraz p2s
+        meta = {
+            "epoch":       self.phi.epoch,
+            "temperature": self.phi.temperature(),
+            "pid":         self._pid,
+            "version":     VERSION,
+            "p2s":         self.phi._p2s.hex(),   # ← ZAPISANE
+        }
         with open(os.path.join(path, "meta.json"), "w") as f:
             json.dump(meta, f)
         print(f"Stan zapisany w {path}")
@@ -506,11 +510,12 @@ class KarmazynOS:
                 epoch_created=hd["epoch_created"], decay_rate=hd["decay_rate"],
                 metadata=hd["metadata"]
             )
-        # meta
+        # Meta
         with open(os.path.join(path, "meta.json"), "r") as f:
             meta = json.load(f)
-        # przywracamy PID ale nie session (daemon zostaje bez zmian)
         self._pid = meta.get("pid", 100)
+        if "p2s" in meta:                          # ← ODTWORZONE
+            self.phi._p2s = bytes.fromhex(meta["p2s"])
         print(f"Stan wczytany z {path} (epoka: {meta['epoch']})")
         return True
 
