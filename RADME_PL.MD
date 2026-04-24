@@ -2,7 +2,7 @@
 
 **Dynamiczny układ transformacji informacji z termodynamiczną semantyką danych**
 
-*Maciej Mazur — Warsaw, 2026*
+*Maciej Mazur — Warszawa, 2026*
 
 ---
 
@@ -28,34 +28,23 @@ Dane nie mają formatu jako bytu pierwotnego. Istnieje wyłącznie stabilizacja 
 
 ### Atom `A = (S, E, T)`
 
-Minimalny stan informacji. Nie rekord. Nie plik.
-
 | Pole | Znaczenie |
 |---|---|
-| `S` = `embedding` | Sygnatura strukturalna — deterministyczna, globalna, wchodzi do HRR |
-| `E` | Projekcja semantyczna — lokalna, sesyjna, opcjonalna |
+| `S` = `embedding` | Sygnatura strukturalna — deterministyczna, globalna |
+| `E` | Projekcja semantyczna — lokalna, sesyjna |
 | `T` | Energia stabilności — `T_vac + ΔT·exp(−λ·age)` |
 
-Atom nie przechowuje treści jako obiektu trwałego. Atom jest **stanem interpretowalności**.
+Atom jest **stanem interpretowalności** — nie rekordem, nie plikiem.
 
 ### Pryzmat
 
-Operator projekcji `P: Atom → Φ` gdzie Φ to przestrzeń interpretacji.
-
-Trzy standardowe pryzmaty: `CORE` (rdzeń semantyczny), `IN` (kontekst wejściowy), `OUT` (interfejs zewnętrzny).
-
+Operator projekcji `P: Atom → Φ`. Trzy standardowe pryzmaty: `CORE`, `IN`, `OUT`.
 Agent z capability tylko na `OUT` dostaje szum dla `CORE` i `IN` — nie odmowę dostępu, lecz świat w którym te dane **nie istnieją**. To jest **Warp Oblivion**.
 
 ### Hologram
 
 Interferencyjne pole korelacji atomów oparte na HRR (Holographic Reduced Representations).
-
-```
-H = {A₁, A₂, …, Aₙ} + HRR_trace
-HRR_trace = A₁ ⊛ A₂ ⊛ … ⊛ Aₙ    (splot kołowy, renormalizowany)
-```
-
-Hologram nie przechowuje informacji. Hologram **wymusza dopuszczalne formy informacji**.
+Hologram nie przechowuje informacji — **wymusza dopuszczalne formy informacji**.
 
 ---
 
@@ -69,20 +58,15 @@ Hologram nie przechowuje informacji. Hologram **wymusza dopuszczalne formy infor
 ├─────────────────────────────────────────────────┤
 │  COLD  archive store   dysk, Ring-LWE (N=64)    │
 └─────────────────────────────────────────────────┘
+
+FSM:  CREATED → HOT → WARM → COLD → TOMB → GC
 ```
 
-**FSM lifecycle atomu:**
-```
-CREATED → HOT → WARM → COLD → TOMB → GC
-```
-
-**Vacuum Decay** — naturalny GC termodynamiczny. Atom poniżej progu `T_vacuum + ε` nie jest kasowany — przestaje istnieć jako informacja. Szyfrogram na dysku staje się szumem termodynamicznym.
+**Vacuum Decay** — naturalny GC termodynamiczny. Atom poniżej progu `T_vacuum + ε` przestaje istnieć jako informacja. Szyfrogram na dysku staje się szumem termodynamicznym.
 
 ---
 
 ## Model kryptograficzny
-
-Bezpieczeństwo przez algebrę, nie przez listy uprawnień.
 
 ```
 base_secret = HMAC(CSPRNG, Φ².tobytes())
@@ -116,57 +100,37 @@ Pełna specyfikacja: [HSS Paper v2.6.0](https://doi.org/10.5281/zenodo.19548693)
 
 | Plik | Opis |
 |---|---|
-| `hss_demo.py` | HSSDaemon v2.9 — Ring-LWE, 20/20 testów |
-| `holonp_hss_adapter.py` | Adapter Φ² → s_sess |
-| `holonos_v04.py` | CognitiveState — termodynamika Φ |
-| `holonos_integrated.py` | System zintegrowany — demo + CLI |
-| `holo_lsm.c` | Linux Security Module v3.4 |
-| `KarmazynOS_Spec_v06.md` | Specyfikacja fundamentów v0.6 |
-| `holonos_animation.html` | Animacja demo (przeglądarka, offline) |
+| `karmazyn.py` | Termodynamiczne jądro pamięci v1.1.1 — Φ, bąble, hologramy |
+| `hss_demo.py` | HSSDaemon — zarządzanie sesjami Ring-LWE |
+| `hss_karmazyn_matrix.py` | Macierz atomów z termodynamicznym rozpadem |
+| `shell.py` | Karmazyn Shell (ksh) v1.1.0 |
+| `studio.py` | KarmazynOS Studio v1.1.0 — lokalne środowisko HTTP |
+| `soul_store.py` | Format persystencji JSONL (.soul) |
+| `bubblefs.py` | BubbleFS — przenośny format wymiany bąbli |
+| `karmazyn_comm.py` | Termodynamiczny menadżer komunikacji (SMS/połączenia, Termux) |
+| `karmazyn_ui/` | Design Language — tokeny, stany, renderer (STC-Φ-001) |
+| `static/` | Wygenerowany CSS i tokeny JS |
+| `how_to.md` / `how_to_en.md` | Podręcznik użytkownika (PL/EN) |
 
 ---
 
-## Uruchomienie demo
+## Szybki start
 
 ```bash
+git clone https://github.com/Maciej-EriAmo/KarmazynOs
+cd KarmazynOs
 pip install numpy --break-system-packages
 
-# Pełne demo + CLI
-python holonos_integrated.py
+# Interaktywna powłoka
+python shell.py
 
-# Tylko scenariusz 3 agentów
-python holonos_integrated.py --demo
-
-# Tylko CLI (notatki + HSS)
-python holonos_integrated.py --cli
+# Studio webowe (otwórz http://localhost:8080)
+python studio.py
 ```
 
-**Wymagania:** Python 3.10+, numpy. Działa offline, bez GPU, na ARM64 (Samsung A54 / Termux).
-
-### Przykładowy output
-
-```
-T_vacuum (v0.4):    2.2074 bit
-epoch HSS:          5921360
-evaluate() Agent A: score=11.797 > θ=3.311 → ZEZWÓL
-evaluate() Agent B: score=1.841 ≤ θ=3.311 → ODMÓW
-Agent A: 3× ✓ SYGNAŁ
-Agent B: 3× SZUM ✗ (Warp Oblivion)
-Agent C: out ✓ METADANE, core/in ✗ SZUM
-Vacuum Decay: s_A skasowany → ODMOWA po vacuum
-```
-
-### Komendy CLI
-
-```
-add <tekst>        — dodaj atom do pamięci Φ
-recall <zapytanie> — wyszukaj przez cosine × temperatura
-list               — lista atomów z temperaturą
-step [n]           — przesuń n epok (cooling + vacuum decay)
-stats              — stan systemu
-/demo              — uruchom scenariusz 3 agentów
-/eval <tekst>      — sprawdź evaluate() Φ
-/session           — pokaż stan sesji HSS
+Na Termux (Android):
+```bash
+termux-open-url http://localhost:8080
 ```
 
 ---
@@ -187,10 +151,13 @@ stats              — stan systemu
 ## Status
 
 ```
-hss_demo.py v2.9           ✅  20/20 testów
-holonos_integrated.py      ✅  działa na Samsung A54 / Termux
-holo_lsm.c v3.4            ✅  Linux LSM z przestrzenią Φ
-KarmazynOS_Spec_v06.md     ✅  6 rund audytu, spójna
+karmazyn.py v1.1.1         ✅  jądro, persystencja kluczy naprawiona
+shell.py v1.1.0            ✅  interaktywna powłoka
+studio.py v1.1.0           ✅  Studio webowe z Design Language
+soul_store.py v1.0.0       ✅  format .soul, 9/9 testów
+hss_karmazyn_matrix.py     ✅  bez pickle, stabilna serializacja
+bubblefs.py v1.0.0         ✅  przenośny format wymiany
+karmazyn_ui/ v0.1.0        ✅  Design Language STC-Φ-001
 Implementacja referencyjna  ⏳  atom.py + memory.py + cold_store.py
 Crimson Loop               ⏳  introspekcja — ostatnia warstwa
 ```
