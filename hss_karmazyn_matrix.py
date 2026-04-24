@@ -10,8 +10,11 @@ class HSSKarmazynMatrix:
 
     def add_atom_vector(self, label, topic, vector, init_T, session=0):
         self.atoms.append({
-            'label': label, 'topic': topic, 'S': vector.copy(),
-            'T': init_T, 'session': session
+            'label': label,
+            'topic': topic,
+            'S': vector.copy(),
+            'T': init_T,
+            'session': session
         })
 
     def step(self):
