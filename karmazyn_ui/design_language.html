@@ -1,0 +1,960 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>KarmazynOS — Design Language v0.1</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Rajdhani:wght@300;400;600;700&family=Exo+2:ital,wght@0,200;0,400;0,700;1,200&display=swap');
+
+  :root {
+    /* ═══════════════════════════════════════════
+       KARMAZYN DESIGN LANGUAGE — Token Palette
+       v0.1 — STC-Φ-001 Reference
+    ═══════════════════════════════════════════ */
+
+    /* — Φ-Core — główna czerwień karmazynu */
+    --phi-core:         #C8102E;   /* karmazyn bazowy */
+    --phi-bright:       #FF1F45;   /* aktywny / hover */
+    --phi-deep:         #8B0000;   /* głęboki / pressed */
+    --phi-ember:        #FF6B4A;   /* ciepły akcent / alert */
+
+    /* — Entropy — tła i głębia */
+    --entropy-void:     #080A0F;   /* najgłębsze tło */
+    --entropy-bg:       #0E1118;   /* tło aplikacji */
+    --entropy-surface:  #161B26;   /* surface / karty */
+    --entropy-raised:   #1E2535;   /* elevated surface */
+    --entropy-border:   #2A3347;   /* obramowania */
+
+    /* — Phi-Space — semantyczne kolory systemu */
+    --phi-signal:       #00E5FF;   /* dane / output / live */
+    --phi-stable:       #39FF14;   /* stabilny / aktywny / ok */
+    --phi-thermal:      #FF9900;   /* temperatura / ostrzeżenie */
+    --phi-decay:        #6B7FA3;   /* zanikający / nieaktywny */
+    --phi-ghost:        #2E3D5C;   /* bardzo nieaktywny */
+
+    /* — Type — typografia */
+    --type-primary:     #E8ECF4;   /* główny tekst */
+    --type-secondary:   #8A9BBF;   /* drugi plan */
+    --type-muted:       #4A5870;   /* wyciszony */
+    --type-accent:      #FF1F45;   /* akcent tekstowy */
+
+    /* — Geometry — spacing & grid */
+    --unit:             8px;
+    --radius-sm:        3px;
+    --radius-md:        6px;
+    --radius-lg:        12px;
+
+    /* — Motion */
+    --ease-phi:         cubic-bezier(0.23, 1, 0.32, 1);
+    --dur-fast:         120ms;
+    --dur-mid:          280ms;
+    --dur-slow:         500ms;
+
+    /* — Light / Shadow — Mechanicum sacred engineering */
+    --glow-phi:         0 0 12px rgba(200,16,46,0.35), 0 0 32px rgba(200,16,46,0.12);
+    --glow-signal:      0 0 10px rgba(0,229,255,0.3),  0 0 24px rgba(0,229,255,0.08);
+    --glow-stable:      0 0 10px rgba(57,255,20,0.3),  0 0 24px rgba(57,255,20,0.08);
+    --glow-thermal:     0 0 10px rgba(255,153,0,0.35), 0 0 28px rgba(255,153,0,0.1);
+    --shadow-lift:      0 4px 16px rgba(0,0,0,0.5), 0 1px 0 rgba(255,255,255,0.04) inset;
+    --shadow-deep:      0 8px 32px rgba(0,0,0,0.7), 0 1px 0 rgba(255,255,255,0.03) inset;
+    --rim-light:        0 1px 0 rgba(255,255,255,0.06) inset, 0 -1px 0 rgba(0,0,0,0.4) inset;
+    --rim-phi:          0 1px 0 rgba(200,16,46,0.4) inset, 0 -1px 0 rgba(0,0,0,0.5) inset;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--entropy-void);
+    color: var(--type-primary);
+    font-family: 'Exo 2', sans-serif;
+    font-weight: 200;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* scanline texture */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(0,0,0,0.035) 2px,
+      rgba(0,0,0,0.035) 4px
+    );
+    pointer-events: none;
+    z-index: 1000;
+  }
+
+  /* ambient Mechanicum glow — czerwone źródło z głębi */
+  body::after {
+    content: '';
+    position: fixed;
+    top: -20%;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 60%;
+    height: 40%;
+    background: radial-gradient(ellipse at center,
+      rgba(200,16,46,0.07) 0%,
+      rgba(139,0,0,0.03) 40%,
+      transparent 70%
+    );
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .doc {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 48px 24px;
+  }
+
+  /* ── Header ── */
+  .header {
+    border-left: 3px solid var(--phi-core);
+    padding-left: 20px;
+    margin-bottom: 64px;
+    position: relative;
+    filter: drop-shadow(0 0 18px rgba(200,16,46,0.2));
+  }
+  .header::before {
+    content: 'STC-Φ-001 // DESIGN LANGUAGE';
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 10px;
+    color: var(--phi-decay);
+    letter-spacing: 3px;
+    display: block;
+    margin-bottom: 8px;
+  }
+  .header h1 {
+    font-family: 'Rajdhani', sans-serif;
+    font-weight: 700;
+    font-size: clamp(32px, 6vw, 56px);
+    letter-spacing: -1px;
+    line-height: 1;
+    color: var(--type-primary);
+  }
+  .header h1 span {
+    color: var(--phi-core);
+  }
+  .header .version {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 11px;
+    color: var(--phi-signal);
+    margin-top: 10px;
+    letter-spacing: 2px;
+  }
+
+  /* ── Section ── */
+  .section {
+    margin-bottom: 56px;
+  }
+  .section-label {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 4px;
+    color: var(--phi-core);
+    text-transform: uppercase;
+    margin-bottom: 20px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .section-label::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--entropy-border);
+  }
+  .section-title {
+    font-family: 'Rajdhani', sans-serif;
+    font-weight: 600;
+    font-size: 22px;
+    color: var(--type-primary);
+    margin-bottom: 8px;
+  }
+  .section-desc {
+    font-size: 14px;
+    color: var(--type-secondary);
+    line-height: 1.7;
+    margin-bottom: 24px;
+    max-width: 640px;
+  }
+
+  /* ── Color Grid ── */
+  .color-group {
+    margin-bottom: 32px;
+  }
+  .color-group-name {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 11px;
+    color: var(--type-muted);
+    letter-spacing: 2px;
+    margin-bottom: 12px;
+  }
+  .color-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 8px;
+  }
+  .color-swatch {
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    border: 1px solid var(--entropy-border);
+    cursor: pointer;
+    transition: transform var(--dur-fast) var(--ease-phi),
+                box-shadow var(--dur-mid) var(--ease-phi);
+    box-shadow: var(--shadow-lift);
+  }
+  .color-swatch:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 12px 32px rgba(0,0,0,0.6), 0 1px 0 rgba(255,255,255,0.05) inset;
+  }
+  .swatch-color {
+    height: 72px;
+    position: relative;
+  }
+  .swatch-color::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(135deg, rgba(255,255,255,0.08) 0%, transparent 60%);
+  }
+  .swatch-info {
+    background: var(--entropy-surface);
+    padding: 10px 12px;
+  }
+  .swatch-name {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 10px;
+    color: var(--type-primary);
+    letter-spacing: 1px;
+    margin-bottom: 3px;
+  }
+  .swatch-hex {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 11px;
+    color: var(--type-muted);
+  }
+  .swatch-desc {
+    font-size: 10px;
+    color: var(--phi-decay);
+    margin-top: 3px;
+    line-height: 1.3;
+  }
+
+  /* ── Typography ── */
+  .type-sample {
+    background: var(--entropy-surface);
+    border: 1px solid var(--entropy-border);
+    border-radius: var(--radius-lg);
+    padding: 24px;
+    margin-bottom: 16px;
+    box-shadow: var(--shadow-lift);
+    position: relative;
+    overflow: hidden;
+  }
+  .type-sample::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 8%; right: 8%;
+    height: 1px;
+    background: linear-gradient(90deg,
+      transparent,
+      rgba(255,255,255,0.06) 30%,
+      rgba(255,255,255,0.10) 50%,
+      rgba(255,255,255,0.06) 70%,
+      transparent
+    );
+  }
+  .type-meta {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 10px;
+    color: var(--phi-decay);
+    letter-spacing: 2px;
+    margin-bottom: 12px;
+  }
+  .type-display {
+    font-family: 'Rajdhani', sans-serif;
+    font-weight: 700;
+    font-size: 36px;
+    letter-spacing: -0.5px;
+    color: var(--type-primary);
+    line-height: 1.1;
+  }
+  .type-body {
+    font-family: 'Exo 2', sans-serif;
+    font-weight: 200;
+    font-size: 15px;
+    color: var(--type-secondary);
+    line-height: 1.7;
+    margin-top: 8px;
+  }
+  .type-mono {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 13px;
+    color: var(--phi-signal);
+    line-height: 1.6;
+    margin-top: 8px;
+  }
+
+  /* ── Component Demos ── */
+  .comp-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 16px;
+  }
+  .comp-card {
+    background: var(--entropy-surface);
+    border: 1px solid var(--entropy-border);
+    border-radius: var(--radius-lg);
+    padding: 20px;
+    box-shadow: var(--shadow-lift);
+    position: relative;
+    overflow: hidden;
+  }
+
+  /* szczelina światła — górna krawędź */
+  .comp-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 10%; right: 10%;
+    height: 1px;
+    background: linear-gradient(90deg,
+      transparent,
+      rgba(255,255,255,0.07) 30%,
+      rgba(255,255,255,0.12) 50%,
+      rgba(255,255,255,0.07) 70%,
+      transparent
+    );
+  }
+  .comp-label {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 9px;
+    color: var(--phi-decay);
+    letter-spacing: 3px;
+    margin-bottom: 16px;
+  }
+
+  /* Buttons */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 18px;
+    border-radius: var(--radius-sm);
+    font-family: 'Rajdhani', sans-serif;
+    font-weight: 600;
+    font-size: 13px;
+    letter-spacing: 1px;
+    cursor: pointer;
+    border: none;
+    transition: all var(--dur-fast) var(--ease-phi);
+    text-transform: uppercase;
+  }
+  .btn-primary {
+    background: var(--phi-core);
+    color: white;
+    box-shadow: 0 2px 12px rgba(200,16,46,0.4), var(--rim-phi);
+  }
+  .btn-primary:hover {
+    background: var(--phi-bright);
+    box-shadow: var(--glow-phi), var(--rim-phi);
+  }
+  .btn-ghost {
+    background: transparent;
+    color: var(--phi-signal);
+    border: 1px solid var(--phi-signal);
+    box-shadow: 0 0 0 rgba(0,229,255,0), var(--rim-light);
+  }
+  .btn-ghost:hover {
+    background: rgba(0,229,255,0.08);
+    box-shadow: var(--glow-signal), var(--rim-light);
+  }
+  .btn-thermal {
+    background: transparent;
+    color: var(--phi-thermal);
+    border: 1px solid var(--phi-thermal);
+    box-shadow: var(--rim-light);
+  }
+  .btn-thermal:hover {
+    box-shadow: var(--glow-thermal), var(--rim-light);
+  }
+  .btn-danger {
+    background: rgba(200,16,46,0.15);
+    color: var(--phi-bright);
+    border: 1px solid var(--phi-deep);
+    box-shadow: var(--rim-phi);
+  }
+  .btn + .btn { margin-left: 8px; }
+
+  /* Status indicators */
+  .status-row {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .status-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 12px;
+  }
+  .dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .dot-active   { background: var(--phi-stable); box-shadow: 0 0 8px var(--phi-stable), 0 0 16px rgba(57,255,20,0.3); }
+  .dot-signal   { background: var(--phi-signal); box-shadow: 0 0 8px var(--phi-signal), 0 0 16px rgba(0,229,255,0.25);
+                  animation: pulse 2s ease-in-out infinite; }
+  .dot-thermal  { background: var(--phi-thermal); box-shadow: 0 0 6px rgba(255,153,0,0.5); }
+  .dot-decay    { background: var(--phi-decay); }
+  .dot-dead     { background: var(--phi-ghost); }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+
+  /* Thermal bar */
+  .thermal-bar-wrap {
+    margin-top: 8px;
+  }
+  .thermal-label {
+    display: flex;
+    justify-content: space-between;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 10px;
+    color: var(--type-muted);
+    margin-bottom: 6px;
+  }
+  .thermal-track {
+    height: 4px;
+    background: var(--entropy-raised);
+    border-radius: 2px;
+    overflow: hidden;
+    margin-bottom: 8px;
+  }
+  .thermal-fill {
+    height: 100%;
+    border-radius: 2px;
+    transition: width var(--dur-slow) var(--ease-phi);
+  }
+  .fill-hot    { background: linear-gradient(90deg, var(--phi-core), var(--phi-ember)); width: 82%; }
+  .fill-warm   { background: linear-gradient(90deg, var(--phi-deep), var(--phi-thermal)); width: 55%; }
+  .fill-cool   { background: var(--phi-signal); width: 28%; }
+  .fill-decay  { background: var(--phi-decay); width: 12%; }
+
+  /* Bubble chip */
+  .bubble-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 4px;
+  }
+  .bubble {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: 20px;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 1px;
+  }
+  .bubble-phi {
+    background: rgba(200,16,46,0.15);
+    border: 1px solid var(--phi-deep);
+    color: var(--phi-bright);
+    box-shadow: 0 0 8px rgba(200,16,46,0.2);
+  }
+  .bubble-signal {
+    background: rgba(0,229,255,0.08);
+    border: 1px solid rgba(0,229,255,0.3);
+    color: var(--phi-signal);
+    box-shadow: 0 0 8px rgba(0,229,255,0.15);
+  }
+  .bubble-stable {
+    background: rgba(57,255,20,0.08);
+    border: 1px solid rgba(57,255,20,0.3);
+    color: var(--phi-stable);
+    box-shadow: 0 0 8px rgba(57,255,20,0.15);
+  }
+  .bubble-decay {
+    background: transparent;
+    border: 1px solid var(--entropy-border);
+    color: var(--phi-decay);
+    opacity: 0.6;
+  }
+
+  /* Spacing table */
+  .spacing-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .spacing-row {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+  .spacing-name {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 10px;
+    color: var(--type-muted);
+    width: 80px;
+    flex-shrink: 0;
+  }
+  .spacing-block {
+    background: rgba(200,16,46,0.2);
+    border: 1px solid var(--phi-deep);
+    height: 12px;
+    border-radius: 2px;
+  }
+  .spacing-val {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 10px;
+    color: var(--phi-signal);
+  }
+
+  /* Motion demo */
+  .motion-demo {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .motion-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .motion-dot {
+    width: 10px; height: 10px;
+    background: var(--phi-core);
+    border-radius: 50%;
+  }
+  .motion-fast  { animation: slide 1.2s var(--ease-phi) infinite; }
+  .motion-mid   { animation: slide 2.8s var(--ease-phi) infinite; }
+  .motion-slow  { animation: slide 5.0s var(--ease-phi) infinite; }
+  @keyframes slide {
+    0%, 100% { transform: translateX(0); opacity: 1; }
+    50% { transform: translateX(40px); opacity: 0.4; }
+  }
+  .motion-label {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 10px;
+    color: var(--type-muted);
+  }
+
+  /* Token table */
+  .token-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 11px;
+  }
+  .token-table th {
+    text-align: left;
+    padding: 8px 12px;
+    color: var(--phi-decay);
+    letter-spacing: 2px;
+    border-bottom: 1px solid var(--entropy-border);
+    font-size: 9px;
+  }
+  .token-table td {
+    padding: 8px 12px;
+    border-bottom: 1px solid rgba(42,51,71,0.5);
+    color: var(--type-secondary);
+    vertical-align: middle;
+  }
+  .token-table td:first-child { color: var(--phi-signal); }
+  .token-dot {
+    width: 14px; height: 14px;
+    border-radius: 50%;
+    display: inline-block;
+    vertical-align: middle;
+    margin-right: 8px;
+    border: 1px solid rgba(255,255,255,0.1);
+  }
+
+  /* Footer */
+  .footer {
+    margin-top: 80px;
+    padding-top: 24px;
+    border-top: 1px solid var(--entropy-border);
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 10px;
+    color: var(--type-muted);
+    letter-spacing: 2px;
+    display: flex;
+    justify-content: space-between;
+  }
+</style>
+</head>
+<body>
+<div class="doc">
+
+  <!-- HEADER -->
+  <div class="header">
+    <h1>Karmazyn<span>OS</span><br>Design Language</h1>
+    <div class="version">v0.1 — ALPHA // STC-Φ-001 // WARSZAWA 2026</div>
+  </div>
+
+  <!-- SECTION: FILOZOFIA -->
+  <div class="section">
+    <div class="section-label">00 // Filozofia</div>
+    <div class="section-title">Zasady projektowe</div>
+    <div class="section-desc">
+      KarmazynOS Design Language to nie zestaw widgetów — to <strong>kontrakt semantyczny</strong>. 
+      Każdy kolor, każdy odstęp, każda animacja opisuje stan systemu Φ-space. 
+      Wygląd jest konsekwencją znaczenia, nie ozdobnikiem.
+    </div>
+    <div class="comp-grid">
+      <div class="comp-card">
+        <div class="comp-label">ZASADA I</div>
+        <div style="font-family:'Rajdhani',sans-serif;font-weight:600;font-size:16px;color:var(--phi-bright);margin-bottom:6px">Kolor = Stan</div>
+        <div style="font-size:13px;color:var(--type-secondary);line-height:1.6">Czerwień to aktywność Φ. Cyjan to dane w ruchu. Zieleń to stabilność. Pomarańcz to ciepło termodynamiczne. Nigdy dekoracja.</div>
+      </div>
+      <div class="comp-card">
+        <div class="comp-label">ZASADA II</div>
+        <div style="font-family:'Rajdhani',sans-serif;font-weight:600;font-size:16px;color:var(--phi-bright);margin-bottom:6px">Ciemność = Głębia</div>
+        <div style="font-size:13px;color:var(--type-secondary);line-height:1.6">System żyje w przestrzeni Φ — ciemnej jak przestrzeń kosmiczna. Warstwy tła opisują głębokość stosu pamięci.</div>
+      </div>
+      <div class="comp-card">
+        <div class="comp-label">ZASADA III</div>
+        <div style="font-family:'Rajdhani',sans-serif;font-weight:600;font-size:16px;color:var(--phi-bright);margin-bottom:6px">Decay jest widoczny</div>
+        <div style="font-size:13px;color:var(--type-secondary);line-height:1.6">Elementy które zanikają — zanikają wizualnie. System nie ukrywa entropii, pokazuje ją jako część stanu.</div>
+      </div>
+      <div class="comp-card">
+        <div class="comp-label">ZASADA IV</div>
+        <div style="font-family:'Rajdhani',sans-serif;font-weight:600;font-size:16px;color:var(--phi-bright);margin-bottom:6px">Mono = Dane, Sans = UI</div>
+        <div style="font-size:13px;color:var(--type-secondary);line-height:1.6">Tekst monospace to zawsze dane systemowe, output, kody. Tekst bezszeryfowy to interfejs i narracja.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- SECTION: PALETTE -->
+  <div class="section">
+    <div class="section-label">01 // Paleta barw</div>
+    <div class="section-title">Tokeny kolorów</div>
+    <div class="section-desc">Każdy token ma nazwę semantyczną — opisuje znaczenie, nie wygląd. Wartości hex to wersja v0.1 do korekty.</div>
+
+    <div class="color-group">
+      <div class="color-group-name">PHI-CORE — aktywność i tożsamość systemu</div>
+      <div class="color-row">
+        <div class="color-swatch">
+          <div class="swatch-color" style="background:#C8102E"></div>
+          <div class="swatch-info">
+            <div class="swatch-name">phi-core</div>
+            <div class="swatch-hex">#C8102E</div>
+            <div class="swatch-desc">bazowy karmazyn — tożsamość</div>
+          </div>
+        </div>
+        <div class="color-swatch">
+          <div class="swatch-color" style="background:#FF1F45"></div>
+          <div class="swatch-info">
+            <div class="swatch-name">phi-bright</div>
+            <div class="swatch-hex">#FF1F45</div>
+            <div class="swatch-desc">aktywny / hover / focus</div>
+          </div>
+        </div>
+        <div class="color-swatch">
+          <div class="swatch-color" style="background:#8B0000"></div>
+          <div class="swatch-info">
+            <div class="swatch-name">phi-deep</div>
+            <div class="swatch-hex">#8B0000</div>
+            <div class="swatch-desc">wciśnięty / border akcentu</div>
+          </div>
+        </div>
+        <div class="color-swatch">
+          <div class="swatch-color" style="background:#FF6B4A"></div>
+          <div class="swatch-info">
+            <div class="swatch-name">phi-ember</div>
+            <div class="swatch-hex">#FF6B4A</div>
+            <div class="swatch-desc">ciepły akcent / alert niski</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="color-group">
+      <div class="color-group-name">ENTROPY — tła, warstwy, głębia</div>
+      <div class="color-row">
+        <div class="color-swatch">
+          <div class="swatch-color" style="background:#080A0F"></div>
+          <div class="swatch-info">
+            <div class="swatch-name">entropy-void</div>
+            <div class="swatch-hex">#080A0F</div>
+            <div class="swatch-desc">najgłębsze tło</div>
+          </div>
+        </div>
+        <div class="color-swatch">
+          <div class="swatch-color" style="background:#0E1118"></div>
+          <div class="swatch-info">
+            <div class="swatch-name">entropy-bg</div>
+            <div class="swatch-hex">#0E1118</div>
+            <div class="swatch-desc">tło aplikacji</div>
+          </div>
+        </div>
+        <div class="color-swatch">
+          <div class="swatch-color" style="background:#161B26"></div>
+          <div class="swatch-info">
+            <div class="swatch-name">entropy-surface</div>
+            <div class="swatch-hex">#161B26</div>
+            <div class="swatch-desc">karty / panele</div>
+          </div>
+        </div>
+        <div class="color-swatch">
+          <div class="swatch-color" style="background:#1E2535"></div>
+          <div class="swatch-info">
+            <div class="swatch-name">entropy-raised</div>
+            <div class="swatch-hex">#1E2535</div>
+            <div class="swatch-desc">elevated / modal</div>
+          </div>
+        </div>
+        <div class="color-swatch">
+          <div class="swatch-color" style="background:#2A3347"></div>
+          <div class="swatch-info">
+            <div class="swatch-name">entropy-border</div>
+            <div class="swatch-hex">#2A3347</div>
+            <div class="swatch-desc">obramowania</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="color-group">
+      <div class="color-group-name">PHI-SPACE — semantyczne stany systemu</div>
+      <div class="color-row">
+        <div class="color-swatch">
+          <div class="swatch-color" style="background:#00E5FF"></div>
+          <div class="swatch-info">
+            <div class="swatch-name">phi-signal</div>
+            <div class="swatch-hex">#00E5FF</div>
+            <div class="swatch-desc">dane live / output / stream</div>
+          </div>
+        </div>
+        <div class="color-swatch">
+          <div class="swatch-color" style="background:#39FF14"></div>
+          <div class="swatch-info">
+            <div class="swatch-name">phi-stable</div>
+            <div class="swatch-hex">#39FF14</div>
+            <div class="swatch-desc">stabilny / ok / verified</div>
+          </div>
+        </div>
+        <div class="color-swatch">
+          <div class="swatch-color" style="background:#FF9900"></div>
+          <div class="swatch-info">
+            <div class="swatch-name">phi-thermal</div>
+            <div class="swatch-hex">#FF9900</div>
+            <div class="swatch-desc">ciepło / ostrzeżenie</div>
+          </div>
+        </div>
+        <div class="color-swatch">
+          <div class="swatch-color" style="background:#6B7FA3"></div>
+          <div class="swatch-info">
+            <div class="swatch-name">phi-decay</div>
+            <div class="swatch-hex">#6B7FA3</div>
+            <div class="swatch-desc">zanikający / nieaktywny</div>
+          </div>
+        </div>
+        <div class="color-swatch">
+          <div class="swatch-color" style="background:#2E3D5C"></div>
+          <div class="swatch-info">
+            <div class="swatch-name">phi-ghost</div>
+            <div class="swatch-hex">#2E3D5C</div>
+            <div class="swatch-desc">bardzo nieaktywny / shadow</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- SECTION: TYPOGRAPHY -->
+  <div class="section">
+    <div class="section-label">02 // Typografia</div>
+    <div class="section-title">System fontów</div>
+
+    <div class="type-sample">
+      <div class="type-meta">DISPLAY — Rajdhani 700 // nagłówki, nazwy, identyfikacja</div>
+      <div class="type-display">KarmazynOS — Φ-Space Engine v4.4</div>
+    </div>
+    <div class="type-sample">
+      <div class="type-meta">BODY — Exo 2 Weight 200 // opisy, narracja, dokumentacja</div>
+      <div class="type-body">System zarządza pamięcią poprzez termodynamikę bąbli. Każda myśl ma temperaturę, każde wspomnienie ma entropię. Decay jest naturalnym stanem — nie błędem.</div>
+    </div>
+    <div class="type-sample">
+      <div class="type-meta">MONO — Share Tech Mono // dane, kod, output, tokeny</div>
+      <div class="type-mono">phi_id=0x4A3F  temp=0.847  entropy=0.23  state=CONSOLIDATING<br>bubble[42] → label="intent:classify_threat"  age=1847ms</div>
+    </div>
+  </div>
+
+  <!-- SECTION: COMPONENTS -->
+  <div class="section">
+    <div class="section-label">03 // Komponenty bazowe</div>
+    <div class="section-title">Przykłady użycia tokenów</div>
+
+    <div class="comp-grid">
+
+      <div class="comp-card">
+        <div class="comp-label">PRZYCISKI</div>
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <button class="btn btn-primary">Φ Execute</button>
+          <button class="btn btn-ghost">◈ Recall</button>
+          <button class="btn btn-thermal">⚠ Thermal Alert</button>
+          <button class="btn btn-danger">✕ Decay Force</button>
+        </div>
+      </div>
+
+      <div class="comp-card">
+        <div class="comp-label">STANY SYSTEMU</div>
+        <div class="status-row">
+          <div class="status-item"><span class="dot dot-active"></span><span style="color:var(--phi-stable)">BUBBLE STABLE</span></div>
+          <div class="status-item"><span class="dot dot-signal"></span><span style="color:var(--phi-signal)">STREAM LIVE</span></div>
+          <div class="status-item"><span class="dot dot-thermal"></span><span style="color:var(--phi-thermal)">THERMAL HIGH</span></div>
+          <div class="status-item"><span class="dot dot-decay"></span><span style="color:var(--phi-decay)">DECAYING</span></div>
+          <div class="status-item"><span class="dot dot-dead"></span><span style="color:var(--phi-ghost)">GHOST / VACUUM</span></div>
+        </div>
+      </div>
+
+      <div class="comp-card">
+        <div class="comp-label">PASEK TERMALNY</div>
+        <div class="thermal-bar-wrap">
+          <div class="thermal-label"><span>memory_core</span><span style="color:var(--phi-ember)">0.82°</span></div>
+          <div class="thermal-track"><div class="thermal-fill fill-hot"></div></div>
+          <div class="thermal-label"><span>attention_layer</span><span style="color:var(--phi-thermal)">0.55°</span></div>
+          <div class="thermal-track"><div class="thermal-fill fill-warm"></div></div>
+          <div class="thermal-label"><span>hss_lsm</span><span style="color:var(--phi-signal)">0.28°</span></div>
+          <div class="thermal-track"><div class="thermal-fill fill-cool"></div></div>
+          <div class="thermal-label"><span>agent_idle</span><span style="color:var(--phi-decay)">0.12°</span></div>
+          <div class="thermal-track"><div class="thermal-fill fill-decay"></div></div>
+        </div>
+      </div>
+
+      <div class="comp-card">
+        <div class="comp-label">BĄBLE Φ</div>
+        <div class="bubble-row">
+          <span class="bubble bubble-phi">Φ intent:threat</span>
+          <span class="bubble bubble-signal">◈ stream:active</span>
+          <span class="bubble bubble-stable">✓ hss:verified</span>
+          <span class="bubble bubble-decay">⟳ decaying</span>
+          <span class="bubble bubble-phi">Φ memory:core</span>
+          <span class="bubble bubble-signal">◈ epoch:14</span>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- SECTION: SPACING -->
+  <div class="section">
+    <div class="section-label">04 // Spacing & Grid</div>
+    <div class="section-title">Jednostki przestrzenne</div>
+    <div class="section-desc">Bazowa jednostka = 8px. Wszystkie odstępy są wielokrotnością jednostki bazowej.</div>
+    <div class="spacing-grid">
+      <div class="spacing-row">
+        <div class="spacing-name">unit × 0.5</div>
+        <div class="spacing-block" style="width:4px"></div>
+        <div class="spacing-val">4px — micro</div>
+      </div>
+      <div class="spacing-row">
+        <div class="spacing-name">unit × 1</div>
+        <div class="spacing-block" style="width:8px"></div>
+        <div class="spacing-val">8px — xs</div>
+      </div>
+      <div class="spacing-row">
+        <div class="spacing-name">unit × 2</div>
+        <div class="spacing-block" style="width:16px"></div>
+        <div class="spacing-val">16px — sm</div>
+      </div>
+      <div class="spacing-row">
+        <div class="spacing-name">unit × 3</div>
+        <div class="spacing-block" style="width:24px"></div>
+        <div class="spacing-val">24px — md</div>
+      </div>
+      <div class="spacing-row">
+        <div class="spacing-name">unit × 4</div>
+        <div class="spacing-block" style="width:32px"></div>
+        <div class="spacing-val">32px — lg</div>
+      </div>
+      <div class="spacing-row">
+        <div class="spacing-name">unit × 6</div>
+        <div class="spacing-block" style="width:48px"></div>
+        <div class="spacing-val">48px — xl</div>
+      </div>
+      <div class="spacing-row">
+        <div class="spacing-name">unit × 8</div>
+        <div class="spacing-block" style="width:64px"></div>
+        <div class="spacing-val">64px — 2xl — sekcje</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- SECTION: MOTION -->
+  <div class="section">
+    <div class="section-label">05 // Motion</div>
+    <div class="section-title">Animacje i przejścia</div>
+    <div class="section-desc">Animacje opisują prędkość procesów systemowych. Krzywa ease-phi to własna krzywa Béziera systemu.</div>
+    <div class="comp-card" style="max-width:400px">
+      <div class="comp-label">PRĘDKOŚCI (ease-phi)</div>
+      <div class="motion-demo">
+        <div class="motion-item">
+          <div class="motion-dot motion-fast" style="background:var(--phi-bright)"></div>
+          <div class="motion-label">fast — 120ms // hover, feedback</div>
+        </div>
+        <div class="motion-item">
+          <div class="motion-dot motion-mid" style="background:var(--phi-signal)"></div>
+          <div class="motion-label">mid — 280ms // transitions, panels</div>
+        </div>
+        <div class="motion-item">
+          <div class="motion-dot motion-slow" style="background:var(--phi-decay)"></div>
+          <div class="motion-label">slow — 500ms // decay, consolidation</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- SECTION: TOKEN TABLE -->
+  <div class="section">
+    <div class="section-label">06 // Tabela tokenów CSS</div>
+    <div class="section-title">Referencja do wklejenia</div>
+    <table class="token-table">
+      <tr><th>TOKEN</th><th>WARTOŚĆ</th><th>UŻYCIE</th></tr>
+      <tr><td>--phi-core</td><td><span class="token-dot" style="background:#C8102E"></span>#C8102E</td><td>Tożsamość systemu, CTA primary</td></tr>
+      <tr><td>--phi-bright</td><td><span class="token-dot" style="background:#FF1F45"></span>#FF1F45</td><td>Hover, focus, aktywny stan</td></tr>
+      <tr><td>--phi-deep</td><td><span class="token-dot" style="background:#8B0000"></span>#8B0000</td><td>Pressed, border akcentu</td></tr>
+      <tr><td>--phi-ember</td><td><span class="token-dot" style="background:#FF6B4A"></span>#FF6B4A</td><td>Ciepły akcent, alert niski</td></tr>
+      <tr><td>--entropy-void</td><td><span class="token-dot" style="background:#080A0F;border-color:#333"></span>#080A0F</td><td>Najgłębsze tło, modal backdrop</td></tr>
+      <tr><td>--entropy-bg</td><td><span class="token-dot" style="background:#0E1118;border-color:#333"></span>#0E1118</td><td>Tło główne aplikacji</td></tr>
+      <tr><td>--entropy-surface</td><td><span class="token-dot" style="background:#161B26;border-color:#333"></span>#161B26</td><td>Karty, panele, sidebar</td></tr>
+      <tr><td>--entropy-raised</td><td><span class="token-dot" style="background:#1E2535;border-color:#333"></span>#1E2535</td><td>Elevated elements, dropdowns</td></tr>
+      <tr><td>--entropy-border</td><td><span class="token-dot" style="background:#2A3347;border-color:#333"></span>#2A3347</td><td>Wszystkie obramowania</td></tr>
+      <tr><td>--phi-signal</td><td><span class="token-dot" style="background:#00E5FF"></span>#00E5FF</td><td>Dane live, stream, output</td></tr>
+      <tr><td>--phi-stable</td><td><span class="token-dot" style="background:#39FF14"></span>#39FF14</td><td>OK, verified, stabilny stan</td></tr>
+      <tr><td>--phi-thermal</td><td><span class="token-dot" style="background:#FF9900"></span>#FF9900</td><td>Temperatura, warning</td></tr>
+      <tr><td>--phi-decay</td><td><span class="token-dot" style="background:#6B7FA3"></span>#6B7FA3</td><td>Nieaktywny, secondary text</td></tr>
+      <tr><td>--phi-ghost</td><td><span class="token-dot" style="background:#2E3D5C"></span>#2E3D5C</td><td>Bardzo nieaktywny, shadow</td></tr>
+      <tr><td colspan="3" style="padding-top:16px;color:var(--phi-decay);letter-spacing:3px;font-size:9px">ŚWIATŁO / CIEŃ — Mechanicum</td></tr>
+      <tr><td>--glow-phi</td><td style="color:var(--phi-ember)">red box-shadow</td><td>Poświata Φ — aktywne elementy</td></tr>
+      <tr><td>--glow-signal</td><td style="color:var(--phi-signal)">cyan box-shadow</td><td>Poświata danych live</td></tr>
+      <tr><td>--glow-stable</td><td style="color:var(--phi-stable)">green box-shadow</td><td>Poświata stabilnego stanu</td></tr>
+      <tr><td>--shadow-lift</td><td style="color:var(--type-muted)">deep + rim</td><td>Uniesiony panel / karta</td></tr>
+      <tr><td>--rim-light</td><td style="color:var(--type-muted)">top inset</td><td>Szczelina światła — górna krawędź</td></tr>
+      <tr><td>--rim-phi</td><td style="color:var(--phi-deep)">red inset</td><td>Sakralna krawędź elementów Φ</td></tr>
+    </table>
+  </div>
+
+  <div class="footer">
+    <span>KARMAZYN DESIGN LANGUAGE v0.2</span>
+    <span>STC-Φ-001 // WARSZAWA 2026</span>
+    <span>DO REWIZJI</span>
+  </div>
+
+</div>
+</body>
+</html>
