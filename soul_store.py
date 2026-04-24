@@ -235,7 +235,8 @@ def load_soul(karmazyn_os, path: str = "./karmazyn_data") -> bool:
             ko._pid    = rec.get("pid", 100)
             p2s_hex    = rec.get("p2s")
             if p2s_hex:
-                ko.phi._p2s = bytes.fromhex(p2s_hex)
+                ko.phi._p2s     = bytes.fromhex(p2s_hex)
+                ko.bubbles._phi2 = ko.phi.phi2_bytes()  # ← sync BubbleStore
             # odtwórz czas w macierzy Φ
             ko.phi._mx.time = meta_epoch
 
