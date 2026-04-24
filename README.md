@@ -28,34 +28,23 @@ Data has no format as a primary entity. Only stabilization of information in spa
 
 ### Atom `A = (S, E, T)`
 
-The minimal unit of information state. Not a record. Not a file.
-
 | Field | Meaning |
 |---|---|
-| `S` = `embedding` | Structural signature — deterministic, global, enters HRR |
-| `E` | Semantic projection — local, session-scoped, optional |
+| `S` = `embedding` | Structural signature — deterministic, global |
+| `E` | Semantic projection — local, session-scoped |
 | `T` | Stability energy — `T_vac + ΔT·exp(−λ·age)` |
 
-An atom does not store content as a persistent object. An atom is a **state of interpretability**.
+An atom is a **state of interpretability**, not a record or file.
 
 ### Prism
 
-Projection operator `P: Atom → Φ` where Φ is the interpretation space.
-
-Three standard prisms: `CORE` (semantic core), `IN` (input context), `OUT` (external interface).
-
+Projection operator `P: Atom → Φ`. Three standard prisms: `CORE`, `IN`, `OUT`.
 An agent with capability only on `OUT` receives noise for `CORE` and `IN` — not an access denial, but a world in which those data **do not exist**. This is **Warp Oblivion**.
 
 ### Hologram
 
-An interference correlation field of atoms based on HRR (Holographic Reduced Representations).
-
-```
-H = {A₁, A₂, …, Aₙ} + HRR_trace
-HRR_trace = A₁ ⊛ A₂ ⊛ … ⊛ Aₙ    (circular convolution, renormalized)
-```
-
-A hologram does not store information. A hologram **enforces the admissible forms of information**.
+Interference correlation field of atoms based on HRR (Holographic Reduced Representations).
+A hologram does not store information — it **enforces the admissible forms of information**.
 
 ---
 
@@ -69,20 +58,15 @@ A hologram does not store information. A hologram **enforces the admissible form
 ├─────────────────────────────────────────────────┤
 │  COLD  archive store   disk, Ring-LWE (N=64)    │
 └─────────────────────────────────────────────────┘
+
+FSM:  CREATED → HOT → WARM → COLD → TOMB → GC
 ```
 
-**Atom FSM lifecycle:**
-```
-CREATED → HOT → WARM → COLD → TOMB → GC
-```
-
-**Vacuum Decay** — natural thermodynamic GC. An atom below threshold `T_vacuum + ε` is not deleted — it ceases to exist as information. The ciphertext on disk becomes thermodynamic noise.
+**Vacuum Decay** — thermodynamic GC. An atom below `T_vacuum + ε` ceases to exist as information. The ciphertext on disk becomes thermodynamic noise.
 
 ---
 
 ## Cryptographic model
-
-Security through algebra, not through access control lists.
 
 ```
 base_secret = HMAC(CSPRNG, Φ².tobytes())
@@ -93,7 +77,7 @@ s_agent     = KDF(s_sess, JSON(task, prisms))
 Prism encryption: **Ring-LWE / LPR** (N=64, Q=3329, η=2).
 Full specification: [HSS Paper v2.6.0](https://doi.org/10.5281/zenodo.19548693).
 
-**Three independent rhythms** with no shared global clock:
+**Three independent rhythms** — no shared global clock:
 - Cryptographic: `epoch = floor(UTC/300)` — session_id rotation
 - Thermodynamic: `T = T_vac + ΔT·exp(−λ·age)` — decay
 - Semantic: `score = (α·S + (1-α)·E) × T(atom)` — recall
@@ -116,57 +100,37 @@ Full specification: [HSS Paper v2.6.0](https://doi.org/10.5281/zenodo.19548693).
 
 | File | Description |
 |---|---|
-| `hss_demo.py` | HSSDaemon v2.9 — Ring-LWE, 20/20 tests |
-| `holonp_hss_adapter.py` | Adapter Φ² → s_sess |
-| `holonos_v04.py` | CognitiveState — thermodynamics of Φ |
-| `holonos_integrated.py` | Integrated system — demo + CLI |
-| `holo_lsm.c` | Linux Security Module v3.4 |
-| `KarmazynOS_Spec_v06.md` | Core specification v0.6 |
-| `holonos_animation.html` | Demo animation (browser, offline) |
+| `karmazyn.py` | Thermodynamic Memory Kernel v1.1.1 — Φ, bubbles, holograms |
+| `hss_demo.py` | HSSDaemon — Ring-LWE session management |
+| `hss_karmazyn_matrix.py` | Atom matrix with thermodynamic decay |
+| `shell.py` | Karmazyn Shell (ksh) v1.1.0 |
+| `studio.py` | KarmazynOS Studio v1.1.0 — local HTTP development environment |
+| `soul_store.py` | JSONL persistence format (.soul) |
+| `bubblefs.py` | BubbleFS — portable bubble exchange format |
+| `karmazyn_comm.py` | Thermodynamic communication manager (SMS/calls via Termux) |
+| `karmazyn_ui/` | Design Language — tokens, states, renderer (STC-Φ-001) |
+| `static/` | Generated CSS and JS tokens |
+| `how_to.md` / `how_to_en.md` | User guide (PL/EN) |
 
 ---
 
-## Running the demo
+## Quick start
 
 ```bash
+git clone https://github.com/Maciej-EriAmo/KarmazynOs
+cd KarmazynOs
 pip install numpy --break-system-packages
 
-# Full demo + CLI
-python holonos_integrated.py
+# Interactive shell
+python shell.py
 
-# Three-agent scenario only
-python holonos_integrated.py --demo
-
-# CLI only (notes + HSS)
-python holonos_integrated.py --cli
+# Web-based Studio (open http://localhost:8080)
+python studio.py
 ```
 
-**Requirements:** Python 3.10+, numpy. Runs offline, no GPU, on ARM64 (Samsung A54 / Termux).
-
-### Sample output
-
-```
-T_vacuum (v0.4):    2.2074 bit
-epoch HSS:          5921360
-evaluate() Agent A: score=11.797 > θ=3.311 → ALLOW
-evaluate() Agent B: score=1.841 ≤ θ=3.311 → DENY
-Agent A: 3× ✓ SIGNAL
-Agent B: 3× NOISE ✗ (Warp Oblivion)
-Agent C: out ✓ METADATA, core/in ✗ NOISE
-Vacuum Decay: s_A revoked → DENY after vacuum
-```
-
-### CLI commands
-
-```
-add <text>         — add atom to Φ memory
-recall <query>     — search via cosine × temperature
-list               — list atoms with temperature
-step [n]           — advance n epochs (cooling + vacuum decay)
-stats              — system state
-/demo              — run three-agent scenario
-/eval <text>       — query evaluate() of Φ
-/session           — show HSS session state
+On Termux (Android):
+```bash
+termux-open-url http://localhost:8080
 ```
 
 ---
@@ -187,11 +151,14 @@ stats              — system state
 ## Status
 
 ```
-hss_demo.py v2.9           ✅  20/20 tests passing
-holonos_integrated.py      ✅  running on Samsung A54 / Termux
-holo_lsm.c v3.4            ✅  Linux LSM with Φ-space
-KarmazynOS_Spec_v06.md     ✅  6 audit rounds, consistent
-Reference implementation    ⏳  atom.py + memory.py + cold_store.py
+karmazyn.py v1.1.1         ✅  core kernel, persistence fixed
+shell.py v1.1.0            ✅  interactive shell
+studio.py v1.1.0           ✅  web Studio with Design Language
+soul_store.py v1.0.0       ✅  .soul format, 9/9 tests passing
+hss_karmazyn_matrix.py     ✅  no pickle, stable serialization
+bubblefs.py v1.0.0         ✅  portable exchange format
+karmazyn_ui/ v0.1.0        ✅  Design Language STC-Φ-001
+Reference implementation   ⏳  atom.py + memory.py + cold_store.py
 Crimson Loop               ⏳  introspection — final layer
 ```
 
