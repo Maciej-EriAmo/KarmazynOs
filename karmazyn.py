@@ -1,10 +1,5 @@
 """
 karmazyn.py — Thermodynamic Memory Kernel (KarmazynOS) v1.1.1
-===============================================================
-
-Zmiany v1.1.1:
-  [fix] Zapis i odczyt phi._p2s w save()/load()
-        (bez tego klucze bąbli nie przechodziły restartu)
 """
 
 import os
@@ -145,7 +140,7 @@ class PhiSpace:
     def __init__(self, dim=64, n_sessions=1, seed=42):
         self._mx = HSSKarmazynMatrix(dim=dim, n_sessions=n_sessions, lambd=LAMBDA_DECAY, seed=seed)
         self.dim = dim; self._sid = 0; self._tvac = self._measure_tvac()
-        self._p2s = os.urandom(32)  # ← TEN ATRYBUT MUSI BYĆ ZAPISYWANY
+        self._p2s = os.urandom(32)
         self._sem: Dict[str,np.ndarray] = {}; self._rc: Dict[str,int] = {}; self._idf = IDFCounter()
     def embed_structural(self, c: bytes):
         s = int(hashlib.md5(c).hexdigest(),16)%(2**32)
@@ -268,7 +263,6 @@ class KarmazynOS:
         thresh = self._ac.get(label,0)
         if thresh>0 and self.phi.recall_count(label)>=thresh:
             if self.bubbles.get_by_label(label) is None:
-                print(f"  [AUTO] '{label[:25]}' recall≥{thresh} → consolidate")
                 self.consolidate(label)
 
     def recall(self, query: str, k=5):
@@ -331,33 +325,6 @@ class KarmazynOS:
         self._pid+=1; s = self.daemon.derive_agent_key(self._pid, task, prisms)
         self._reg[self._pid] = (task, prisms); return self._pid, s
 
-    def read_as_agent(self, label, pid, s_agent, from_bubble=False):
-        if from_bubble:
-            b = self.bubbles.get_by_label(label)
-            if not b: return {'error': f'bąbel {label} nieznany'}
-            inode, fp = b.inode, b.fingerprint; s_eff = self.bubbles.bubble_s_agent(b)
-        else:
-            inode = self._amap.get(label)
-            if not inode: return {'error': f'atom {label} nieznany'}
-            fp, s_eff = self._fp.get(label), s_agent
-        reg = self._reg.get(pid)
-        if not reg: return {'error': f'PID {pid} nieznany'}
-        task, prisms = reg
-        res = self.daemon.upcall_read(pid, inode, prisms, task)
-        if res is None: return {'error': 'ODMOWA'}
-        out = {}
-        for p in res:
-            bits = decrypt(s_eff, p.u, p.v)
-            if fp and len(bits)>=len(fp)*8:
-                read_bytes = np.packbits(bits[:len(fp)*8]).tobytes()
-                hamming = _hamming_distance(fp, read_bytes)
-                n_bits = len(fp)*8; mean = n_bits*0.5; std = math.sqrt(n_bits*0.5*0.5)
-                threshold = int(mean+2*std); sig = hamming <= threshold
-                out[p.prism_id] = {'signal': sig, 'hamming': hamming,
-                    'status': f'{"✓ SYGNAŁ" if sig else "✗ SZUM"} (h={hamming})'}
-            else: out[p.prism_id] = {'signal': False, 'status': '✗ SZUM (brak fp)'}
-        return out
-
     def mark_bubble_for_decay(self, label, rate=0.01): return self.bubbles.mark_for_decay(label, self.phi.epoch, rate)
     def refresh_bubble(self, label): return self.bubbles.refresh_bubble(label)
 
@@ -378,14 +345,15 @@ class KarmazynOS:
         k = min(n_components, len(eigvals)); top_idx = np.argsort(eigvals)[-k:]
         generators = [eigvecs[:,i] for i in top_idx]
         weights = [float(eigvals[i]) for i in top_idx]
-        max_w = max(weights) if weights else 1.0; weights = [w/max_w for w in weights]
+        max_w = max(weights) if weights else 1.0
+        if max_w == 0.0: max_w = 1.0
+        weights = [w/max_w for w in weights]
         hid = f"idea_{topic}_{self.phi.epoch}_{hashlib.md5(topic.encode()).hexdigest()[:6]}"
         self.holograms[hid] = Hologram(id=hid, topic=topic, proto=proto,
             generators=generators, weights=weights, bubble_labels=labels, epoch_created=self.phi.epoch)
         print(f"  [IDEA] Utworzono '{hid}' z {len(labels)} bąbli")
         if remove_originals:
             for lbl in labels: self.bubbles.remove_bubble(lbl)
-            print("  [IDEA] Usunięto oryginalne bąble")
         return hid
 
     def recall_from_hologram(self, hologram_id, cue, k=3):
@@ -443,79 +411,56 @@ class KarmazynOS:
                 "bubbles_decaying": self.bubbles.count_decaying, "bubbles_revoked": len(self.bubbles._rev),
                 "holograms": len(self.holograms), "bubble_bias": self._bubble_bias()}
 
-    # ──────────────────────────── PERSISTENCE ────────────────────────────
     def save(self, path="./karmazyn_data"):
         os.makedirs(path, exist_ok=True)
-        # Φ
         self.phi._mx.save(os.path.join(path, "hss_matrix.npz"))
         np.savez(os.path.join(path, "phi_sem.npz"), **self.phi._sem)
         with open(os.path.join(path, "phi_rc.json"), "w") as f:
             json.dump(self.phi._rc, f)
-        # Bąble
         with open(os.path.join(path, "bubbles.pkl"), "wb") as f:
-            pickle.dump({
-                "_b": self.bubbles._b, "_idx": self.bubbles._idx,
-                "_rev": self.bubbles._rev, "_phi2": self.bubbles._phi2.hex()
-            }, f)
-        # Hologramy
+            pickle.dump({"_b": self.bubbles._b, "_idx": self.bubbles._idx,
+                         "_rev": self.bubbles._rev, "_phi2": self.bubbles._phi2.hex()}, f)
         holo_dict = {}
         for hid, h in self.holograms.items():
-            holo_dict[hid] = {
-                "topic": h.topic, "proto": h.proto.tolist(),
-                "generators": [g.tolist() for g in h.generators],
-                "weights": h.weights, "bubble_labels": h.bubble_labels,
-                "epoch_created": h.epoch_created, "decay_rate": h.decay_rate,
-                "metadata": h.metadata
-            }
+            holo_dict[hid] = {"topic": h.topic, "proto": h.proto.tolist(),
+                "generators": [g.tolist() for g in h.generators], "weights": h.weights,
+                "bubble_labels": h.bubble_labels, "epoch_created": h.epoch_created,
+                "decay_rate": h.decay_rate, "metadata": h.metadata}
         with open(os.path.join(path, "holograms.json"), "w") as f:
             json.dump(holo_dict, f, indent=2)
-        # Meta – zawiera teraz p2s
-        meta = {
-            "epoch":       self.phi.epoch,
-            "temperature": self.phi.temperature(),
-            "pid":         self._pid,
-            "version":     VERSION,
-            "p2s":         self.phi._p2s.hex(),   # ← ZAPISANE
-        }
+        meta = {"epoch": self.phi.epoch, "temperature": self.phi.temperature(),
+                "pid": self._pid, "version": VERSION, "p2s": self.phi._p2s.hex()}
         with open(os.path.join(path, "meta.json"), "w") as f:
             json.dump(meta, f)
         print(f"Stan zapisany w {path}")
 
     def load(self, path="./karmazyn_data"):
         if not os.path.isdir(path):
-            print(f"Nie znaleziono katalogu {path}")
-            return False
-        # Φ
+            print(f"Nie znaleziono katalogu {path}"); return False
         self.phi._mx.load(os.path.join(path, "hss_matrix.npz"))
         sem_data = np.load(os.path.join(path, "phi_sem.npz"), allow_pickle=True)
         self.phi._sem = {k: sem_data[k] for k in sem_data.files}
         with open(os.path.join(path, "phi_rc.json"), "r") as f:
             self.phi._rc = json.load(f)
-        # Bąble
         with open(os.path.join(path, "bubbles.pkl"), "rb") as f:
             bdata = pickle.load(f)
-        self.bubbles._b = bdata["_b"]
-        self.bubbles._idx = bdata["_idx"]
-        self.bubbles._rev = set(bdata["_rev"])
-        self.bubbles._phi2 = bytes.fromhex(bdata["_phi2"])
-        # Hologramy
+        self.bubbles._b = bdata["_b"]; self.bubbles._idx = bdata["_idx"]
+        self.bubbles._rev = set(bdata["_rev"]); self.bubbles._phi2 = bytes.fromhex(bdata["_phi2"])
         with open(os.path.join(path, "holograms.json"), "r") as f:
             holo_dict = json.load(f)
         self.holograms.clear()
         for hid, hd in holo_dict.items():
-            self.holograms[hid] = Hologram(
-                id=hid, topic=hd["topic"], proto=np.array(hd["proto"], dtype=np.float32),
+            self.holograms[hid] = Hologram(id=hid, topic=hd["topic"],
+                proto=np.array(hd["proto"], dtype=np.float32),
                 generators=[np.array(g, dtype=np.float32) for g in hd["generators"]],
                 weights=hd["weights"], bubble_labels=hd["bubble_labels"],
-                epoch_created=hd["epoch_created"], decay_rate=hd["decay_rate"],
-                metadata=hd["metadata"]
-            )
-        # Meta
+                epoch_created=hd["epoch_created"], decay_rate=hd["decay_rate"], metadata=hd["metadata"])
         with open(os.path.join(path, "meta.json"), "r") as f:
             meta = json.load(f)
         self._pid = meta.get("pid", 100)
-        if "p2s" in meta:                          # ← ODTWORZONE
+        if "p2s" in meta:
             self.phi._p2s = bytes.fromhex(meta["p2s"])
+            self.bubbles._phi2 = self.phi.phi2_bytes()
         print(f"Stan wczytany z {path} (epoka: {meta['epoch']})")
         return True
 
