@@ -1,5 +1,15 @@
 """
-karmazyn.py — Thermodynamic Memory Kernel (KarmazynOS) v1.1.1
+karmazyn.py — Thermodynamic Memory Kernel (KarmazynOS) v1.1.2
+===============================================================
+
+Zmiany v1.1.2:
+  [fix] archive_bubbles_to_hologram() — ZeroDivisionError gdy max(weights)==0
+        (wektory semantyczne zbyt podobne → zdegenerowana macierz kowariancji)
+  [new] AtomStore HOT — warstwa robocza w RAM, bez zapisu na FS
+        Atomy efemeryczne: znikają przez Vacuum Decay lub restart
+        Bąble trwałe: szyfrowane, persystowane w .soul
+  [new] step() — Vacuum Decay dla AtomStore
+  [new] stats() — pole atoms_hot
 """
 
 import os
@@ -20,7 +30,7 @@ sys.path.insert(0, _DIR)
 from hss_karmazyn_matrix import HSSKarmazynMatrix
 from hss_demo import HSSDaemon, kdf, decrypt, N, Q
 
-VERSION      = "1.1.1"
+VERSION      = "1.1.2"
 ALPHA        = 0.3
 LAMBDA_DECAY = 0.1
 DELTA_T_BASE = 5.0
@@ -227,12 +237,21 @@ class KarmazynOS:
         phi2_vec = np.frombuffer(self.phi.phi2_bytes()*4, dtype=np.float32)[:N]
         self._s_sess = self.daemon.init_phi_session(phi2_vec, phi_pid=0)
         self.bubbles = BubbleStore(self.phi.phi2_bytes(), self._s_sess)
+        # AtomStore — warstwa HOT, efemeryczna, bez zapisu na FS
+        # Atomy żyją w RAM, znikają przez Vacuum Decay lub restart
+        try:
+            from atom_store import AtomStore as _AtomStore
+            self.atoms = _AtomStore()
+        except ImportError:
+            self.atoms = None
         self._amap: Dict[str,str] = {}; self._fp: Dict[str,bytes] = {}; self._raw: Dict[str,bytes] = {}
         self._ac: Dict[str,int] = {}; self._pid = 100; self._reg: Dict[int,Tuple] = {}
         self._auto_cleanup_interval = auto_cleanup_interval; self._steps_since_cleanup = 0
         self.holograms: Dict[str,Hologram] = {}
         print(f"  KarmazynOS v{VERSION} — Thermodynamic Memory Kernel")
         print(f"  Φ + Bąble + Hologramy | T_vacuum = {self.phi.t_vacuum():.4f} bit")
+        if self.atoms is not None:
+            print(f"  AtomStore HOT aktywny")
 
     def _bubble_bias(self):
         n_eff_b = sum(b.liveliness(self.phi.epoch) for b in self.bubbles.all_active)
@@ -401,14 +420,27 @@ class KarmazynOS:
                 removed = self.bubbles.cleanup_revoked()
                 if removed: print(f"  [GC] Usunięto {removed} revoked bąbli")
                 self._steps_since_cleanup = 0
+            # Vacuum Decay dla AtomStore — atomy poniżej progu znikają
+            if self.atoms is not None:
+                epoch = self.phi.epoch
+                dead = [a.label for a in self.atoms.all_active
+                        if a.liveliness(epoch) <= 1e-9]
+                for lbl in dead:
+                    self.atoms.remove_atom(lbl)
+                if dead:
+                    print(f"  [HOT GC] Vacuum Decay: {len(dead)} atomów")
         return self.stats()
 
     def cleanup_revoked(self): return self.bubbles.cleanup_revoked()
 
     def stats(self):
         s = self.phi.stats()
-        return {**s, "version": VERSION, "atoms_phi": s["atoms"], "bubbles": self.bubbles.count,
-                "bubbles_decaying": self.bubbles.count_decaying, "bubbles_revoked": len(self.bubbles._rev),
+        hot_count = self.atoms.count if self.atoms is not None else 0
+        return {**s, "version": VERSION, "atoms_phi": s["atoms"],
+                "atoms_hot": hot_count,
+                "bubbles": self.bubbles.count,
+                "bubbles_decaying": self.bubbles.count_decaying,
+                "bubbles_revoked": len(self.bubbles._rev),
                 "holograms": len(self.holograms), "bubble_bias": self._bubble_bias()}
 
     def save(self, path="./karmazyn_data"):
