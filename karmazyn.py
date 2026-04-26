@@ -1,5 +1,5 @@
 """
-karmazyn.py — Thermodynamic Memory Kernel (KarmazynOS) v1.1.2
+karmazyn.py — Thermodynamic Memory Kernel (KarmazynOS) v1.1.3
 ===============================================================
 
 Zmiany v1.1.2:
@@ -10,6 +10,8 @@ Zmiany v1.1.2:
         Bąble trwałe: szyfrowane, persystowane w .soul
   [new] step() — Vacuum Decay dla AtomStore
   [new] stats() — pole atoms_hot
+  [fix] step() — czyszczenie _raw/_amap/_fp/_ac po Vacuum Decay
+  [fix] consolidate() — usuń _raw po konsolidacji (plaintext nie potrzebny)
 """
 
 import os
@@ -140,10 +142,21 @@ class BubbleStore:
     def all_active(self): return [b for bid,b in self._b.items() if bid not in self._rev]
 
 class IDFCounter:
+    """
+    Licznik IDF z limitem rozmiaru słownika.
+    Bez limitu _freq rośnie nieograniczenie przy długich sesjach.
+    MAX_VOCAB: zachowuje najczęstsze tokeny, usuwa rzadkie.
+    """
+    MAX_VOCAB = 10000
+
     def __init__(self): self._freq=Counter(); self._ndocs=0
     def add_doc(self, tokens):
         self._ndocs+=1
         for t in set(tokens): self._freq[t]+=1
+        # przytnij słownik gdy przekroczy limit — zachowaj najczęstsze
+        if len(self._freq) > self.MAX_VOCAB:
+            keep = self.MAX_VOCAB // 2
+            self._freq = Counter(dict(self._freq.most_common(keep)))
     def idf(self, token): return float(np.log1p(self._ndocs/(1+self._freq.get(token,0))))
 
 class PhiSpace:
@@ -256,7 +269,7 @@ class KarmazynOS:
     def _bubble_bias(self):
         n_eff_b = sum(b.liveliness(self.phi.epoch) for b in self.bubbles.all_active)
         n_eff_h = sum(h.liveliness(self.phi.epoch)*0.5 for h in self.holograms.values())
-        return 1.0 + 0.5*math.log1p(n_eff_b + n_eff_h)
+        return min(2.0, 1.0 + 0.5*math.log1p(n_eff_b + n_eff_h))
 
     def write(self, content: str, auto_consolidate=0):
         raw = content.encode(); label = self.phi.add(raw)
@@ -276,6 +289,8 @@ class KarmazynOS:
         bubble = self.bubbles.store(label=label, S_struct=s_str, S_sem=s_sem,
                                     content_raw=raw, inode=b_inode, epoch=self.phi.epoch,
                                     consolidated_from=label, metadata=metadata or {})
+        # plaintext nie jest już potrzebny — treść jest w zaszyfrowanym bąblu
+        self._raw.pop(label, None)
         print(f"  [KONSOLIDACJA] '{label[:30]}' → {bubble.id}"); return bubble.id
 
     def _auto_check(self, label):
@@ -361,6 +376,7 @@ class KarmazynOS:
         data = np.array(vectors); proto = np.mean(data, axis=0); proto /= np.linalg.norm(proto)+1e-9
         centered = data - proto; cov = centered.T @ centered / len(data)
         eigvals, eigvecs = np.linalg.eigh(cov)
+        eigvals = np.maximum(eigvals, 1e-10)  # stabilizacja — brak degeneracji
         k = min(n_components, len(eigvals)); top_idx = np.argsort(eigvals)[-k:]
         generators = [eigvecs[:,i] for i in top_idx]
         weights = [float(eigvals[i]) for i in top_idx]
@@ -420,6 +436,15 @@ class KarmazynOS:
                 removed = self.bubbles.cleanup_revoked()
                 if removed: print(f"  [GC] Usunięto {removed} revoked bąbli")
                 self._steps_since_cleanup = 0
+            # Synchronizuj _raw/_amap/_fp/_ac z żywymi atomami Φ
+            # Bez tego plaintext zostaje w RAM po Vacuum Decay atomu
+            alive = {a['label'] for a in self.phi._mx.atoms}
+            for label in list(self._raw.keys()):
+                if label not in alive:
+                    del self._raw[label]
+                    self._amap.pop(label, None)
+                    self._fp.pop(label, None)
+                    self._ac.pop(label, None)
             # Vacuum Decay dla AtomStore — atomy poniżej progu znikają
             if self.atoms is not None:
                 epoch = self.phi.epoch
