@@ -1,5 +1,5 @@
 """
-karmazyn.py — Thermodynamic Memory Kernel (KarmazynOS) v1.3.0
+karmazyn.py — Thermodynamic Memory Kernel (KarmazynOS) v1.3.1
 ===============================================================
 
 Zmiany v1.3.0:
