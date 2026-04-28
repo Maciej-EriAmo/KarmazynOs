@@ -204,19 +204,27 @@ class CrimsonNetwork:
         phi2_hex = self.karmazyn.phi.phi2_bytes().hex()         # 64 hex chars
         commitment = self.karmazyn.get_p2s_commitment(nonce, peer_phi_id)
 
+        # bubble_id to jawny identyfikator bąbla – potrzebny peerowi
+        # do odtworzenia bubble_key = sha256(phi2_bytes + 'bubble:' + bid)
+        b_identity = self.karmazyn.bubbles.get_by_label(
+            KarmazynOS._P2S_BUBBLE_LABEL
+        )
+        bubble_id = b_identity.id if b_identity else ""
+
         frame = {
-            "phi_id":       phi_id,
-            "nonce":        nonce.hex(),
-            "commitment":   commitment.hex(),
-            "phi2_hex":     phi2_hex,
-            "version":      "crimson-1.3",
+            "phi_id":     phi_id,
+            "nonce":      nonce.hex(),
+            "commitment": commitment.hex(),
+            "phi2_hex":   phi2_hex,
+            "bubble_id":  bubble_id,
+            "version":    "crimson-1.3",
         }
         return json.dumps(frame, separators=(',', ':')).encode('utf-8')
 
     def _parse_identity_frame(self, data: bytes) -> Optional[dict]:
         try:
             frame = json.loads(data.decode('utf-8'))
-            required = {"phi_id", "nonce", "commitment", "phi2_hex", "version"}
+            required = {"phi_id", "nonce", "commitment", "phi2_hex", "bubble_id", "version"}
             if not required.issubset(frame.keys()):
                 return None
             # Konwersja z hex
@@ -242,10 +250,11 @@ class CrimsonNetwork:
         peer_commitment = peer_frame["commitment_bytes"]
         peer_phi2_bytes = peer_frame["phi2_bytes"]  # sha256(_p2s+'phi2-v1') – jawne
 
-        # Odtworzenie bubble_key peera z jego phi2_bytes
-        bid_label = KarmazynOS._P2S_BUBBLE_LABEL.encode()
+        # Odtworzenie bubble_key peera z jego phi2_bytes i bubble_id
+        # bubble_id przesłany jawnie w ramce tożsamości (krok 0)
+        peer_bubble_id = peer_frame.get("bubble_id", "").encode()
         peer_bubble_key = hashlib.sha256(
-            peer_phi2_bytes + b"bubble:" + bid_label
+            peer_phi2_bytes + b"bubble:" + peer_bubble_id
         ).digest()
 
         # Rekonstrukcja oczekiwanego commitment
