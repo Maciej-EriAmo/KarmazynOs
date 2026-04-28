@@ -1,21 +1,16 @@
-
----
-
-## 3. Nowy `runtime.py` — z klasą `SystemState`
-
-```python
 """
-KarmazynOS — SanctuaryRuntime
-Jedno źródło prawdy o stanie systemu, EventBus, pętla systemowa,
-oraz SystemState — most między STC-Φ-001 a kodem.
+KarmazynOS — SanctuaryRuntime v1.0
+Jedyny punkt dostępu do macierzy atomów, egzekwuje cykl życia i emituje zdarzenia.
 """
 import threading
 import time
+from typing import Optional, List, Tuple
+from karmazyn import Atom
 from hss_karmazyn_matrix import HSSMatrix
-from karmazyn_ui import gfx, audio
+from karmazyn_ui import audio, gfx
 
 # ═══════════════════════════════════════════
-# MAPOWANIE STANÓW (STC-Φ-001, sekcja 08)
+# MAPOWANIE STANÓW (zgodne z STC-Φ-001)
 # ═══════════════════════════════════════════
 STATE_MAP = {
     "active":  {"color": "phi_stable", "sound": "tick",         "dot": "active"},
@@ -26,12 +21,12 @@ STATE_MAP = {
 }
 
 class SystemState:
-    """Most między tokenami STC a kodem wykonawczym."""
+    """Klasyfikuje atom i zwraca tokeny percepcji."""
     @staticmethod
-    def classify(atom) -> str:
+    def classify(atom: Atom) -> str:
         if atom.state == "TOMB" or atom.T <= 0:
             return "ghost"
-        if hasattr(atom, "splamiony") and atom.splamiony:
+        if hasattr(atom, 'splamiony') and atom.splamiony:
             return "corrupt"
         if atom.T > 70:
             return "active"
@@ -40,63 +35,114 @@ class SystemState:
         return "decay"
 
     @staticmethod
-    def color_for(atom) -> str:
+    def color_for(atom: Atom) -> str:
         return STATE_MAP[SystemState.classify(atom)]["color"]
 
     @staticmethod
-    def sound_for(atom) -> str | None:
+    def sound_for(atom: Atom) -> Optional[str]:
         return STATE_MAP[SystemState.classify(atom)]["sound"]
 
     @staticmethod
-    def dot_for(atom) -> str:
+    def dot_for(atom: Atom) -> str:
         return STATE_MAP[SystemState.classify(atom)]["dot"]
 
 
-# ═══════════════════════════════════════════
-# EVENT BUS
-# ═══════════════════════════════════════════
 class EventBus:
     def __init__(self):
         self._handlers = {}
+
     def on(self, event: str, handler):
         self._handlers.setdefault(event, []).append(handler)
+
     def emit(self, event: str, *args):
         for h in self._handlers.get(event, []):
             h(*args)
 
 
-# ═══════════════════════════════════════════
-# RUNTIME
-# ═══════════════════════════════════════════
 class SanctuaryRuntime:
     def __init__(self):
         self.matrix = HSSMatrix()
-        self.resources = {"żywica": 10}
-        self.current_mission = None
-        self.lock = threading.RLock()
         self.events = EventBus()
         self.audio = audio.AudioEngine()
         self._running = False
         self._thread = None
 
         # Podłączamy audio do zdarzeń
-        self.events.on("tick", lambda atom: self.audio.tick(atom.T))
-        self.events.on("vacuum_decay", lambda atom: self.audio.vacuum_decay())
-        self.events.on("stabilized", lambda atom: self.audio.mandala_harmony())
-        self.events.on("corruption", lambda atom: self.audio.corruption())
+        self.events.on("tick", lambda a: self.audio.tick(a.T))
+        self.events.on("vacuum_decay", lambda a: self.audio.vacuum_decay())
+        self.events.on("atom_stabilized", lambda a: self.audio.mandala_harmony())
+        self.events.on("atom_corrupted", lambda a: self.audio.corruption())
 
-    def start_mission(self, mission_spec: dict):
-        with self.lock:
-            self.current_mission = mission_spec
-            self.resources["żywica"] = mission_spec.get("startowa_zywica", 10)
-            for rel in mission_spec["relikwie"]:
-                if not self.matrix.has_atom(rel["id"]):
-                    self.matrix.create_atom(rel["id"], rel["S"], rel["E"], rel["T_start"])
-            self.events.emit("mission_started", mission_spec)
+    # ═══════════════════════════════════════
+    # API PUBLICZNE
+    # ═══════════════════════════════════════
+    def create_atom(self, id: str, S: str, E: str, T: float) -> Atom:
+        if self.matrix.has_atom(id):
+            raise ValueError(f"Atom {id} już istnieje")
+        atom = self.matrix.create_atom(id, S, E, T)
+        self.events.emit("atom_created", atom)
+        return atom
 
-    def get_atom(self, atom_id: str):
-        return self.matrix.get_atom(atom_id)
+    def delete_atom(self, id: str) -> Atom:
+        atom = self.matrix.get_atom(id)
+        if atom is None:
+            raise ValueError(f"Atom {id} nie istnieje")
+        if atom.state not in ("HOT", "WARM"):
+            raise ValueError("Atom mus nie być HOT lub WARM")
+        atom.state = "TOMB"
+        self.events.emit("atom_deleted", atom)
+        return atom
 
+    def stabilize_atom(self, id: str) -> Atom:
+        atom = self.matrix.get_atom(id)
+        if atom is None:
+            raise ValueError(f"Atom {id} nie istnieje")
+        atom.T = atom.T_max
+        atom.state = "HOT"
+        self.events.emit("atom_stabilized", atom)
+        return atom
+
+    def update_atom(self, id: str, **kwargs) -> Atom:
+        atom = self.matrix.get_atom(id)
+        if atom is None:
+            raise ValueError(f"Atom {id} nie istnieje")
+        for key, value in kwargs.items():
+            if hasattr(atom, key):
+                setattr(atom, key, value)
+        self.events.emit("atom_updated", atom)
+        return atom
+
+    def clone_atom(self, src_id: str, dst_id: str) -> Atom:
+        src = self.matrix.get_atom(src_id)
+        if src is None:
+            raise ValueError(f"Źródłowy atom {src_id} nie istnieje")
+        if self.matrix.has_atom(dst_id):
+            raise ValueError(f"Docelowy atom {dst_id} już istnieje")
+        return self.create_atom(dst_id, src.S, src.E, src.T)
+
+    def get_atom(self, id: str) -> Optional[Atom]:
+        return self.matrix.get_atom(id)
+
+    def has_atom(self, id: str) -> bool:
+        return self.matrix.has_atom(id)
+
+    def list_atoms(self, layer: str = None, prism: str = None, emanation: str = None) -> List[Atom]:
+        atoms = self.matrix.atoms()
+        if layer:
+            atoms = [a for a in atoms if a.state == layer]
+        if emanation:
+            atoms = [a for a in atoms if a.E == emanation]
+        # Filtrowanie Warp Oblivion
+        if prism is None:
+            atoms = [a for a in atoms if SystemState.classify(a) != "ghost"]
+        return atoms
+
+    def count_atoms(self, layer: str = None) -> int:
+        return len(self.list_atoms(layer=layer))
+
+    # ═══════════════════════════════════════
+    # PĘTLA TERMODYNAMICZNA
+    # ═══════════════════════════════════════
     def step(self):
         changes = self.matrix.step()
         for atom, event_type in changes:
@@ -107,7 +153,7 @@ class SanctuaryRuntime:
             elif event_type == "warm":
                 self.events.emit("warm_threshold", atom)
 
-    def start_system_loop(self, interval=0.2):
+    def start_loop(self, interval: float = 0.2):
         if self._running:
             return
         self._running = True
@@ -118,5 +164,5 @@ class SanctuaryRuntime:
         self._thread = threading.Thread(target=loop, daemon=True)
         self._thread.start()
 
-    def stop_system_loop(self):
+    def stop_loop(self):
         self._running = False
