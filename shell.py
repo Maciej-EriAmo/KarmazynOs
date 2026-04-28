@@ -1,27 +1,49 @@
 #!/usr/bin/env python3
 """
-KarmazynOS — Shell (ksh) v1.6
-Reaktywna powłoka z silnikiem misji Sanktuarium.
+KarmazynOS — Shell (ksh) v2.2
+Lekka powłoka — logika w modułach.
 
-Obsługuje format misji:
-    cele            — lista warunków wygranej
-    limit_ciszy     — max atomów TOMB przed przegraną
-    czas_misji      — limit czasu w sekundach
-    startowa_zywica — zasób stabilizacji
+Importy:
+    runtime               — SanctuaryRuntime
+    karmazyn_fs           — KarmazynFS  
+    bedit                 — KarmazynIntegration (BubbleRuntime)
+    mission_engine        — MissionEngine
+    bubble_commands       — cmd_edit, cmd_import, cmd_gallery, cmd_export
+    karmazyn_lang         — KarmazynExecutor (.karm)
+    karmazyn_ui           — theme, gfx
 """
 import json
 import os
 import sys
 import time
-import subprocess
-import threading
 import readline
-from typing import Optional, List
+from typing import Optional
 
 from runtime import SanctuaryRuntime, SystemState
 from karmazyn_fs import KarmazynFS
 from karmazyn_ui import theme, gfx
 from karmazyn_ui.embedder import LevelEmbedder
+
+# ─── Bąble ───────────────────────────────────────────
+from bedit import KarmazynIntegration as BubbleRuntime
+BUBBLES = BubbleRuntime()
+
+# ─── Misje ───────────────────────────────────────────
+from mission_engine import MissionEngine, describe_cel
+
+# ─── Komendy bąbli ───────────────────────────────────
+from bubble_commands import (
+    CTX as BUBBLE_CTX,
+    cmd_edit, cmd_import, cmd_gallery, cmd_export,
+    init as bubble_init,
+)
+
+# ─── KarmazynScript ──────────────────────────────────
+try:
+    from karmazyn_lang import KarmazynExecutor, parse_file
+    KARM_LOADED = True
+except ImportError:
+    KARM_LOADED = False
 
 # ═══════════════════════════════════════════
 # INICJALIZACJA SYSTEMU
@@ -30,239 +52,59 @@ RUNTIME = SanctuaryRuntime()
 FS      = KarmazynFS(RUNTIME)
 RUNTIME.start_loop()
 
-# ═══════════════════════════════════════════
-# SILNIK MISJI
-# ═══════════════════════════════════════════
+# Podłącz referencje do bubble_commands
+bubble_init(BUBBLES, RUNTIME)
 
-class MissionEngine:
-    """
-    Sprawdza warunki wygranej i przegranej misji.
-
-    Obsługiwane cele:
-        utrzymaj_<id>_przez_<n>_sekund  — atom musi przeżyć n sekund
-        ocal_<n>_atomow                 — n atomów musi przeżyć do końca
-        utrzymaj_temperature_<n>        — średnia T > n przez cały czas
-
-    Warunki przegranej:
-        limit_ciszy  — gdy tyle atomów trafi do TOMB
-        czas_misji   — przekroczony limit czasu
-    """
-
-    def __init__(self, runtime: SanctuaryRuntime):
-        self.runtime     = runtime
-        self._active     = False
-        self._start_time: Optional[float] = None
-        self._atom_birth: dict = {}      # atom_id → czas stworzenia
-        self._survived:   dict = {}      # atom_id → sekundy przeżyte
-        self._result:     Optional[str] = None   # "win" / "loss" / None
-        self._thread:     Optional[threading.Thread] = None
-
-    def start(self, mission: dict):
-        """Uruchamia monitoring misji w tle."""
-        self._active     = True
-        self._start_time = time.time()
-        self._result     = None
-        self._atom_birth = {}
-        self._survived   = {}
-
-        # Rejestruj czas startu dla każdego atomu misji
-        for r in mission.get("relikwie", []):
-            self._atom_birth[str(r["id"])] = self._start_time
-
-        self._thread = threading.Thread(
-            target=self._loop, daemon=True, name="mission-engine"
-        )
-        self._thread.start()
-
-    def stop(self):
-        self._active = False
-
-    def result(self) -> Optional[str]:
-        return self._result
-
-    def elapsed(self) -> float:
-        if self._start_time is None:
-            return 0.0
-        return time.time() - self._start_time
-
-    def status_lines(self) -> List[str]:
-        """Zwraca linie statusu do wyświetlenia w SANKTUARIUM:STATUS."""
-        if not self.runtime.current_mission:
-            return []
-        m       = self.runtime.current_mission
-        elapsed = self.elapsed()
-        limit   = m.get("czas_misji", 0)
-        lines   = []
-
-        if limit:
-            pozostało = max(0.0, limit - elapsed)
-            lines.append(f"Czas:    {elapsed:.0f}s / {limit}s  (pozostało: {pozostało:.0f}s)")
-        else:
-            lines.append(f"Czas:    {elapsed:.0f}s")
-
-        lines.append(f"Żywica:  {self.runtime.resources.get('żywica', 0)}")
-
-        for cel in m.get("cele", []):
-            lines.append(f"Cel:     {_describe_cel(cel, self._survived)}")
-
-        limit_ciszy = m.get("limit_ciszy", 0)
-        if limit_ciszy:
-            tomb = self.runtime.status_summary().get("TOMB", 0)
-            lines.append(f"Cisza:   {tomb} / {limit_ciszy} atomów TOMB")
-
-        return lines
-
-    def _loop(self):
-        """Pętla monitoringu — sprawdza warunki co sekundę."""
-        while self._active:
-            time.sleep(1.0)
-            if not self.runtime.current_mission:
-                continue
-
-            m       = self.runtime.current_mission
-            elapsed = self.elapsed()
-
-            # Aktualizuj czas przeżycia żywych atomów
-            for atom in self.runtime.matrix.atoms():
-                aid = atom.id
-                if aid not in self._atom_birth:
-                    self._atom_birth[aid] = time.time()
-                self._survived[aid] = time.time() - self._atom_birth[aid]
-
-            # Sprawdź przegraną — limit ciszy
-            limit_ciszy = m.get("limit_ciszy", 0)
-            if limit_ciszy:
-                tomb = self.runtime.status_summary().get("TOMB", 0)
-                if tomb >= limit_ciszy:
-                    self._result = "loss"
-                    self._active = False
-                    self.runtime.events.emit("mission_lost",
-                                             {"powód": "cisza_ostateczna"})
-                    return
-
-            # Sprawdź przegraną — limit czasu
-            czas_misji = m.get("czas_misji", 0)
-            if czas_misji and elapsed > czas_misji:
-                # Sprawdź czy cele spełnione przed ogłoszeniem wyniku
-                if self._check_win(m, elapsed):
-                    self._result = "win"
-                else:
-                    self._result = "loss"
-                self._active = False
-                event = "mission_won" if self._result == "win" else "mission_lost"
-                self.runtime.events.emit(event, {"czas": elapsed})
-                return
-
-            # Sprawdź wygraną — cele bez limitu czasowego
-            if not czas_misji and self._check_win(m, elapsed):
-                self._result = "win"
-                self._active = False
-                self.runtime.events.emit("mission_won", {"czas": elapsed})
-                return
-
-    def _check_win(self, mission: dict, elapsed: float) -> bool:
-        """Sprawdza czy wszystkie cele są spełnione."""
-        cele = mission.get("cele", [])
-        if not cele:
-            return False
-        return all(self._check_cel(cel, elapsed) for cel in cele)
-
-    def _check_cel(self, cel: str, elapsed: float) -> bool:
-        """Sprawdza pojedynczy cel."""
-        # utrzymaj_<id>_przez_<n>_sekund
-        if cel.startswith("utrzymaj_") and "_przez_" in cel:
-            parts = cel.split("_przez_")
-            atom_id = parts[0].replace("utrzymaj_", "")
-            try:
-                n = int(parts[1].replace("_sekund", ""))
-            except ValueError:
-                return False
-            survived = self._survived.get(atom_id, 0.0)
-            return survived >= n
-
-        # utrzymaj_alfe_przez_<n>_sekund — alias dla rel_0 lub Alfa
-        if cel.startswith("utrzymaj_alfe"):
-            try:
-                n = int(cel.split("_przez_")[1].replace("_sekund", ""))
-            except (IndexError, ValueError):
-                n = 60
-            # Szukaj atomu "Alfa" lub pierwszego atomu misji
-            for aid, survived in self._survived.items():
-                if "alfa" in aid.lower() or "alfe" in aid.lower():
-                    return survived >= n
-            # Fallback: sprawdź czy jakikolwiek atom przeżył n sekund
-            return any(s >= n for s in self._survived.values())
-
-        # ocal_<n>_atomow
-        if cel.startswith("ocal_") and "_atomow" in cel:
-            try:
-                n = int(cel.replace("ocal_", "").replace("_atomow", ""))
-            except ValueError:
-                return False
-            żywe = len(self.runtime.matrix.atoms())
-            return żywe >= n
-
-        # utrzymaj_temperature_<n>
-        if cel.startswith("utrzymaj_temperature_"):
-            try:
-                n = float(cel.replace("utrzymaj_temperature_", ""))
-            except ValueError:
-                return False
-            atoms = self.runtime.matrix.atoms()
-            if not atoms:
-                return False
-            avg_T = sum(a.T for a in atoms) / len(atoms)
-            return avg_T >= n
-
-        # Nieznany cel — logujemy i zwracamy False
-        return False
-
-
-def _describe_cel(cel: str, survived: dict) -> str:
-    """Opis celu do wyświetlenia graczowi."""
-    if cel.startswith("utrzymaj_") and "_przez_" in cel:
-        parts   = cel.split("_przez_")
-        atom_id = parts[0].replace("utrzymaj_", "")
-        try:
-            n = int(parts[1].replace("_sekund", ""))
-        except ValueError:
-            n = "?"
-        s = survived.get(atom_id, 0.0)
-        return f"Utrzymaj {atom_id} przez {n}s  [{s:.0f}/{n}s]"
-
-    if cel.startswith("utrzymaj_alfe"):
-        try:
-            n = int(cel.split("_przez_")[1].replace("_sekund", ""))
-        except (IndexError, ValueError):
-            n = 60
-        best = max(survived.values()) if survived else 0.0
-        return f"Utrzymaj Alfę przez {n}s  [{best:.0f}/{n}s]"
-
-    if cel.startswith("ocal_") and "_atomow" in cel:
-        try:
-            n = cel.replace("ocal_", "").replace("_atomow", "")
-        except Exception:
-            n = "?"
-        return f"Ocal {n} atomów"
-
-    return cel
-
-
-# Singleton silnika misji
+# Misja
 MISSION = MissionEngine(RUNTIME)
 
-# Podłącz eventy misji do wyświetlania
+# KarmazynScript
+KARM = KarmazynExecutor(RUNTIME) if KARM_LOADED else None
+
+# ═══════════════════════════════════════════
+# HELPERS
+# ═══════════════════════════════════════════
+
+def _find_bubble_by_name(name: str) -> Optional[str]:
+    """Znajduje ID bąbla po nazwie, używając istniejącego API."""
+    for b in BUBBLES.list_bubbles():
+        if b['name'].lower() == name.lower():
+            return b['id']
+    return None
+
+def _memcost(n: int = 1) -> bool:
+    """Sprawdza i pobiera koszt żywicy za operacje pamięciowe."""
+    if not RUNTIME.current_mission:
+        return True  # poza misją zapis jest darmowy
+    if RUNTIME.resources.get("żywica", 0) >= n:
+        RUNTIME.resources["żywica"] -= n
+        return True
+    return False
+
+# ═══════════════════════════════════════════
+# EVENTY MISJI
+# ═══════════════════════════════════════════
+
+def _log_to_kronika(status: str, data: dict):
+    kid = _find_bubble_by_name("kronika")
+    if not kid:
+        kid = BUBBLES.create_bubble("kronika", "chronicle")
+    m = RUNTIME.current_mission.get('nazwa', '?') if RUNTIME.current_mission else '?'
+    BUBBLES.add_text(kid, f"{status}: {m} | czas={data.get('czas', 0):.1f}s")
+
 def _on_mission_won(data):
     print(f"\n{theme.ansi_fg('phi_stable')}╔══════════════════╗")
     print(f"║  MISJA UKOŃCZONA  ║")
     print(f"╚══════════════════╝{theme.RESET}")
     print(f"Czas: {data.get('czas', 0):.1f}s")
+    _log_to_kronika("WYGRANA", data)
 
 def _on_mission_lost(data):
     print(f"\n{theme.ansi_fg('phi_bright')}╔═════════════════════════╗")
     print(f"║  CISZA OSTATECZNA       ║")
     print(f"╚═════════════════════════╝{theme.RESET}")
     print(f"Powód: {data.get('powód', data.get('czas', '?'))}")
+    _log_to_kronika("PRZEGRANA", data)
 
 RUNTIME.events.on("mission_won",  _on_mission_won)
 RUNTIME.events.on("mission_lost", _on_mission_lost)
@@ -278,31 +120,41 @@ def print_hud():
            f"{theme.ansi_fg('phi_signal')}COLD:{s['COLD']}{theme.RESET} "
            f"{theme.ansi_fg('phi_ghost')}TOMB:{s['TOMB']}{theme.RESET}")
 
-    # Dopisz czas misji i żywicę jeśli trwa
     if RUNTIME.current_mission and MISSION._active:
-        elapsed    = MISSION.elapsed()
-        czas_misji = RUNTIME.current_mission.get("czas_misji", 0)
-        żywica     = RUNTIME.resources.get("żywica", 0)
-        if czas_misji:
-            pozostało = max(0.0, czas_misji - elapsed)
-            hud += f"  ⏱ {pozostało:.0f}s"
-        hud += f"  🌿{żywica}"
+        e = MISSION.elapsed()
+        limit = RUNTIME.current_mission.get("czas_misji", 0)
+        if limit:
+            hud += f"  ⏱ {max(0.0, limit - e):.0f}s"
+        hud += f"  🌿{RUNTIME.resources.get('żywica', 0)}"
+
+    if BUBBLE_CTX.current_bubble_name:
+        atoms = BUBBLES.get_active_atoms(BUBBLE_CTX.current_bubble_id) if BUBBLE_CTX.current_bubble_id else []
+        bubble = BUBBLES.get_bubble(BUBBLE_CTX.current_bubble_id)
+        media = ""
+        if bubble:
+            stats = bubble.manifest.get('media_stats', {})
+            parts = []
+            if stats.get('image', 0):
+                parts.append(f"🖼{stats['image']}")
+            if stats.get('audio', 0):
+                parts.append(f"🎵{stats['audio']}")
+            if stats.get('document', 0):
+                parts.append(f"📄{stats['document']}")
+            if parts:
+                media = f" [{','.join(parts)}]"
+        hud += f"  🫧{BUBBLE_CTX.current_bubble_name}({len(atoms)}){media}"
 
     print(hud)
-
-    # Wynik misji jeśli gotowy
-    if MISSION.result() == "win" and not MISSION._active:
-        pass   # event już wydrukował komunikat
-    elif MISSION.result() == "loss" and not MISSION._active:
-        pass
 
 # ═══════════════════════════════════════════
 # AUTOCOMPLETE
 # ═══════════════════════════════════════════
+
 COMMAND_LIST = [
     "LS", "CD", "PWD", "TOUCH", "RM", "CP", "MV", "SETE", "FIND",
     "MONITOR", "STABILIZUJ", "DOTKNIJ PUSTKI", "ATOM STATUS",
-    "OBSERWUJ", "KRONIKA", "EDIT", "EXIT",
+    "OBSERWUJ", "KRONIKA", "EDIT", "EXIT", "SNAPSHOT",
+    "IMPORT", "GALLERY", "EXPORT", "RUN", "COMPILE",
     "SANKTUARIUM:START", "SANKTUARIUM:STATUS", "SANKTUARIUM:STOP",
     "SANKTUARIUM:LOAD",
 ]
@@ -318,7 +170,7 @@ readline.parse_and_bind("tab: complete")
 # KOMENDY SYSTEMOWE
 # ═══════════════════════════════════════════
 
-def cmd_ls(args) -> str:
+def cmd_ls(args):
     atoms = RUNTIME.matrix.atoms()
     if atoms:
         rows = []
@@ -328,254 +180,343 @@ def cmd_ls(args) -> str:
         return gfx.draw_frame("ATOMY", rows)
     return FS.ls(args[0] if args else None)
 
-def cmd_cd(args) -> str:
+def cmd_cd(args):
     return FS.cd(args[0] if args else "HOT")
 
-def cmd_pwd(args) -> str:
+def cmd_pwd(args):
     return FS.pwd()
 
-def cmd_touch(args) -> str:
-    return FS.touch(*args) if len(args) >= 1 else "Użycie: TOUCH <id> [S] [E] [T]"
+def cmd_touch(args):
+    return FS.touch(*args) if len(args) >= 1 else "TOUCH <id> [S] [E] [T]"
 
-def cmd_rm(args) -> str:
-    return FS.rm(args[0]) if args else "Użycie: RM <id>"
+def cmd_rm(args):
+    return FS.rm(args[0]) if args else "RM <id>"
 
-def cmd_cp(args) -> str:
-    return FS.cp(args[0], args[1]) if len(args) > 1 else "Użycie: CP <src> <dst>"
+def cmd_cp(args):
+    return FS.cp(args[0], args[1]) if len(args) > 1 else "CP <src> <dst>"
 
-def cmd_mv(args) -> str:
-    return FS.mv(args[0], args[1]) if len(args) > 1 else "Użycie: MV <id> <warstwa>"
+def cmd_mv(args):
+    return FS.mv(args[0], args[1]) if len(args) > 1 else "MV <id> <warstwa>"
 
-def cmd_sete(args) -> str:
-    return FS.setE(args[0], args[1]) if len(args) > 1 else "Użycie: SETE <id> <E>"
+def cmd_sete(args):
+    return FS.setE(args[0], args[1]) if len(args) > 1 else "SETE <id> <E>"
 
-def cmd_find(args) -> str:
-    return FS.find(" ".join(args)) if args else "Użycie: FIND <zapytanie>"
+def cmd_find(args):
+    return FS.find(" ".join(args)) if args else "FIND <zapytanie>"
 
-def cmd_monitor(args) -> str:
+def cmd_monitor(args):
     s = RUNTIME.status_summary()
     return gfx.draw_frame("MONITOR", [f"{k}: {v}" for k, v in s.items()])
 
-def cmd_stabilizuj(args) -> str:
+def cmd_stabilizuj(args):
     if not args:
-        return "Użycie: STABILIZUJ <id>"
-    if RUNTIME.current_mission is not None:
-        if RUNTIME.resources.get("żywica", 0) <= 0:
-            return "Brak Żywicy! Nie możesz stabilizować."
+        return "STABILIZUJ <id>"
+    if RUNTIME.current_mission and RUNTIME.resources.get("żywica", 0) <= 0:
+        return "Brak Żywicy!"
+    if RUNTIME.current_mission:
         RUNTIME.resources["żywica"] -= 1
     try:
         RUNTIME.stabilize_atom(args[0])
-        żywica = RUNTIME.resources.get("żywica", "∞")
-        return f"Stabilizowano {args[0]}. (Żywica: {żywica})"
+        zywica = RUNTIME.resources.get("żywica", "∞")
+        return f"Stabilizowano {args[0]} (Żywica: {zywica})"
     except ValueError as e:
         return str(e)
 
-def cmd_dotknij_pustki(args) -> str:
+def cmd_dotknij_pustki(args):
     if not args:
-        return "Użycie: DOTKNIJ PUSTKI <id>"
+        return "DOTKNIJ PUSTKI <id>"
     try:
         RUNTIME.corrupt_atom(args[0], 25)
         atom = RUNTIME.get_atom(args[0])
-        T    = atom.T if atom else 0.0
-        return f"Dotknięto Pustką {args[0]}. T={T:.1f}"
+        if atom:
+            return f"Dotknięto Pustką {args[0]}. T={atom.T:.1f}"
+        return f"Dotknięto {args[0]}"
     except ValueError as e:
         return str(e)
 
-def cmd_atom_status(args) -> str:
+def cmd_atom_status(args):
     if not args:
-        return "Użycie: ATOM STATUS <id>"
+        return "ATOM STATUS <id>"
     atom = RUNTIME.get_atom(args[0])
     if not atom:
         return "Atom nie istnieje."
-    color = "phi_thermal" if atom.T > 70 else ("phi_signal" if atom.T > 30 else "phi_decay")
+    if atom.T > 70:
+        color = "phi_thermal"
+    elif atom.T > 30:
+        color = "phi_signal"
+    else:
+        color = "phi_decay"
     survived = MISSION._survived.get(atom.id, 0.0)
     return gfx.draw_frame(f"ATOM {atom.id}", [
         f"S: {atom.S}   E: {atom.E}",
         f"T: {atom.T:.1f}   Stan: {atom.state}",
-        f"Wiek: {atom.age} kroków   Przeżyte: {survived:.0f}s",
+        f"Wiek: {atom.age}   Przeżyte: {survived:.0f}s",
         gfx.progress_bar(atom.T, atom.T_max, fg=color),
     ])
 
-def cmd_obserwuj(args) -> str:
-    print("Obserwuję stan atomów (Ctrl+C by wyjść)...")
+def cmd_obserwuj(args):
+    print("Obserwuję (Ctrl+C = koniec)...")
     try:
         while True:
             rows = []
-            for atom in RUNTIME.matrix.atoms():
-                color    = "phi_thermal" if atom.T > 70 else ("phi_signal" if atom.T > 30 else "phi_decay")
-                bar      = gfx.progress_bar(atom.T, atom.T_max, fg=color)
-                survived = MISSION._survived.get(atom.id, 0.0)
-                rows.append(f"{atom.id:10} {bar} {atom.T:5.1f}° {atom.state}  ⏱{survived:.0f}s")
+            for a in RUNTIME.matrix.atoms():
+                if a.T > 70:
+                    color = "phi_thermal"
+                elif a.T > 30:
+                    color = "phi_signal"
+                else:
+                    color = "phi_decay"
+                bar = gfx.progress_bar(a.T, a.T_max, fg=color)
+                survived = MISSION._survived.get(a.id, 0.0)
+                rows.append(
+                    f"{a.id:10} {bar} {a.T:5.1f}° {a.state}"
+                    f"  ⏱{survived:.0f}s"
+                )
             sys.stdout.write("\033[H\033[J")
             sys.stdout.write(gfx.draw_frame("OBSERWACJA", rows) + "\n")
             sys.stdout.flush()
             time.sleep(0.5)
     except KeyboardInterrupt:
         pass
-    return "Koniec obserwacji."
+    return "Koniec"
 
-def cmd_kronika(args) -> str:
+def cmd_kronika(args):
     if not RUNTIME.current_mission:
-        return "Sanktuarium milczy. Rozpocznij misję: SANKTUARIUM:START"
-    m     = RUNTIME.current_mission
-    cele  = m.get("cele", [])
+        return "Brak misji. SANKTUARIUM:START"
+    m = RUNTIME.current_mission
+    cele = m.get("cele", [])
     lines = [
         m.get("nazwa", ""),
         m.get("opis_kroniki", ""),
         "",
+        "WARUNEK WYGRANEJ:",
     ]
-    lines.append("WARUNEK WYGRANEJ:")
     for cel in cele:
-        lines.append(f"  ✦ {_describe_cel(cel, MISSION._survived)}")
-    limit_ciszy = m.get("limit_ciszy", 0)
-    if limit_ciszy:
-        lines.append(f"\nWARUNEK PRZEGRANEJ:")
-        lines.append(f"  ✗ {limit_ciszy} atom(y) osiągną Ciszę Ostateczną")
-    czas = m.get("czas_misji", 0)
-    if czas:
-        lines.append(f"  ✗ Upłynie {czas}s bez spełnienia celów")
+        lines.append(f"  ✦ {describe_cel(cel, MISSION._survived)}")
+    if m.get("limit_ciszy"):
+        lines.append("")
+        lines.append("WARUNEK PRZEGRANEJ:")
+        lines.append(f"  ✗ {m['limit_ciszy']} atomów → Cisza Ostateczna")
+    if m.get("czas_misji"):
+        lines.append(f"  ✗ Upłynie {m['czas_misji']}s")
     return gfx.draw_frame("KRONIKA", lines)
 
-def cmd_edit(args) -> str:
+def cmd_snapshot(args):
+    name = args[0] if args else f"snapshot_{int(time.time())}"
+    bid = _find_bubble_by_name(name)
+    if not bid:
+        bid = BUBBLES.create_bubble(name, "snapshot")
+
+    if not _memcost(3):
+        return "❌ Za mało Żywicy na snapshot (koszt: 3)"
+
+    atoms = RUNTIME.matrix.atoms()
+    if not atoms:
+        return "Brak atomów"
+    count = BUBBLES.snapshot_runtime(bid, atoms)
+    if hasattr(BUBBLES, 'save_all'):
+        BUBBLES.save_all()
+    return f"📸 {count} atomów → 🫧{name}"
+
+def cmd_run(args):
+    if not KARM_LOADED:
+        return "❌ karmazyn_lang.py nie znaleziony (pip install lark)"
     if not args:
-        return "Użycie: EDIT <ścieżka>"
-    subprocess.run([sys.executable, "karmazyn_edit.py", args[0]])
-    return "[Powrót z edytora]"
+        return "RUN <plik.karm>"
+    if not os.path.isfile(args[0]):
+        return f"❌ Plik: {args[0]}"
+    try:
+        KARM.run_file(args[0])
+        return f"✅ {args[0]}"
+    except Exception as e:
+        return f"❌ {e}"
+
+def cmd_compile(args):
+    if not KARM_LOADED:
+        return "❌ karmazyn_lang.py nie znaleziony"
+    if not args:
+        return "COMPILE <plik.karm>"
+    if not os.path.isfile(args[0]):
+        return f"❌ Plik: {args[0]}"
+    try:
+        program = parse_file(args[0])
+        lines = [f"📜 AST: {args[0]}", "=" * 50]
+        for i, stmt in enumerate(program.statements, 1):
+            name = type(stmt).__name__
+            fields = {
+                k: v for k, v in stmt.__dict__.items()
+                if not k.startswith('_')
+            }
+            lines.append(f"{i}. {name}: {fields}")
+        return "\n".join(lines)
+    except Exception as e:
+        return f"❌ {e}"
 
 # ═══════════════════════════════════════════
-# KOMENDY SANKTUARIUM
+# SANKTUARIUM
 # ═══════════════════════════════════════════
 
 def _start_mission(mission: dict) -> str:
-    """Wspólna logika startu misji z dowolnego źródła."""
     MISSION.stop()
     RUNTIME.start_mission(mission)
     MISSION.start(mission)
     cele = mission.get("cele", [])
     return gfx.draw_frame("MISJA ROZPOCZĘTA", [
-        f"Nazwa:   {mission['nazwa']}",
-        f"Atomów:  {len(mission.get('relikwie', []))}",
-        f"Czas:    {mission.get('czas_misji', '∞')}s",
-        f"Żywica:  {RUNTIME.resources.get('żywica', 0)}",
+        f"Nazwa: {mission['nazwa']}",
+        f"Atomów: {len(mission.get('relikwie', []))}",
+        f"Czas: {mission.get('czas_misji', '∞')}s",
+        f"Żywica: {RUNTIME.resources.get('żywica', 0)}",
         "",
         "CEL:",
-    ] + [f"  ✦ {_describe_cel(c, {})}" for c in cele] + [
+    ] + [f"  ✦ {describe_cel(c, {})}" for c in cele] + [
         "",
-        "Komendy: LS, ATOM STATUS <id>, OBSERWUJ",
-        "         STABILIZUJ <id>, DOTKNIJ PUSTKI <id>",
-        "         KRONIKA, SANKTUARIUM:STATUS",
+        "LS, ATOM STATUS, OBSERWUJ, STABILIZUJ, DOTKNIJ PUSTKI, KRONIKA, SNAPSHOT",
     ])
 
-def cmd_sanktuarium_start(args) -> str:
-    words    = args if args else ["iskra", "ciemność"]
+def cmd_sanktuarium_start(args):
+    words = args if args else ["iskra", "ciemność"]
     embedder = LevelEmbedder(mode="light")
-    mission  = embedder.generate_mission(words)
+    mission = embedder.generate_mission(words)
     return _start_mission(mission)
 
-def cmd_sanktuarium_load(args) -> str:
-    """SANKTUARIUM:LOAD <plik.json> — wczytaj misję z pliku."""
+def cmd_sanktuarium_load(args):
     if not args:
-        return "Użycie: SANKTUARIUM:LOAD <plik.json>"
-    path = args[0]
-    if not os.path.isfile(path):
-        return f"Plik nie istnieje: {path}"
+        return "SANKTUARIUM:LOAD <plik.json>"
+    if not os.path.isfile(args[0]):
+        return f"Plik: {args[0]}"
     try:
-        with open(path, encoding="utf-8") as f:
+        with open(args[0], encoding="utf-8") as f:
             mission = json.load(f)
         return _start_mission(mission)
     except Exception as e:
-        return f"[BŁĄD] Nie można wczytać misji: {e}"
+        return f"[BŁĄD] {e}"
 
-def cmd_sanktuarium_status(args) -> str:
+def cmd_sanktuarium_status(args):
     if not RUNTIME.current_mission:
-        return "Brak aktywnej misji. Wpisz: SANKTUARIUM:START"
-    s     = RUNTIME.status_summary()
+        return "Brak misji"
+    s = RUNTIME.status_summary()
     lines = [
-        f"Misja:   {RUNTIME.current_mission.get('nazwa', '?')}",
-        f"HOT:{s['HOT']}  WARM:{s['WARM']}  COLD:{s['COLD']}  TOMB:{s['TOMB']}",
+        f"Misja: {RUNTIME.current_mission.get('nazwa', '?')}",
+        f"HOT:{s['HOT']} WARM:{s['WARM']} COLD:{s['COLD']} TOMB:{s['TOMB']}",
     ] + MISSION.status_lines()
     return gfx.draw_frame("SANKTUARIUM STATUS", lines)
 
-def cmd_sanktuarium_stop(args) -> str:
+def cmd_sanktuarium_stop(args):
     MISSION.stop()
     RUNTIME.stop_loop()
-    return "Sanktuarium zatrzymane."
+    return "Sanktuarium zatrzymane"
 
-def cmd_sanktuarium(args) -> str:
+def cmd_sanktuarium(args):
     if not args:
-        return (
-            "Użycie:\n"
-            "  SANKTUARIUM:START [słowa...]  — nowa misja z embeddera\n"
-            "  SANKTUARIUM:LOAD <plik.json>  — wczytaj misję z pliku\n"
-            "  SANKTUARIUM:STATUS            — stan aktywnej misji\n"
-            "  SANKTUARIUM:STOP              — zatrzymaj\n"
-        )
+        return "SANKTUARIUM:START|LOAD|STATUS|STOP"
     sub = args[0].upper()
-    fn  = COMMANDS.get(f"SANKTUARIUM:{sub}")
+    fn = COMMANDS.get(f"SANKTUARIUM:{sub}")
     if fn:
         return fn(args[1:])
-    return f"Nieznana podkomenda: SANKTUARIUM:{sub}"
+    return f"Nieznane: SANKTUARIUM:{sub}"
 
 # ═══════════════════════════════════════════
-# DWUPOZIOMOWY PARSER
+# PARSER
 # ═══════════════════════════════════════════
+
 COMMANDS = {
-    "LS": cmd_ls, "CD": cmd_cd, "PWD": cmd_pwd, "TOUCH": cmd_touch,
-    "RM": cmd_rm, "CP": cmd_cp, "MV": cmd_mv,   "SETE": cmd_sete,
-    "FIND": cmd_find, "MONITOR": cmd_monitor,
+    "LS": cmd_ls,
+    "CD": cmd_cd,
+    "PWD": cmd_pwd,
+    "TOUCH": cmd_touch,
+    "RM": cmd_rm,
+    "CP": cmd_cp,
+    "MV": cmd_mv,
+    "SETE": cmd_sete,
+    "FIND": cmd_find,
+    "MONITOR": cmd_monitor,
     "STABILIZUJ": cmd_stabilizuj,
-    "OBSERWUJ":   cmd_obserwuj,
-    "KRONIKA":    cmd_kronika,
-    "DOTKNIJ":    {"PUSTKI": cmd_dotknij_pustki},
-    "ATOM":       {"STATUS": cmd_atom_status},
-    "SANKTUARIUM":        cmd_sanktuarium,
-    "SANKTUARIUM:START":  cmd_sanktuarium_start,
-    "SANKTUARIUM:LOAD":   cmd_sanktuarium_load,
+    "OBSERWUJ": cmd_obserwuj,
+    "KRONIKA": cmd_kronika,
+    "SNAPSHOT": cmd_snapshot,
+    "IMPORT": cmd_import,
+    "GALLERY": cmd_gallery,
+    "EXPORT": cmd_export,
+    "RUN": cmd_run,
+    "COMPILE": cmd_compile,
+    "DOTKNIJ": {"PUSTKI": cmd_dotknij_pustki},
+    "ATOM": {"STATUS": cmd_atom_status},
+    "SANKTUARIUM": cmd_sanktuarium,
+    "SANKTUARIUM:START": cmd_sanktuarium_start,
+    "SANKTUARIUM:LOAD": cmd_sanktuarium_load,
     "SANKTUARIUM:STATUS": cmd_sanktuarium_status,
-    "SANKTUARIUM:STOP":   cmd_sanktuarium_stop,
+    "SANKTUARIUM:STOP": cmd_sanktuarium_stop,
     "EDIT": cmd_edit,
-    "EXIT": lambda a: sys.exit(0),
+    "EXIT": lambda a: (
+        BUBBLES.save_all() if hasattr(BUBBLES, 'save_all') else None,
+        sys.exit(0),
+    )[1],
 }
 
-try:
-    from shell_karm_patch import apply_karm_to_shell
-    _karm = apply_karm_to_shell(RUNTIME, COMMANDS, COMMAND_LIST)
-except ImportError:
-    pass
+# ═══════════════════════════════════════════
+# MAIN
+# ═══════════════════════════════════════════
 
-# ═══════════════════════════════════════════
-# GŁÓWNA PĘTLA
-# ═══════════════════════════════════════════
 def main():
     print(gfx.draw_frame(
         "KARMAZYN OS",
-        ["Shell v1.6 — Reaktywna powłoka Φ", "Tab = autouzupełnianie"],
+        [
+            "Shell v2.2 — Cognitive Runtime",
+            "Tab = autouzupełnianie",
+        ],
         style="phi_core",
     ))
+
+    bubbles = BUBBLES.list_bubbles()
+    if bubbles:
+        total = sum(b['active_atoms'] for b in bubbles)
+        print(f"🫧 {len(bubbles)} bąbli ({total} atomów)", end="")
+        imgs = sum(
+            b.get('media_stats', {}).get('image', 0)
+            for b in bubbles
+        )
+        if imgs:
+            print(f", 🖼{imgs} obrazów", end="")
+        print()
+
+    if KARM_LOADED:
+        print("📜 KarmazynScript gotowy")
+
+    has_kronika = _find_bubble_by_name("kronika") is not None
+    print(f"📖 Kronika: {'gotowa' if has_kronika else 'pusta'}\n")
+
     while True:
         try:
-            line = input(f"{theme.ansi_fg('phi_signal')}ksh>{theme.RESET} ").strip()
+            line = input(
+                f"{theme.ansi_fg('phi_signal')}ksh>{theme.RESET} "
+            ).strip()
         except (EOFError, KeyboardInterrupt):
             print("\nZamykanie...")
             MISSION.stop()
+            if hasattr(BUBBLES, 'save_all'):
+                BUBBLES.save_all()
+            print("💾 Bąble zapisane")
             break
+
         if not line:
             continue
 
-        parts   = line.split()
-        verb    = parts[0].upper()
-        args    = parts[1:]
+        parts = line.split()
+        verb = parts[0].upper()
+        args = parts[1:]
         handler = COMMANDS.get(verb)
 
         if handler is None:
-            print(f"{theme.ansi_fg('phi_bright')}[BŁĄD]{theme.RESET} Nieznana komenda: {verb}")
+            print(
+                f"{theme.ansi_fg('phi_bright')}[BŁĄD]{theme.RESET} "
+                f"Nieznana komenda: {verb}"
+            )
             print_hud()
             continue
 
-        result: Optional[str] = None
         try:
             if isinstance(handler, dict):
-                sub         = args[0].upper() if args else ""
+                sub = args[0].upper() if args else ""
                 sub_handler = handler.get(sub)
                 if sub_handler:
                     result = sub_handler(args[1:])
@@ -589,6 +530,7 @@ def main():
         if result:
             print(result)
         print_hud()
+
 
 if __name__ == "__main__":
     main()
