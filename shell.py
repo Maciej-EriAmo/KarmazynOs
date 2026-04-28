@@ -1,276 +1,257 @@
 #!/usr/bin/env python3
 """
-shell.py — Karmazyn Shell v1.1.0
-================================
-Używa shlex do poprawnego parsowania cytatów.
-Zapis i odczyt stanu: save <katalog>, load <katalog>
+shell.py — KarmazynOS Shell (ksh) v1.3.0
+=========================================
+Zmiany v1.3.0:
+  [nowe] /phi_id         – wyświetl Φ-ID bieżącego węzła
+  [nowe] /crimson_nodes  – lista znanych węzłów z rejestru TOFU
+  [nowe] /help           – zaktualizowana lista komend
 """
 
 import sys
 import os
-import readline
-import shlex
-from typing import List
+import readline  # opcjonalne: historia poleceń
 
-try:
-    from karmazyn import KarmazynOS, VERSION as KARM_VERSION
-except ImportError:
-    print("Błąd: nie znaleziono modułu 'karmazyn.py'")
-    sys.exit(1)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from karmazyn import KarmazynOS
+from crimson_network import CrimsonNetwork
+
+VERSION = "1.3.0"
+
 
 class KarmazynShell:
     def __init__(self):
-        self.k = KarmazynOS()
-        self.last_label = None
-        self.history_file = os.path.expanduser("~/.karmazyn_history")
-        self._init_readline()
+        print(f"  ╔══════════════════════════════════════╗")
+        print(f"  ║    KarmazynOS Shell (ksh) v{VERSION}    ║")
+        print(f"  ╚══════════════════════════════════════╝")
+        self.karmazyn = KarmazynOS()
+        self.network: CrimsonNetwork | None = None
+        self.running = True
+        self._load_or_init()
 
-    def _init_readline(self):
-        try: readline.read_history_file(self.history_file)
-        except FileNotFoundError: pass
-        readline.set_history_length(2000)
+    def _load_or_init(self):
+        if os.path.isdir("./karmazyn_data"):
+            ans = input("Wykryto zapisany stan. Wczytać? [T/n]: ").strip().lower()
+            if ans != 'n':
+                self.karmazyn.load("./karmazyn_data")
+                return
+        # Nowa sesja – inicjalizuj bąbel tożsamości
+        print("Tworzenie nowej sesji Φ...")
+        self.karmazyn._init_p2s_bubble()
 
-    def save_history(self):
-        try: readline.write_history_file(self.history_file)
-        except: pass
+    # ========================================================================
+    #  KOMENDY PODSTAWOWE
+    # ========================================================================
 
-    def _is_float(self, s: str) -> bool:
-        try: float(s); return True
-        except: return False
+    def do_help(self, arg):
+        """Wyświetla dostępne komendy."""
+        print("""
+  ┌─────────────── PODSTAWOWE ───────────────────────────────┐
+  │ /write <tekst>         Zapisz atom do Φ                  │
+  │ /recall <zapytanie>    Przypomnij atomy i bąble          │
+  │ /consolidate <label>   Konsoliduj atom w bąbel           │
+  │ /read_bubble <label>   Odczytaj bąbel                    │
+  │ /reactivate <label>    Reaktywuj bąbel do Φ              │
+  │ /step [n]              Wykonaj n kroków termodynamicznych │
+  │ /stats                 Pokaż statystyki systemu          │
+  │ /save                  Zapisz stan                       │
+  │ /load                  Wczytaj stan                      │
+  │ /evaluate <kontekst>   Oceń spójność kontekstu           │
+  ├─────────────── TOŻSAMOŚĆ ────────────────────────────────┤
+  │ /phi_id                Pokaż Φ-ID tego węzła             │
+  ├─────────────── KARMAZYNOWY KOMUNIKATOR ──────────────────┤
+  │ /crimson_listen <port> Nasłuchuj na połączenie           │
+  │ /crimson_connect <h> <p> Połącz z węzłem                │
+  │ /crimson_msg <tekst>   Wyślij wiadomość                  │
+  │ /crimson_nodes         Lista znanych węzłów              │
+  │ /crimson_close         Zamknij kanał                     │
+  ├──────────────────────────────────────────────────────────┤
+  │ /quit                  Wyjdź                             │
+  └──────────────────────────────────────────────────────────┘
+""")
 
-    def print_help(self, cmd=None):
-        help_text = {
-            "write": "write <tekst> – zapisz atom Φ",
-            "recall": "recall <zapytanie> [k] – przeszukaj pamięć",
-            "consolidate": "consolidate <etykieta> – przenieś atom do bąbla",
-            "reactivate": "reactivate <etykieta> – przywróć bąbel do Φ",
-            "revoke": "revoke <etykieta> – unieważnij bąbel (Warp Oblivion)",
-            "decay": "decay <etykieta> <rate> – ustaw tempo rozpadu",
-            "refresh": "refresh <etykieta> – odśwież bąbel",
-            "idea": "idea <temat> <etykieta1> [etykieta2...] – utwórz ideę",
-            "ideas": "ideas – lista idei",
-            "gen": "gen <id_idei> <prompt> [temp] – wygeneruj atom z idei",
-            "spawn": "spawn <id_idei> <prompt> [--consolidate] – generuj + konsoliduj",
-            "rehydrate": "rehydrate <id_idei> – odtwórz atomy z idei",
-            "stats": "stats – statystyki",
-            "step": "step [n] – przesuń czas",
-            "gc": "gc – usuń revoked bąble",
-            "save": "save [katalog] – zapisz stan (domyślnie ./karmazyn_data)",
-            "load": "load [katalog] – wczytaj stan",
-            "run": "run <plik.karm> – wykonaj skrypt",
-            "exit": "exit/quit – wyjście"
-        }
-        if cmd and cmd in help_text:
-            print(f"{cmd} — {help_text[cmd]}")
+    def do_write(self, arg):
+        if not arg.strip():
+            print("Użycie: /write <tekst>")
+            return
+        label = self.karmazyn.write(arg.strip())
+        print(f"  [Φ] Zapisano atom: {label}")
+
+    def do_recall(self, arg):
+        if not arg.strip():
+            print("Użycie: /recall <zapytanie>")
+            return
+        results = self.karmazyn.recall(arg.strip())
+        if not results:
+            print("  Brak wyników.")
+            return
+        for i, r in enumerate(results):
+            print(f"  [{i+1}] {r['label'][:40]:40s} {r['layer']:6s} "
+                  f"T={r.get('T', float('inf')):.2f} sim={r['sim']:.3f} "
+                  f"score={r['score']:.3f}")
+
+    def do_consolidate(self, arg):
+        if not arg.strip():
+            print("Użycie: /consolidate <label>")
+            return
+        bid = self.karmazyn.consolidate(arg.strip())
+        if bid:
+            print(f"  [bąbel] {bid}")
+
+    def do_read_bubble(self, arg):
+        if not arg.strip():
+            print("Użycie: /read_bubble <label>")
+            return
+        content = self.karmazyn.read_bubble(arg.strip())
+        if content:
+            print(f"  [bąbel] {content[:200]}")
         else:
-            print("Karmazyn Shell v1.1.0 — dostępne komendy:\n")
-            for c in sorted(help_text):
-                print(f"  {c:<12} {help_text[c]}")
-            print("\nUżyj 'help <komenda>' po szczegóły.")
+            print("  Nie znaleziono bąbla.")
 
-    def run_script(self, filename):
-        if not os.path.exists(filename):
-            print(f"Błąd: plik '{filename}' nie istnieje.")
+    def do_reactivate(self, arg):
+        if not arg.strip():
+            print("Użycie: /reactivate <label>")
             return
-        try:
-            with open(filename, 'r', encoding='utf-8') as f:
-                for line in f:
-                    line = line.strip()
-                    if line and not line.startswith('#'):
-                        print(f"ksh> {line}")
-                        self.execute(line)
-        except Exception as e:
-            print(f"Błąd skryptu: {e}")
+        new_label = self.karmazyn.reactivate_bubble(arg.strip())
+        if new_label:
+            print(f"  [Φ] Reaktywowano jako: {new_label}")
 
-    def execute(self, cmdline: str):
-        if not cmdline.strip():
+    def do_step(self, arg):
+        n = int(arg.strip() or "1")
+        stats = self.karmazyn.step(n)
+        print(f"  [krok] epoka={stats['epoch']} atomy={stats['atoms']} "
+              f"T={stats['temperature']:.2f} bąble={stats['bubbles']}")
+
+    def do_stats(self, arg):
+        s = self.karmazyn.stats()
+        print(f"  KarmazynOS v{s['version']}")
+        print(f"  Φ-ID:         {s['phi_id']}")
+        print(f"  Epoka:        {s['epoch']}")
+        print(f"  Atomy Φ:      {s['atoms']}")
+        print(f"  Temperatura:  {s['temperature']:.3f}")
+        print(f"  T_vacuum:     {s['t_vacuum']:.4f} bit")
+        print(f"  Bąble:        {s['bubbles']} (zanikające: {s['bubbles_decaying']}, "
+              f"odwołane: {s['bubbles_revoked']})")
+        print(f"  Hologramy:    {s['holograms']}")
+        print(f"  Bubble bias:  {s['bubble_bias']:.3f}")
+
+    def do_save(self, arg):
+        self.karmazyn.save()
+
+    def do_load(self, arg):
+        self.karmazyn.load()
+
+    def do_evaluate(self, arg):
+        if not arg.strip():
+            print("Użycie: /evaluate <kontekst>")
             return
-        cmdline = cmdline.replace("$LAST", self.last_label or "")
-        try:
-            parts = shlex.split(cmdline)
-        except ValueError as e:
-            print(f"Błąd składni: {e}")
-            return
+        allow, score, reason = self.karmazyn.evaluate(arg.strip())
+        status = "✓ SPÓJNY" if allow else "✗ NIESPÓJNY"
+        print(f"  [{status}] {reason}")
+
+    # ========================================================================
+    #  KOMENDY TOŻSAMOŚCI
+    # ========================================================================
+
+    def do_phi_id(self, arg):
+        """Wyświetla Φ-ID bieżącego węzła."""
+        phi_id = self.karmazyn.get_phi_id()
+        phi2_hex = self.karmazyn.phi.phi2_bytes().hex()
+        print(f"  Φ-ID:      {phi_id}")
+        print(f"  phi2_hex:  {phi2_hex[:32]}…")
+        b = self.karmazyn.bubbles.get_by_label(self.karmazyn._P2S_BUBBLE_LABEL)
+        if b:
+            print(f"  Bąbel:     {b.id} (immortal={b.immortal})")
+
+    # ========================================================================
+    #  KOMENDY KARMAZYNOWEGO KOMUNIKATORA
+    # ========================================================================
+
+    def _ensure_network(self, port=9000):
+        """Inicjalizuje CrimsonNetwork, jeśli jeszcze nie istnieje."""
+        if not self.network:
+            self.network = CrimsonNetwork(self.karmazyn, port)
+            self.network.receive_callback = lambda msg: print(f"\n<Φ> {msg}")
+
+    def do_crimson_listen(self, arg):
+        port = int(arg.strip() or "9000")
+        self._ensure_network(port)
+        self.network.start_server()
+        print(f"  [*] Nasłuchiwanie na porcie {port}")
+
+    def do_crimson_connect(self, arg):
+        parts = arg.strip().split()
         if not parts:
+            print("Użycie: /crimson_connect <host> <port>")
             return
-        cmd = parts[0].lower()
-        args = parts[1:]
+        host = parts[0]
+        port = int(parts[1]) if len(parts) > 1 else 9001
+        self._ensure_network(port)
+        self.network.connect(host, port)
 
-        try:
-            if cmd == "write":
-                if not args: print("Użycie: write <tekst>"); return
-                label = self.k.write(" ".join(args))
-                self.last_label = label
-                print(f"Zapisano: {label}")
+    def do_crimson_msg(self, arg):
+        if not arg.strip():
+            print("Użycie: /crimson_msg <tekst>")
+            return
+        if not self.network:
+            print("  [!] Brak połączenia. Użyj /crimson_listen i /crimson_connect.")
+            return
+        self.network.send(arg.strip())
 
-            elif cmd == "recall":
-                if not args: print("Użycie: recall <zapytanie> [k]"); return
-                k = 5
-                if len(args)>1 and args[-1].isdigit():
-                    k = int(args[-1]); query = " ".join(args[:-1])
-                else:
-                    query = " ".join(args)
-                res = self.k.recall(query, k=k)
-                for i, r in enumerate(res, 1):
-                    line = f"{i}. [{r['layer']}] {r['label'][:35]:35} (score={r['score']:.3f})"
-                    if r.get('layer')=='bubble' and 'liveliness' in r:
-                        line += f" liv={r['liveliness']:.2f}"
-                    print(line)
+    def do_crimson_nodes(self, arg):
+        """Wyświetla listę znanych węzłów z rejestru TOFU."""
+        if not self.network:
+            self._ensure_network()
+        nodes = self.network.registry.list_nodes()
+        if not nodes:
+            print("  Brak znanych węzłów.")
+            return
+        print(f"  {'Φ-ID':34s} {'Nazwa':20s} {'Adres':22s} {'Ostatni kontakt'}")
+        print(f"  {'-'*34} {'-'*20} {'-'*22} {'-'*19}")
+        for n in nodes:
+            print(f"  {n['phi_id']:34s} {n.get('name','?'):20s} "
+                  f"{n.get('address','?'):22s} {n.get('last_seen','?')}")
 
-            elif cmd == "consolidate":
-                if not args: print("Użycie: consolidate <etykieta>"); return
-                bid = self.k.consolidate(args[0])
-                if bid:
-                    self.last_label = bid
-                    print(f"[KONSOLIDACJA] '{args[0]}' → {bid}")
+    def do_crimson_close(self, arg):
+        if self.network:
+            self.network.close()
+        else:
+            print("  [!] Brak aktywnego połączenia.")
 
-            elif cmd == "reactivate":
-                if not args: print("Użycie: reactivate <etykieta>"); return
-                new_label = self.k.reactivate_bubble(args[0])
-                if new_label:
-                    self.last_label = new_label
-                    print(f"[REAKTYWACJA] '{args[0]}' → {new_label}")
+    def do_quit(self, arg):
+        print("  [*] Zamykanie KarmazynOS...")
+        self.karmazyn.save()
+        self.running = False
 
-            elif cmd == "revoke":
-                if not args: print("Użycie: revoke <etykieta>"); return
-                if self.k.revoke_bubble(args[0]):
-                    print(f"[REVOKE] '{args[0]}' → Warp Oblivion")
-
-            elif cmd == "decay":
-                if len(args)<2: print("Użycie: decay <etykieta> <rate>"); return
-                try: rate = float(args[1])
-                except: print("Rate musi być liczbą."); return
-                if self.k.mark_bubble_for_decay(args[0], rate):
-                    print(f"Oznaczono '{args[0]}' do rozpadu (rate={rate})")
-
-            elif cmd == "refresh":
-                if not args: print("Użycie: refresh <etykieta>"); return
-                if self.k.refresh_bubble(args[0]):
-                    print(f"Bąbel '{args[0]}' odświeżony.")
-
-            elif cmd == "idea":
-                if len(args)<2: print("Użycie: idea <temat> <etykieta1>..."); return
-                topic = args[0]; labels = args[1:]
-                hid = self.k.archive_bubbles_to_hologram(topic, labels)
-                if hid:
-                    self.last_label = hid
-                    print(f"[IDEA] Utworzono '{hid}' z {len(labels)} bąbli.")
-                else:
-                    print("Nie udało się utworzyć idei.")
-
-            elif cmd == "ideas":
-                if not self.k.holograms:
-                    print("Brak idei.")
-                else:
-                    epoch = self.k.phi.epoch
-                    for hid, h in self.k.holograms.items():
-                        liv = h.liveliness(epoch)
-                        print(f"{hid:<40} | {h.topic} | bąble:{len(h.bubble_labels)} | liv:{liv:.3f}")
-
-            elif cmd == "gen":
-                if len(args)<2: print("Użycie: gen <id_idei> <prompt> [temp]"); return
-                hid = args[0]
-                temp = 0.3
-                if len(args)>1 and self._is_float(args[-1]):
-                    temp = float(args[-1]); prompt = " ".join(args[1:-1])
-                else:
-                    prompt = " ".join(args[1:])
-                vec = self.k.generate_from_idea(hid, prompt, temperature=temp)
-                if vec is not None:
-                    label = self.k.phi.add_semantic_vector(vec, label=f"gen_{hid}_{self.k.phi.epoch}")
-                    self.last_label = label
-                    print(f"Wygenerowano atom Φ: {label} (temp={temp})")
-                else:
-                    print("Nie znaleziono idei lub błąd generowania.")
-
-            elif cmd == "spawn":
-                if len(args)<2: print("Użycie: spawn <id_idei> <prompt> [--consolidate]"); return
-                hid = args[0]
-                consolidate = "--consolidate" in args
-                prompt_parts = [a for a in args[1:] if a != "--consolidate"]
-                prompt = " ".join(prompt_parts)
-                vec = self.k.generate_from_idea(hid, prompt, temperature=0.4)
-                if vec is not None:
-                    label = self.k.phi.add_semantic_vector(vec, label=f"spawn_{hid}_{self.k.phi.epoch}")
-                    self.last_label = label
-                    if consolidate:
-                        self.k.consolidate(label)
-                        print(f"Utworzono i skonsolidowano bąbel: {label}")
-                    else:
-                        print(f"Utworzono atom Φ: {label}")
-                else:
-                    print("Nie znaleziono idei.")
-
-            elif cmd == "rehydrate":
-                if not args: print("Użycie: rehydrate <id_idei>"); return
-                labels = self.k.rehydrate_hologram(args[0])
-                if labels:
-                    shown = ", ".join(labels[:6])
-                    more = f" +{len(labels)-6}" if len(labels)>6 else ""
-                    print(f"Odtworzono atomy: {shown}{more}")
-                    self.last_label = labels[0]
-                else:
-                    print("Nie udało się odtworzyć atomów.")
-
-            elif cmd == "stats":
-                s = self.k.stats()
-                print(f"KarmazynOS v{KARM_VERSION} | Epoka: {s['epoch']}")
-                print(f"Temperatura Φ: {s['temperature']:.2f} | T_vacuum: {s['t_vacuum']:.4f}")
-                print(f"Atomy Φ: {s['atoms_phi']} | Bąble: {s['bubbles']} (decay:{s['bubbles_decaying']})")
-                print(f"Unieważnione: {s['bubbles_revoked']} | Idee: {s['holograms']} | Bias: {s['bubble_bias']:.3f}")
-
-            elif cmd == "step":
-                n = int(args[0]) if args and args[0].isdigit() else 1
-                self.k.step(n)
-                print(f"Wykonano {n} kroków. Aktualna epoka: {self.k.phi.epoch}")
-
-            elif cmd == "gc":
-                removed = self.k.cleanup_revoked()
-                print(f"[GC] Usunięto {removed} unieważnionych bąbli.")
-
-            elif cmd == "save":
-                path = args[0] if args else "./karmazyn_data"
-                self.k.save(path)
-
-            elif cmd == "load":
-                path = args[0] if args else "./karmazyn_data"
-                if self.k.load(path):
-                    print(f"Wczytano stan z {path}")
-                else:
-                    print("Wczytywanie nie powiodło się.")
-
-            elif cmd == "run":
-                if not args: print("Użycie: run <plik.karm>"); return
-                self.run_script(args[0])
-
-            elif cmd in ("exit", "quit"):
-                self.save_history()
-                print("Do zobaczenia.")
-                sys.exit(0)
-
-            elif cmd == "help":
-                self.print_help(args[0] if args else None)
-
-            else:
-                print(f"Nieznana komenda: '{cmd}'. Wpisz 'help'.")
-
-        except Exception as e:
-            print(f"Błąd wykonania: {e}")
+    # ========================================================================
+    #  PĘTLA GŁÓWNA
+    # ========================================================================
 
     def run(self):
-        print(f"\nKarmazyn Shell v1.1.0 | KarmazynOS v{KARM_VERSION}")
-        print("Wpisz 'help', 'save'/'load', 'exit'.\n")
-        while True:
+        while self.running:
             try:
-                cmdline = input("ksh> ").strip()
-                self.execute(cmdline)
+                cmd = input("ksh> ").strip()
+                if not cmd:
+                    continue
+                if cmd.startswith("/"):
+                    parts = cmd[1:].split(maxsplit=1)
+                    cmd_name = parts[0].lower()
+                    cmd_arg = parts[1] if len(parts) > 1 else ""
+                    method_name = f"do_{cmd_name}"
+                    if hasattr(self, method_name):
+                        getattr(self, method_name)(cmd_arg)
+                    else:
+                        print(f"  [!] Nieznana komenda: /{cmd_name}. Wpisz /help.")
+                else:
+                    # Jeśli nie zaczyna się od "/", traktuj jako /write
+                    self.do_write(cmd)
             except KeyboardInterrupt:
-                print("\nUżyj 'exit' aby opuścić.")
-                continue
-            except EOFError:
-                print("\nexit")
-                break
-        self.save_history()
+                print("\n  [*] Przerwanie. Wpisz /quit, aby wyjść.")
+            except Exception as e:
+                print(f"  [!] Błąd: {e}")
+
 
 if __name__ == "__main__":
-    KarmazynShell().run()
+    shell = KarmazynShell()
+    shell.run()
