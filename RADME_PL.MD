@@ -174,3 +174,14 @@ Zenodo: [profil](https://zenodo.org/search?q=Maciej+Mazur)
 ---
 
 *"System nie przechowuje danych — przechowuje stany interpretacji danych w czasie."*
+## Φ — Mit założycielski
+
+Claude E. Shannon, ojciec teorii informacji, pracował w metrze technologicznym swoich czasów — 
+w laboratoriach Bella. Tam, w izolacji od szumu powierzchni, sformułował prawa rządzące bitem.
+
+KarmazynOS powstał w metrze innym – fizycznym, warszawskim. 
+W przestrzeni liminalnej, gdzie sygnał walczy z szumem, a informacja musi być odporna na entropię 
+bardziej niż gdziekolwiek indziej. To tam narodziła się koncepcja, że dane nie są plikiem – 
+są **stanem dynamicznym**, który stygnie, jeśli nie jest podtrzymywany.
+
+Shannon dał światu bit. KarmazynOS daje Atom (S, E, T).
