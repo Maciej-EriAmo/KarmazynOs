@@ -1,15 +1,61 @@
+
+---
+
+## 3. Nowy `runtime.py` — z klasą `SystemState`
+
+```python
 """
 KarmazynOS — SanctuaryRuntime
-Jedno źródło prawdy o stanie systemu, EventBus, pętla systemowa.
+Jedno źródło prawdy o stanie systemu, EventBus, pętla systemowa,
+oraz SystemState — most między STC-Φ-001 a kodem.
 """
 import threading
 import time
-from queue import Queue
 from hss_karmazyn_matrix import HSSMatrix
 from karmazyn_ui import gfx, audio
 
+# ═══════════════════════════════════════════
+# MAPOWANIE STANÓW (STC-Φ-001, sekcja 08)
+# ═══════════════════════════════════════════
+STATE_MAP = {
+    "active":  {"color": "phi_stable", "sound": "tick",         "dot": "active"},
+    "thermal": {"color": "phi_thermal","sound": "tick",         "dot": "thermal"},
+    "decay":   {"color": "phi_decay",  "sound": "vacuum_decay", "dot": "decay"},
+    "corrupt": {"color": "phi_bright", "sound": "corruption",   "dot": "thermal"},
+    "ghost":   {"color": "phi_ghost",  "sound": None,           "dot": "ghost"},
+}
+
+class SystemState:
+    """Most między tokenami STC a kodem wykonawczym."""
+    @staticmethod
+    def classify(atom) -> str:
+        if atom.state == "TOMB" or atom.T <= 0:
+            return "ghost"
+        if hasattr(atom, "splamiony") and atom.splamiony:
+            return "corrupt"
+        if atom.T > 70:
+            return "active"
+        if atom.T > 30:
+            return "thermal"
+        return "decay"
+
+    @staticmethod
+    def color_for(atom) -> str:
+        return STATE_MAP[SystemState.classify(atom)]["color"]
+
+    @staticmethod
+    def sound_for(atom) -> str | None:
+        return STATE_MAP[SystemState.classify(atom)]["sound"]
+
+    @staticmethod
+    def dot_for(atom) -> str:
+        return STATE_MAP[SystemState.classify(atom)]["dot"]
+
+
+# ═══════════════════════════════════════════
+# EVENT BUS
+# ═══════════════════════════════════════════
 class EventBus:
-    """Prosty event bus dla zdarzeń systemowych."""
     def __init__(self):
         self._handlers = {}
     def on(self, event: str, handler):
@@ -18,6 +64,10 @@ class EventBus:
         for h in self._handlers.get(event, []):
             h(*args)
 
+
+# ═══════════════════════════════════════════
+# RUNTIME
+# ═══════════════════════════════════════════
 class SanctuaryRuntime:
     def __init__(self):
         self.matrix = HSSMatrix()
@@ -48,7 +98,6 @@ class SanctuaryRuntime:
         return self.matrix.get_atom(atom_id)
 
     def step(self):
-        """Wykonuje jeden krok systemu: aktualizuje macierz i emituje zdarzenia."""
         changes = self.matrix.step()
         for atom, event_type in changes:
             if event_type == "decay":
@@ -59,7 +108,6 @@ class SanctuaryRuntime:
                 self.events.emit("warm_threshold", atom)
 
     def start_system_loop(self, interval=0.2):
-        """Uruchamia pętlę systemową w tle."""
         if self._running:
             return
         self._running = True
