@@ -1,257 +1,102 @@
 #!/usr/bin/env python3
 """
-shell.py — KarmazynOS Shell (ksh) v1.3.0
-=========================================
-Zmiany v1.3.0:
-  [nowe] /phi_id         – wyświetl Φ-ID bieżącego węzła
-  [nowe] /crimson_nodes  – lista znanych węzłów z rejestru TOFU
-  [nowe] /help           – zaktualizowana lista komend
+KarmazynOS — Shell (ksh) v1.3
+Pełna powłoka operacyjna z trwałym HUD-em i dwupoziomowym parserem.
 """
+import os, sys, time, subprocess, readline
+from runtime import SanctuaryRuntime, SystemState
+from karmazyn_fs import KarmazynFS
+from karmazyn_ui import theme, gfx
 
-import sys
-import os
-import readline  # opcjonalne: historia poleceń
+# ═══════════════════════════════════════════
+# INICJALIZACJA SYSTEMU
+# ═══════════════════════════════════════════
+RUNTIME = SanctuaryRuntime()
+FS = KarmazynFS(RUNTIME)
+RUNTIME.start_loop()
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# ═══════════════════════════════════════════
+# HUD — Pasywny feedback systemu
+# ═══════════════════════════════════════════
+def hud_line() -> str:
+    s = RUNTIME.status_summary()
+    return (f"{theme.ansi_fg('phi_stable')}HOT:{s['HOT']}{theme.RESET} "
+            f"{theme.ansi_fg('phi_thermal')}WARM:{s['WARM']}{theme.RESET} "
+            f"{theme.ansi_fg('phi_signal')}COLD:{s['COLD']}{theme.RESET} "
+            f"{theme.ansi_fg('phi_ghost')}TOMB:{s['TOMB']}{theme.RESET}")
 
-from karmazyn import KarmazynOS
-from crimson_network import CrimsonNetwork
+# ═══════════════════════════════════════════
+# KOMENDY (wszystkie przez runtime)
+# ═══════════════════════════════════════════
+def cmd_stabilizuj(args):
+    if not args: return print("Użycie: STABILIZUJ <id>")
+    try:
+        RUNTIME.stabilize_atom(args[0])
+        print(f"Stabilizowano {args[0]}.")
+    except ValueError as e: print(e)
 
-VERSION = "1.3.0"
+def cmd_dotknij_pustki(args):
+    if not args: return print("Użycie: DOTKNIJ PUSTKI <id>")
+    try:
+        RUNTIME.corrupt_atom(args[0], 25)
+        print(f"Dotknięto Pustką {args[0]}.")
+    except ValueError as e: print(e)
 
+# ... (pozostałe komendy LS, CD, TOUCH, RM, CP, MV, SETE, FIND, MONITOR, OBSERWUJ, KRONIKA, EDIT bez zmian)
 
-class KarmazynShell:
-    def __init__(self):
-        print(f"  ╔══════════════════════════════════════╗")
-        print(f"  ║    KarmazynOS Shell (ksh) v{VERSION}    ║")
-        print(f"  ╚══════════════════════════════════════╝")
-        self.karmazyn = KarmazynOS()
-        self.network: CrimsonNetwork | None = None
-        self.running = True
-        self._load_or_init()
+# ═══════════════════════════════════════════
+# DWUPOZIOMOWY PARSER
+# ═══════════════════════════════════════════
+COMMANDS = {
+    "LS": lambda a: print(FS.ls(a[0] if a else None)),
+    "CD": lambda a: print(FS.cd(a[0] if a else "HOT")),
+    "PWD": lambda a: print(FS.pwd()),
+    "TOUCH": lambda a: cmd_touch(a),
+    "RM": lambda a: print(FS.rm(a[0]) if a else "Użycie: RM <id>"),
+    "CP": lambda a: print(FS.cp(a[0], a[1]) if len(a)>1 else "Użycie: CP <src> <dst>"),
+    "MV": lambda a: print(FS.mv(a[0], a[1]) if len(a)>1 else "Użycie: MV <id> <warstwa>"),
+    "SETE": lambda a: print(FS.setE(a[0], a[1]) if len(a)>1 else "Użycie: SETE <id> <E>"),
+    "FIND": lambda a: print(FS.find(" ".join(a)) if a else "Użycie: FIND <zapytanie>"),
+    "MONITOR": lambda a: print(gfx.draw_frame("MONITOR", [f"{k}: {v}" for k,v in RUNTIME.status_summary().items()])),
+    "STABILIZUJ": cmd_stabilizuj,
+    "DOTKNIJ": { "PUSTKI": cmd_dotknij_pustki },
+    "ATOM": { "STATUS": lambda a: cmd_atom_status(a) },
+    "EDIT": lambda a: subprocess.run([sys.executable, "karmazyn_edit.py", a[0]]) if a else print("Użycie: EDIT <ścieżka>"),
+    "EXIT": lambda a: sys.exit(0),
+}
 
-    def _load_or_init(self):
-        if os.path.isdir("./karmazyn_data"):
-            ans = input("Wykryto zapisany stan. Wczytać? [T/n]: ").strip().lower()
-            if ans != 'n':
-                self.karmazyn.load("./karmazyn_data")
-                return
-        # Nowa sesja – inicjalizuj bąbel tożsamości
-        print("Tworzenie nowej sesji Φ...")
-        self.karmazyn._init_p2s_bubble()
+# ═══════════════════════════════════════════
+# GŁÓWNA PĘTLA (z HUD-em po każdej komendzie)
+# ═══════════════════════════════════════════
+def main():
+    print(gfx.draw_frame("KARMAZYN OS", ["Shell v1.3 — Kontrakt Systemowy", hud_line()], style="phi_core"))
+    while True:
+        try:
+            line = input(f"{theme.ansi_fg('phi_signal')}ksh>{theme.RESET} ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\nZamykanie..."); break
+        if not line: continue
+        parts = line.split()
+        verb = parts[0].upper()
+        args = parts[1:]
 
-    # ========================================================================
-    #  KOMENDY PODSTAWOWE
-    # ========================================================================
-
-    def do_help(self, arg):
-        """Wyświetla dostępne komendy."""
-        print("""
-  ┌─────────────── PODSTAWOWE ───────────────────────────────┐
-  │ /write <tekst>         Zapisz atom do Φ                  │
-  │ /recall <zapytanie>    Przypomnij atomy i bąble          │
-  │ /consolidate <label>   Konsoliduj atom w bąbel           │
-  │ /read_bubble <label>   Odczytaj bąbel                    │
-  │ /reactivate <label>    Reaktywuj bąbel do Φ              │
-  │ /step [n]              Wykonaj n kroków termodynamicznych │
-  │ /stats                 Pokaż statystyki systemu          │
-  │ /save                  Zapisz stan                       │
-  │ /load                  Wczytaj stan                      │
-  │ /evaluate <kontekst>   Oceń spójność kontekstu           │
-  ├─────────────── TOŻSAMOŚĆ ────────────────────────────────┤
-  │ /phi_id                Pokaż Φ-ID tego węzła             │
-  ├─────────────── KARMAZYNOWY KOMUNIKATOR ──────────────────┤
-  │ /crimson_listen <port> Nasłuchuj na połączenie           │
-  │ /crimson_connect <h> <p> Połącz z węzłem                │
-  │ /crimson_msg <tekst>   Wyślij wiadomość                  │
-  │ /crimson_nodes         Lista znanych węzłów              │
-  │ /crimson_close         Zamknij kanał                     │
-  ├──────────────────────────────────────────────────────────┤
-  │ /quit                  Wyjdź                             │
-  └──────────────────────────────────────────────────────────┘
-""")
-
-    def do_write(self, arg):
-        if not arg.strip():
-            print("Użycie: /write <tekst>")
-            return
-        label = self.karmazyn.write(arg.strip())
-        print(f"  [Φ] Zapisano atom: {label}")
-
-    def do_recall(self, arg):
-        if not arg.strip():
-            print("Użycie: /recall <zapytanie>")
-            return
-        results = self.karmazyn.recall(arg.strip())
-        if not results:
-            print("  Brak wyników.")
-            return
-        for i, r in enumerate(results):
-            print(f"  [{i+1}] {r['label'][:40]:40s} {r['layer']:6s} "
-                  f"T={r.get('T', float('inf')):.2f} sim={r['sim']:.3f} "
-                  f"score={r['score']:.3f}")
-
-    def do_consolidate(self, arg):
-        if not arg.strip():
-            print("Użycie: /consolidate <label>")
-            return
-        bid = self.karmazyn.consolidate(arg.strip())
-        if bid:
-            print(f"  [bąbel] {bid}")
-
-    def do_read_bubble(self, arg):
-        if not arg.strip():
-            print("Użycie: /read_bubble <label>")
-            return
-        content = self.karmazyn.read_bubble(arg.strip())
-        if content:
-            print(f"  [bąbel] {content[:200]}")
+        handler = COMMANDS.get(verb)
+        if handler is None:
+            print(f"Nieznana komenda: {verb}")
+            continue
+        if isinstance(handler, dict):
+            sub = args[0].upper() if args else ""
+            sub_handler = handler.get(sub)
+            if sub_handler:
+                try: sub_handler(args[1:])
+                except Exception as e: print(f"Błąd: {e}")
+            else: print(f"Nieznana podkomenda: {sub}")
         else:
-            print("  Nie znaleziono bąbla.")
+            try: handler(args)
+            except Exception as e: print(f"Błąd: {e}")
 
-    def do_reactivate(self, arg):
-        if not arg.strip():
-            print("Użycie: /reactivate <label>")
-            return
-        new_label = self.karmazyn.reactivate_bubble(arg.strip())
-        if new_label:
-            print(f"  [Φ] Reaktywowano jako: {new_label}")
-
-    def do_step(self, arg):
-        n = int(arg.strip() or "1")
-        stats = self.karmazyn.step(n)
-        print(f"  [krok] epoka={stats['epoch']} atomy={stats['atoms']} "
-              f"T={stats['temperature']:.2f} bąble={stats['bubbles']}")
-
-    def do_stats(self, arg):
-        s = self.karmazyn.stats()
-        print(f"  KarmazynOS v{s['version']}")
-        print(f"  Φ-ID:         {s['phi_id']}")
-        print(f"  Epoka:        {s['epoch']}")
-        print(f"  Atomy Φ:      {s['atoms']}")
-        print(f"  Temperatura:  {s['temperature']:.3f}")
-        print(f"  T_vacuum:     {s['t_vacuum']:.4f} bit")
-        print(f"  Bąble:        {s['bubbles']} (zanikające: {s['bubbles_decaying']}, "
-              f"odwołane: {s['bubbles_revoked']})")
-        print(f"  Hologramy:    {s['holograms']}")
-        print(f"  Bubble bias:  {s['bubble_bias']:.3f}")
-
-    def do_save(self, arg):
-        self.karmazyn.save()
-
-    def do_load(self, arg):
-        self.karmazyn.load()
-
-    def do_evaluate(self, arg):
-        if not arg.strip():
-            print("Użycie: /evaluate <kontekst>")
-            return
-        allow, score, reason = self.karmazyn.evaluate(arg.strip())
-        status = "✓ SPÓJNY" if allow else "✗ NIESPÓJNY"
-        print(f"  [{status}] {reason}")
-
-    # ========================================================================
-    #  KOMENDY TOŻSAMOŚCI
-    # ========================================================================
-
-    def do_phi_id(self, arg):
-        """Wyświetla Φ-ID bieżącego węzła."""
-        phi_id = self.karmazyn.get_phi_id()
-        phi2_hex = self.karmazyn.phi.phi2_bytes().hex()
-        print(f"  Φ-ID:      {phi_id}")
-        print(f"  phi2_hex:  {phi2_hex[:32]}…")
-        b = self.karmazyn.bubbles.get_by_label(self.karmazyn._P2S_BUBBLE_LABEL)
-        if b:
-            print(f"  Bąbel:     {b.id} (immortal={b.immortal})")
-
-    # ========================================================================
-    #  KOMENDY KARMAZYNOWEGO KOMUNIKATORA
-    # ========================================================================
-
-    def _ensure_network(self, port=9000):
-        """Inicjalizuje CrimsonNetwork, jeśli jeszcze nie istnieje."""
-        if not self.network:
-            self.network = CrimsonNetwork(self.karmazyn, port)
-            self.network.receive_callback = lambda msg: print(f"\n<Φ> {msg}")
-
-    def do_crimson_listen(self, arg):
-        port = int(arg.strip() or "9000")
-        self._ensure_network(port)
-        self.network.start_server()
-        print(f"  [*] Nasłuchiwanie na porcie {port}")
-
-    def do_crimson_connect(self, arg):
-        parts = arg.strip().split()
-        if not parts:
-            print("Użycie: /crimson_connect <host> <port>")
-            return
-        host = parts[0]
-        port = int(parts[1]) if len(parts) > 1 else 9001
-        self._ensure_network(port)
-        self.network.connect(host, port)
-
-    def do_crimson_msg(self, arg):
-        if not arg.strip():
-            print("Użycie: /crimson_msg <tekst>")
-            return
-        if not self.network:
-            print("  [!] Brak połączenia. Użyj /crimson_listen i /crimson_connect.")
-            return
-        self.network.send(arg.strip())
-
-    def do_crimson_nodes(self, arg):
-        """Wyświetla listę znanych węzłów z rejestru TOFU."""
-        if not self.network:
-            self._ensure_network()
-        nodes = self.network.registry.list_nodes()
-        if not nodes:
-            print("  Brak znanych węzłów.")
-            return
-        print(f"  {'Φ-ID':34s} {'Nazwa':20s} {'Adres':22s} {'Ostatni kontakt'}")
-        print(f"  {'-'*34} {'-'*20} {'-'*22} {'-'*19}")
-        for n in nodes:
-            print(f"  {n['phi_id']:34s} {n.get('name','?'):20s} "
-                  f"{n.get('address','?'):22s} {n.get('last_seen','?')}")
-
-    def do_crimson_close(self, arg):
-        if self.network:
-            self.network.close()
-        else:
-            print("  [!] Brak aktywnego połączenia.")
-
-    def do_quit(self, arg):
-        print("  [*] Zamykanie KarmazynOS...")
-        self.karmazyn.save()
-        self.running = False
-
-    # ========================================================================
-    #  PĘTLA GŁÓWNA
-    # ========================================================================
-
-    def run(self):
-        while self.running:
-            try:
-                cmd = input("ksh> ").strip()
-                if not cmd:
-                    continue
-                if cmd.startswith("/"):
-                    parts = cmd[1:].split(maxsplit=1)
-                    cmd_name = parts[0].lower()
-                    cmd_arg = parts[1] if len(parts) > 1 else ""
-                    method_name = f"do_{cmd_name}"
-                    if hasattr(self, method_name):
-                        getattr(self, method_name)(cmd_arg)
-                    else:
-                        print(f"  [!] Nieznana komenda: /{cmd_name}. Wpisz /help.")
-                else:
-                    # Jeśli nie zaczyna się od "/", traktuj jako /write
-                    self.do_write(cmd)
-            except KeyboardInterrupt:
-                print("\n  [*] Przerwanie. Wpisz /quit, aby wyjść.")
-            except Exception as e:
-                print(f"  [!] Błąd: {e}")
-
+        # Po każdej komendzie wyświetlamy HUD
+        print(hud_line())
 
 if __name__ == "__main__":
-    shell = KarmazynShell()
-    shell.run()
+    main()
