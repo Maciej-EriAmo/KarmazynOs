@@ -1,175 +1,96 @@
 #!/usr/bin/env python3
 """
-KarmazynOS — Shell (ksh) v2.2
-Lekka powłoka — logika w modułach.
-
-Importy:
-    runtime               — SanctuaryRuntime
-    karmazyn_fs           — KarmazynFS  
-    bedit                 — KarmazynIntegration (BubbleRuntime)
-    mission_engine        — MissionEngine
-    bubble_commands       — cmd_edit, cmd_import, cmd_gallery, cmd_export
-    karmazyn_lang         — KarmazynExecutor (.karm)
-    karmazyn_ui           — theme, gfx
+KarmazynOS — Shell (ksh) v3.0
+Zrefaktorowany z użyciem Command Engine v1.
 """
-import json
+
 import os
 import sys
 import time
+import threading
 import readline
+import shlex
 from typing import Optional
 
 from runtime import SanctuaryRuntime, SystemState
 from karmazyn_fs import KarmazynFS
 from karmazyn_ui import theme, gfx
-from karmazyn_ui.embedder import LevelEmbedder
 
-# ─── Bąble ───────────────────────────────────────────
+# Bąble
 from bedit import KarmazynIntegration as BubbleRuntime
-BUBBLES = BubbleRuntime()
-
-# ─── Misje ───────────────────────────────────────────
-from mission_engine import MissionEngine, describe_cel
-
-# ─── Komendy bąbli ───────────────────────────────────
 from bubble_commands import (
     CTX as BUBBLE_CTX,
     cmd_edit, cmd_import, cmd_gallery, cmd_export,
     init as bubble_init,
 )
 
-# ─── KarmazynScript ──────────────────────────────────
+# KarmazynScript
 try:
     from karmazyn_lang import KarmazynExecutor, parse_file
     KARM_LOADED = True
 except ImportError:
     KARM_LOADED = False
 
-# ═══════════════════════════════════════════
-# INICJALIZACJA SYSTEMU
-# ═══════════════════════════════════════════
+# Lua
+try:
+    from karmazyn_lua import LuaExecutor
+    LUA_AVAILABLE = True
+except ImportError:
+    LUA_AVAILABLE = False
+
+# Command Engine
+from command_engine import Command, CommandRegistry, make_arg_schema
+
+# ----------------------------------------------------------------------
+# Inicjalizacja systemu
+# ----------------------------------------------------------------------
 RUNTIME = SanctuaryRuntime()
-FS      = KarmazynFS(RUNTIME)
+FS = KarmazynFS(RUNTIME)
 RUNTIME.start_loop()
 
-# Podłącz referencje do bubble_commands
+BUBBLES = BubbleRuntime()
 bubble_init(BUBBLES, RUNTIME)
 
-# Misja
-MISSION = MissionEngine(RUNTIME)
-
-# KarmazynScript
 KARM = KarmazynExecutor(RUNTIME) if KARM_LOADED else None
+LUA_EXECUTOR = LuaExecutor(RUNTIME) if LUA_AVAILABLE else None
 
-# ═══════════════════════════════════════════
-# HELPERS
-# ═══════════════════════════════════════════
-
-def _find_bubble_by_name(name: str) -> Optional[str]:
-    """Znajduje ID bąbla po nazwie, używając istniejącego API."""
-    for b in BUBBLES.list_bubbles():
-        if b['name'].lower() == name.lower():
-            return b['id']
-    return None
-
-def _memcost(n: int = 1) -> bool:
-    """Sprawdza i pobiera koszt żywicy za operacje pamięciowe."""
-    if not RUNTIME.current_mission:
-        return True  # poza misją zapis jest darmowy
-    if RUNTIME.resources.get("żywica", 0) >= n:
-        RUNTIME.resources["żywica"] -= n
-        return True
-    return False
-
-# ═══════════════════════════════════════════
-# EVENTY MISJI
-# ═══════════════════════════════════════════
-
-def _log_to_kronika(status: str, data: dict):
-    kid = _find_bubble_by_name("kronika")
-    if not kid:
-        kid = BUBBLES.create_bubble("kronika", "chronicle")
-    m = RUNTIME.current_mission.get('nazwa', '?') if RUNTIME.current_mission else '?'
-    BUBBLES.add_text(kid, f"{status}: {m} | czas={data.get('czas', 0):.1f}s")
-
-def _on_mission_won(data):
-    print(f"\n{theme.ansi_fg('phi_stable')}╔══════════════════╗")
-    print(f"║  MISJA UKOŃCZONA  ║")
-    print(f"╚══════════════════╝{theme.RESET}")
-    print(f"Czas: {data.get('czas', 0):.1f}s")
-    _log_to_kronika("WYGRANA", data)
-
-def _on_mission_lost(data):
-    print(f"\n{theme.ansi_fg('phi_bright')}╔═════════════════════════╗")
-    print(f"║  CISZA OSTATECZNA       ║")
-    print(f"╚═════════════════════════╝{theme.RESET}")
-    print(f"Powód: {data.get('powód', data.get('czas', '?'))}")
-    _log_to_kronika("PRZEGRANA", data)
-
-RUNTIME.events.on("mission_won",  _on_mission_won)
-RUNTIME.events.on("mission_lost", _on_mission_lost)
-
-# ═══════════════════════════════════════════
-# HUD
-# ═══════════════════════════════════════════
-
+# ----------------------------------------------------------------------
+# HUD (z informacją o stanie pętli runtime)
+# ----------------------------------------------------------------------
 def print_hud():
+    loop_status = ""
+    # Używamy metody is_alive() zamiast _loop_thread – czystsza enkapsulacja
+    if hasattr(RUNTIME, 'is_alive') and not RUNTIME.is_alive():
+        loop_status = f"{theme.ansi_fg('phi_ghost')} [RUNTIME DEAD]{theme.RESET}"
+
     s = RUNTIME.status_summary()
     hud = (f"{theme.ansi_fg('phi_stable')}HOT:{s['HOT']}{theme.RESET} "
            f"{theme.ansi_fg('phi_thermal')}WARM:{s['WARM']}{theme.RESET} "
            f"{theme.ansi_fg('phi_signal')}COLD:{s['COLD']}{theme.RESET} "
-           f"{theme.ansi_fg('phi_ghost')}TOMB:{s['TOMB']}{theme.RESET}")
-
-    if RUNTIME.current_mission and MISSION._active:
-        e = MISSION.elapsed()
-        limit = RUNTIME.current_mission.get("czas_misji", 0)
-        if limit:
-            hud += f"  ⏱ {max(0.0, limit - e):.0f}s"
-        hud += f"  🌿{RUNTIME.resources.get('żywica', 0)}"
+           f"{theme.ansi_fg('phi_ghost')}TOMB:{s['TOMB']}{theme.RESET}{loop_status}")
 
     if BUBBLE_CTX.current_bubble_name:
         atoms = BUBBLES.get_active_atoms(BUBBLE_CTX.current_bubble_id) if BUBBLE_CTX.current_bubble_id else []
         bubble = BUBBLES.get_bubble(BUBBLE_CTX.current_bubble_id)
         media = ""
         if bubble:
-            stats = bubble.manifest.get('media_stats', {})
+            if hasattr(bubble, 'manifest'):
+                stats = bubble.manifest.get('media_stats', {})
+            elif isinstance(bubble, dict):
+                stats = bubble.get('bubble', {}).get('manifest', {}).get('media_stats', {})
+            else:
+                stats = {}
             parts = []
-            if stats.get('image', 0):
-                parts.append(f"🖼{stats['image']}")
-            if stats.get('audio', 0):
-                parts.append(f"🎵{stats['audio']}")
-            if stats.get('document', 0):
-                parts.append(f"📄{stats['document']}")
-            if parts:
-                media = f" [{','.join(parts)}]"
+            if stats.get('image', 0): parts.append(f"🖼{stats['image']}")
+            if stats.get('audio', 0): parts.append(f"🎵{stats['audio']}")
+            if stats.get('document', 0): parts.append(f"📄{stats['document']}")
+            if parts: media = f" [{','.join(parts)}]"
         hud += f"  🫧{BUBBLE_CTX.current_bubble_name}({len(atoms)}){media}"
-
     print(hud)
 
-# ═══════════════════════════════════════════
-# AUTOCOMPLETE
-# ═══════════════════════════════════════════
-
-COMMAND_LIST = [
-    "LS", "CD", "PWD", "TOUCH", "RM", "CP", "MV", "SETE", "FIND",
-    "MONITOR", "STABILIZUJ", "DOTKNIJ PUSTKI", "ATOM STATUS",
-    "OBSERWUJ", "KRONIKA", "EDIT", "EXIT", "SNAPSHOT",
-    "IMPORT", "GALLERY", "EXPORT", "RUN", "COMPILE",
-    "SANKTUARIUM:START", "SANKTUARIUM:STATUS", "SANKTUARIUM:STOP",
-    "SANKTUARIUM:LOAD",
-]
-
-def completer(text, state):
-    options = [c for c in COMMAND_LIST if c.startswith(text.upper())]
-    return options[state] if state < len(options) else None
-
-readline.set_completer(completer)
-readline.parse_and_bind("tab: complete")
-
-# ═══════════════════════════════════════════
-# KOMENDY SYSTEMOWE
-# ═══════════════════════════════════════════
-
+# ----------------------------------------------------------------------
+# HANDLERY KOMEND (istniejące, bez zmian)
+# ----------------------------------------------------------------------
 def cmd_ls(args):
     atoms = RUNTIME.matrix.atoms()
     if atoms:
@@ -234,89 +155,53 @@ def cmd_dotknij_pustki(args):
     except ValueError as e:
         return str(e)
 
+# Asynchroniczna wersja OBSERWUJ (nie blokuje shella)
+_observer_running = False
+
+def cmd_obserwuj(args):
+    global _observer_running
+    if _observer_running:
+        return "Obserwacja już trwa."
+    _observer_running = True
+
+    def _observe():
+        global _observer_running
+        try:
+            while _observer_running:
+                rows = []
+                for a in RUNTIME.matrix.atoms():
+                    if a.T > 70: color = "phi_thermal"
+                    elif a.T > 30: color = "phi_signal"
+                    else: color = "phi_decay"
+                    bar = gfx.progress_bar(a.T, a.T_max, fg=color)
+                    rows.append(f"{a.id:10} {bar} {a.T:5.1f}° {a.state}")
+                sys.stdout.write("\033[H\033[J")
+                sys.stdout.write(gfx.draw_frame("OBSERWACJA", rows) + "\n")
+                sys.stdout.flush()
+                time.sleep(0.5)
+        except KeyboardInterrupt:
+            pass
+        finally:
+            _observer_running = False
+
+    threading.Thread(target=_observe, daemon=True).start()
+    return "Obserwacja uruchomiona. Wpisz dowolną komendę (np. LS) aby zakończyć."
+
 def cmd_atom_status(args):
     if not args:
         return "ATOM STATUS <id>"
     atom = RUNTIME.get_atom(args[0])
     if not atom:
         return "Atom nie istnieje."
-    if atom.T > 70:
-        color = "phi_thermal"
-    elif atom.T > 30:
-        color = "phi_signal"
-    else:
-        color = "phi_decay"
-    survived = MISSION._survived.get(atom.id, 0.0)
+    if atom.T > 70: color = "phi_thermal"
+    elif atom.T > 30: color = "phi_signal"
+    else: color = "phi_decay"
     return gfx.draw_frame(f"ATOM {atom.id}", [
         f"S: {atom.S}   E: {atom.E}",
         f"T: {atom.T:.1f}   Stan: {atom.state}",
-        f"Wiek: {atom.age}   Przeżyte: {survived:.0f}s",
+        f"Wiek: {atom.age}",
         gfx.progress_bar(atom.T, atom.T_max, fg=color),
     ])
-
-def cmd_obserwuj(args):
-    print("Obserwuję (Ctrl+C = koniec)...")
-    try:
-        while True:
-            rows = []
-            for a in RUNTIME.matrix.atoms():
-                if a.T > 70:
-                    color = "phi_thermal"
-                elif a.T > 30:
-                    color = "phi_signal"
-                else:
-                    color = "phi_decay"
-                bar = gfx.progress_bar(a.T, a.T_max, fg=color)
-                survived = MISSION._survived.get(a.id, 0.0)
-                rows.append(
-                    f"{a.id:10} {bar} {a.T:5.1f}° {a.state}"
-                    f"  ⏱{survived:.0f}s"
-                )
-            sys.stdout.write("\033[H\033[J")
-            sys.stdout.write(gfx.draw_frame("OBSERWACJA", rows) + "\n")
-            sys.stdout.flush()
-            time.sleep(0.5)
-    except KeyboardInterrupt:
-        pass
-    return "Koniec"
-
-def cmd_kronika(args):
-    if not RUNTIME.current_mission:
-        return "Brak misji. SANKTUARIUM:START"
-    m = RUNTIME.current_mission
-    cele = m.get("cele", [])
-    lines = [
-        m.get("nazwa", ""),
-        m.get("opis_kroniki", ""),
-        "",
-        "WARUNEK WYGRANEJ:",
-    ]
-    for cel in cele:
-        lines.append(f"  ✦ {describe_cel(cel, MISSION._survived)}")
-    if m.get("limit_ciszy"):
-        lines.append("")
-        lines.append("WARUNEK PRZEGRANEJ:")
-        lines.append(f"  ✗ {m['limit_ciszy']} atomów → Cisza Ostateczna")
-    if m.get("czas_misji"):
-        lines.append(f"  ✗ Upłynie {m['czas_misji']}s")
-    return gfx.draw_frame("KRONIKA", lines)
-
-def cmd_snapshot(args):
-    name = args[0] if args else f"snapshot_{int(time.time())}"
-    bid = _find_bubble_by_name(name)
-    if not bid:
-        bid = BUBBLES.create_bubble(name, "snapshot")
-
-    if not _memcost(3):
-        return "❌ Za mało Żywicy na snapshot (koszt: 3)"
-
-    atoms = RUNTIME.matrix.atoms()
-    if not atoms:
-        return "Brak atomów"
-    count = BUBBLES.snapshot_runtime(bid, atoms)
-    if hasattr(BUBBLES, 'save_all'):
-        BUBBLES.save_all()
-    return f"📸 {count} atomów → 🫧{name}"
 
 def cmd_run(args):
     if not KARM_LOADED:
@@ -343,126 +228,152 @@ def cmd_compile(args):
         lines = [f"📜 AST: {args[0]}", "=" * 50]
         for i, stmt in enumerate(program.statements, 1):
             name = type(stmt).__name__
-            fields = {
-                k: v for k, v in stmt.__dict__.items()
-                if not k.startswith('_')
-            }
+            fields = {k: v for k, v in stmt.__dict__.items() if not k.startswith('_')}
             lines.append(f"{i}. {name}: {fields}")
         return "\n".join(lines)
     except Exception as e:
         return f"❌ {e}"
 
-# ═══════════════════════════════════════════
-# SANKTUARIUM
-# ═══════════════════════════════════════════
-
-def _start_mission(mission: dict) -> str:
-    MISSION.stop()
-    RUNTIME.start_mission(mission)
-    MISSION.start(mission)
-    cele = mission.get("cele", [])
-    return gfx.draw_frame("MISJA ROZPOCZĘTA", [
-        f"Nazwa: {mission['nazwa']}",
-        f"Atomów: {len(mission.get('relikwie', []))}",
-        f"Czas: {mission.get('czas_misji', '∞')}s",
-        f"Żywica: {RUNTIME.resources.get('żywica', 0)}",
-        "",
-        "CEL:",
-    ] + [f"  ✦ {describe_cel(c, {})}" for c in cele] + [
-        "",
-        "LS, ATOM STATUS, OBSERWUJ, STABILIZUJ, DOTKNIJ PUSTKI, KRONIKA, SNAPSHOT",
-    ])
-
-def cmd_sanktuarium_start(args):
-    words = args if args else ["iskra", "ciemność"]
-    embedder = LevelEmbedder(mode="light")
-    mission = embedder.generate_mission(words)
-    return _start_mission(mission)
-
-def cmd_sanktuarium_load(args):
+def cmd_lua(args):
+    if not LUA_AVAILABLE:
+        return "❌ Moduł Lua nie jest dostępny (brak lupa lub błąd importu)."
     if not args:
-        return "SANKTUARIUM:LOAD <plik.json>"
-    if not os.path.isfile(args[0]):
-        return f"Plik: {args[0]}"
-    try:
-        with open(args[0], encoding="utf-8") as f:
-            mission = json.load(f)
-        return _start_mission(mission)
-    except Exception as e:
-        return f"[BŁĄD] {e}"
+        return "Użycie: LUA <plik.lua> lub LUA BUBBLE <nazwa_bąbla>"
+    if args[0].upper() == "BUBBLE":
+        if len(args) < 2:
+            return "❌ Podaj nazwę bąbla: LUA BUBBLE <nazwa_bąbla>"
+        result = LUA_EXECUTOR.run_bubble(args[1])
+        if isinstance(result, str) and result.startswith("Błąd"):
+            return f"❌ {result}"
+        return f"✅ Wykonano bąbel Lua: {args[1]}"
+    filepath = args[0]
+    result = LUA_EXECUTOR.run_file(filepath)
+    if isinstance(result, str) and result.startswith("Błąd"):
+        return f"❌ {result}"
+    return f"✅ Wykonano plik Lua: {filepath}"
 
-def cmd_sanktuarium_status(args):
-    if not RUNTIME.current_mission:
-        return "Brak misji"
-    s = RUNTIME.status_summary()
-    lines = [
-        f"Misja: {RUNTIME.current_mission.get('nazwa', '?')}",
-        f"HOT:{s['HOT']} WARM:{s['WARM']} COLD:{s['COLD']} TOMB:{s['TOMB']}",
-    ] + MISSION.status_lines()
-    return gfx.draw_frame("SANKTUARIUM STATUS", lines)
+def cmd_help(args):
+    """Wyświetla pomoc. Użycie: HELP [komenda|kategoria]"""
+    if not args:
+        lines = ["Dostępne kategorie:"]
+        for cat in registry.get_categories():
+            lines.append(f"  {cat}")
+        lines.append("Użyj HELP <komenda> aby uzyskać szczegóły.")
+        lines.append("Użyj HELP <kategoria> aby wyświetlić komendy w danej kategorii.")
+        return "\n".join(lines)
+    topic = args[0].upper()
+    cmd = registry.get(topic)
+    if cmd:
+        return cmd.format_help()
+    if topic in registry.get_categories():
+        cmds = registry.list_commands(category=topic)
+        lines = [f"Komendy w kategorii '{topic}':"]
+        for cname in cmds:
+            c = registry.get(cname)
+            lines.append(f"  {cname:<20} – {c.help_text[:50]}")
+        return "\n".join(lines)
+    return f"Nie znaleziono komendy ani kategorii: {topic}"
 
-def cmd_sanktuarium_stop(args):
-    MISSION.stop()
+def cmd_exit(args):
+    """Zatrzymuje pętlę, zapisuje stan i kończy pracę powłoki."""
+    global _observer_running
+    _observer_running = False
     RUNTIME.stop_loop()
-    return "Sanktuarium zatrzymane"
+    BUBBLES.save_all()
+    sys.exit(0)
 
-def cmd_sanktuarium(args):
-    if not args:
-        return "SANKTUARIUM:START|LOAD|STATUS|STOP"
-    sub = args[0].upper()
-    fn = COMMANDS.get(f"SANKTUARIUM:{sub}")
-    if fn:
-        return fn(args[1:])
-    return f"Nieznane: SANKTUARIUM:{sub}"
+# ----------------------------------------------------------------------
+# REJESTRACJA KOMEND (Command Engine)
+# ----------------------------------------------------------------------
+registry = CommandRegistry()
 
-# ═══════════════════════════════════════════
-# PARSER
-# ═══════════════════════════════════════════
+def reg(name: str, handler, help_text: str = "", category: str = "general", args_schema=None):
+    registry.register(Command(name, handler, help_text, category, args_schema or []))
 
-COMMANDS = {
-    "LS": cmd_ls,
-    "CD": cmd_cd,
-    "PWD": cmd_pwd,
-    "TOUCH": cmd_touch,
-    "RM": cmd_rm,
-    "CP": cmd_cp,
-    "MV": cmd_mv,
-    "SETE": cmd_sete,
-    "FIND": cmd_find,
-    "MONITOR": cmd_monitor,
-    "STABILIZUJ": cmd_stabilizuj,
-    "OBSERWUJ": cmd_obserwuj,
-    "KRONIKA": cmd_kronika,
-    "SNAPSHOT": cmd_snapshot,
-    "IMPORT": cmd_import,
-    "GALLERY": cmd_gallery,
-    "EXPORT": cmd_export,
-    "RUN": cmd_run,
-    "COMPILE": cmd_compile,
-    "DOTKNIJ": {"PUSTKI": cmd_dotknij_pustki},
-    "ATOM": {"STATUS": cmd_atom_status},
-    "SANKTUARIUM": cmd_sanktuarium,
-    "SANKTUARIUM:START": cmd_sanktuarium_start,
-    "SANKTUARIUM:LOAD": cmd_sanktuarium_load,
-    "SANKTUARIUM:STATUS": cmd_sanktuarium_status,
-    "SANKTUARIUM:STOP": cmd_sanktuarium_stop,
-    "EDIT": cmd_edit,
-    "EXIT": lambda a: (
-        BUBBLES.save_all() if hasattr(BUBBLES, 'save_all') else None,
-        sys.exit(0),
-    )[1],
-}
+# Komendy jedno- i dwuczłonowe rejestrujemy z pełną nazwą
+reg("LS", cmd_ls, "Listuje atomy lub zawartość systemu plików", category="navigation")
+reg("CD", cmd_cd, "Zmienia bieżącą warstwę termodynamiczną (HOT/WARM/COLD)", category="navigation")
+reg("PWD", cmd_pwd, "Pokazuje bieżącą warstwę", category="navigation")
+reg("TOUCH", cmd_touch, "Tworzy nowy atom", category="atoms",
+    args_schema=[make_arg_schema("id", required=True),
+                 make_arg_schema("S", required=False),
+                 make_arg_schema("E", required=False),
+                 make_arg_schema("T", required=False, arg_type="float")])
+reg("RM", cmd_rm, "Usuwa atom (przenosi do TOMB)", category="atoms",
+    args_schema=[make_arg_schema("id", required=True)])
+reg("CP", cmd_cp, "Kopiuje atom", category="atoms",
+    args_schema=[make_arg_schema("src", required=True),
+                 make_arg_schema("dst", required=True)])
+reg("MV", cmd_mv, "Przenosi atom między warstwami", category="atoms",
+    args_schema=[make_arg_schema("id", required=True),
+                 make_arg_schema("warstwa", required=True)])
+reg("SETE", cmd_sete, "Zmienia emanację atomu", category="atoms",
+    args_schema=[make_arg_schema("id", required=True),
+                 make_arg_schema("E", required=True)])
+reg("FIND", cmd_find, "Szuka tekstu w atomach", category="atoms",
+    args_schema=[make_arg_schema("zapytanie", required=True)])
+reg("MONITOR", cmd_monitor, "Wyświetla podsumowanie stanów atomów", category="system")
+reg("STABILIZUJ", cmd_stabilizuj, "Podnosi temperaturę atomu", category="atoms",
+    args_schema=[make_arg_schema("id", required=True)])
+reg("DOTKNIJ PUSTKI", cmd_dotknij_pustki, "Obniża temperaturę atomu", category="atoms",
+    args_schema=[make_arg_schema("id", required=True)])
+reg("OBSERWUJ", cmd_obserwuj, "Uruchamia dynamiczny podgląd atomów (asynchroniczny)", category="system")
+reg("ATOM STATUS", cmd_atom_status, "Wyświetla szczegóły atomu", category="atoms",
+    args_schema=[make_arg_schema("id", required=True)])
+reg("EDIT", cmd_edit, "Uruchamia edytor bąbli", category="bubbles")
+reg("IMPORT", cmd_import, "Importuje plik lub katalog do bąbla", category="bubbles")
+reg("GALLERY", cmd_gallery, "Pokazuje multimedia w bąblu", category="bubbles")
+reg("EXPORT", cmd_export, "Eksportuje multimedia z bąbla", category="bubbles")
+reg("RUN", cmd_run, "Wykonuje plik .karm (KarmazynScript)", category="scripting",
+    args_schema=[make_arg_schema("plik", required=True)])
+reg("COMPILE", cmd_compile, "Pokazuje AST pliku .karm", category="scripting",
+    args_schema=[make_arg_schema("plik", required=True)])
+reg("LUA", cmd_lua, "Wykonuje plik .lua lub bąbel Lua", category="scripting")
+reg("HELP", cmd_help, "Wyświetla pomoc", category="system")
+reg("EXIT", cmd_exit, "Kończy pracę powłoki", category="system")
 
-# ═══════════════════════════════════════════
-# MAIN
-# ═══════════════════════════════════════════
+# ----------------------------------------------------------------------
+# AUTOCOMPLETE (kontekstowe, wspiera komendy dwuczłonowe)
+# ----------------------------------------------------------------------
+def completer(text, state):
+    line = readline.get_line_buffer()
+    begidx = readline.get_begidx()
+    endidx = readline.get_endidx()
+    try:
+        tokens = shlex.split(line[:begidx])
+    except ValueError:
+        tokens = []
+    current_token = line[begidx:endidx]
 
+    # Brak tokenów – podpowiadamy pierwsze słowo komendy
+    if len(tokens) == 0:
+        matches = registry.complete(current_token, state)
+        if matches is not None:
+            return matches
+    # Jeden token – podpowiadamy drugie słowo dla komend dwuczłonowych
+    elif len(tokens) == 1:
+        first = tokens[0].upper()
+        full_candidates = [cmd for cmd in registry.list_commands() if cmd.startswith(first + " ")]
+        second_words = [cmd.split()[1] for cmd in full_candidates]
+        matches = [w for w in second_words if w.lower().startswith(current_token.lower())]
+        if state < len(matches):
+            return matches[state]
+    # Dla dalszych argumentów – na razie brak podpowiedzi
+    return None
+
+readline.set_completer(completer)
+readline.parse_and_bind("tab: complete")
+
+# ----------------------------------------------------------------------
+# GŁÓWNA PĘTLA
+# ----------------------------------------------------------------------
 def main():
     print(gfx.draw_frame(
         "KARMAZYN OS",
         [
-            "Shell v2.2 — Cognitive Runtime",
-            "Tab = autouzupełnianie",
+            "Shell v3.0 — Command Engine",
+            "Tab = kontekstowe autouzupełnianie",
+            "HELP - pomoc",
         ],
         style="phi_core",
     ))
@@ -471,66 +382,72 @@ def main():
     if bubbles:
         total = sum(b['active_atoms'] for b in bubbles)
         print(f"🫧 {len(bubbles)} bąbli ({total} atomów)", end="")
-        imgs = sum(
-            b.get('media_stats', {}).get('image', 0)
-            for b in bubbles
-        )
+        imgs = sum(b.get('media_stats', {}).get('image', 0) for b in bubbles)
         if imgs:
             print(f", 🖼{imgs} obrazów", end="")
         print()
 
     if KARM_LOADED:
         print("📜 KarmazynScript gotowy")
-
-    has_kronika = _find_bubble_by_name("kronika") is not None
-    print(f"📖 Kronika: {'gotowa' if has_kronika else 'pusta'}\n")
+    if LUA_AVAILABLE:
+        print("🌙 Środowisko LuaJIT gotowe")
+    print()
 
     while True:
         try:
-            line = input(
-                f"{theme.ansi_fg('phi_signal')}ksh>{theme.RESET} "
-            ).strip()
+            line = input(f"{theme.ansi_fg('phi_signal')}ksh>{theme.RESET} ").strip()
         except (EOFError, KeyboardInterrupt):
             print("\nZamykanie...")
-            MISSION.stop()
-            if hasattr(BUBBLES, 'save_all'):
-                BUBBLES.save_all()
-            print("💾 Bąble zapisane")
+            cmd_exit([])
             break
 
         if not line:
             continue
 
-        parts = line.split()
-        verb = parts[0].upper()
-        args = parts[1:]
-        handler = COMMANDS.get(verb)
+        try:
+            parts = shlex.split(line)
+        except ValueError as e:
+            print(f"Błąd składni: {e}")
+            print_hud()
+            continue
 
-        if handler is None:
-            print(
-                f"{theme.ansi_fg('phi_bright')}[BŁĄD]{theme.RESET} "
-                f"Nieznana komenda: {verb}"
-            )
+        if not parts:
+            continue
+
+        # Rozpoznanie komendy (jedno- lub dwuczłonowa)
+        verb1 = parts[0].upper()
+        if len(parts) > 1:
+            verb2 = f"{verb1} {parts[1].upper()}"
+            cmd = registry.get(verb2)
+            if cmd:
+                args = parts[2:]
+            else:
+                cmd = registry.get(verb1)
+                args = parts[1:]
+        else:
+            cmd = registry.get(verb1)
+            args = parts[1:]
+
+        if cmd is None:
+            print(f"{theme.ansi_fg('phi_bright')}[BŁĄD]{theme.RESET} Nieznana komenda: {verb1}")
+            print_hud()
+            continue
+
+        # Walidacja argumentów
+        ok, err_msg = cmd.validate_args(args)
+        if not ok:
+            print(f"{theme.ansi_fg('phi_bright')}[BŁĄD]{theme.RESET} {err_msg}")
             print_hud()
             continue
 
         try:
-            if isinstance(handler, dict):
-                sub = args[0].upper() if args else ""
-                sub_handler = handler.get(sub)
-                if sub_handler:
-                    result = sub_handler(args[1:])
-                else:
-                    result = f"Nieznana podkomenda: {sub}"
-            else:
-                result = handler(args)
+            result = cmd.handler(args)
         except Exception as e:
             result = f"{theme.ansi_fg('phi_bright')}[BŁĄD]{theme.RESET} {e}"
 
         if result:
             print(result)
         print_hud()
-
 
 if __name__ == "__main__":
     main()
