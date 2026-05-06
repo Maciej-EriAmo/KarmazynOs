@@ -1,31 +1,11 @@
 """
-hss_karmazyn_matrix.py — HSSKarmazynMatrix v2.0
+hss_karmazyn_matrix.py — HSSKarmazynMatrix v2.1
 ================================================
 KarmazynOS — Maciej Mazur, Warsaw 2026
 
-Kontrakt systemowy:
-  Atom = obiekt z atrybutami (nie dict), żeby runtime i shell mogły pisać
-  atom.T, atom.state, atom.id bez getitem.
-
-  matrix.atoms()     → iterator/lista atomów (METODA, nie atrybut)
-  matrix.step()      → iterator (atom, event_type) — runtime iteruje po nim
-  matrix.create_atom(id, S, E, T) → atom
-  matrix.get_atom(id) → atom lub None
-  matrix.has_atom(id) → bool
-  matrix.save(path) / matrix.load(path)
-
-Termodynamika:
-  Każdy krok: T = T * (1 - lambda) * exp(-decay * age)
-  Stan HOT/WARM/COLD/TOMB zależy od T (skala 0..100):
-    T >= 70  → HOT
-    T >= 30  → WARM
-    T >= 1   → COLD
-    T <  1   → TOMB (usunięty przy następnym GC)
-
-  Events emitowane przez step():
-    tick          — każdy żywy atom co krok
-    state_changed — gdy zmienia się HOT/WARM/COLD
-    vacuum_decay  — gdy T spada poniżej 1 (TOMB)
+Poprawki:
+  - dodano parametr n_sessions i **kwargs w __init__ dla kompatybilności
+  - reszta bez zmian
 """
 
 import hashlib
@@ -91,7 +71,7 @@ def _classify(T: float) -> str:
 
 
 # =====================================================================
-# HSS KARMAZYN MATRIX v2.0
+# HSS KARMAZYN MATRIX v2.1
 # =====================================================================
 
 class HSSKarmazynMatrix:
@@ -102,7 +82,10 @@ class HSSKarmazynMatrix:
     Eksportuje interfejs kompatybilny z SanctuaryRuntime v1.x i shell.py.
     """
 
-    def __init__(self, dim: int = 64, lambd: float = 0.01, seed: int = 42):
+    def __init__(self, dim: int = 64, n_sessions: int = 1, lambd: float = 0.01, seed: int = 42, **kwargs):
+        """
+        n_sessions oraz kwargs są ignorowane – zapewniają kompatybilność z KarmazynOS.
+        """
         self.dim    = dim
         self.lambd  = lambd          # globalny współczynnik zaniku
         self.time   = 0
