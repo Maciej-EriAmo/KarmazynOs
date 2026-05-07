@@ -47,9 +47,18 @@ class LuaExecutor:
         # Używamy RLock (Reentrant Lock), aby uniknąć deadloku
         self.lock = threading.RLock()
         
+        # Bezpieczne wskaźniki do usług zewnętrznych (chronią przed cyklem importów)
+        self.alias_resolver = None
+        self.bubble_importer = None
+
         if self.lua:
             LuaSandbox.apply(self.lua)
             self._setup_globals()
+
+    def bind_system_services(self, resolver_func, importer_func):
+        """Wstrzykuje usługi shella i bąbli po ich zainicjalizowaniu."""
+        self.alias_resolver = resolver_func
+        self.bubble_importer = importer_func
 
     def _setup_globals(self):
         """Inicjalizuje globalne API dostępne dla skryptów Lua."""
@@ -337,17 +346,21 @@ class LuaExecutor:
     def _lua_clear_screen(self):
         print("\033[H\033[J", end="")
     def _lua_route_output(self, atom_id: str, target_alias: str):
-        """Przesyła atom do bąbla wynikowego na podstawie aliasu z konfiguracji."""
+        """Przesyła atom do bąbla wynikowego, korzystając ze wstrzykniętych usług."""
         with self.lock:
-            # Importy lokalne, aby uniknąć cykli przy inicjalizacji
-            from shell import FS, BUBBLES
+            if not self.alias_resolver or not self.bubble_importer:
+                return "Błąd: Brak podpiętych usług routingu w jądze KarmazynOS."
 
-            target_id = FS.resolve_alias(target_alias)
-            if BUBBLES.get_bubble(target_id):
-                # Logika importu atomu do bąbla
-                BUBBLES.import_to_bubble(target_id, atom_id, self.rt)
-                return f"✅ Wynik {atom_id} przesłany do {target_alias} ({target_id})"
-            return f"❌ Nie znaleziono celu dla aliasu: {target_alias}"
+            try:
+                target_id = self.alias_resolver(target_alias)
+                if not target_id:
+                    return f"Błąd: Alias '{target_alias}' nie mógł zostać rozwiązany."
+
+                # Wykonanie importu do bąbla
+                self.bubble_importer(target_id, atom_id, self.rt)
+                return f"✅ Owoce pracy ({atom_id}) bezpiecznie zrzucone do: {target_alias} ({target_id})"
+            except Exception as e:
+                return f"❌ Błąd routingu wyników: {str(e)}"
 
     # =================================================================
     # WYKONYWANIE KODU
