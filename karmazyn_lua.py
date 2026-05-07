@@ -72,6 +72,11 @@ class LuaExecutor:
         karm.stabilize_atom = self._lua_stabilize_atom
         karm.recall = self._lua_recall
         karm.read_line = self._lua_read_line
+        karm.consolidate = self._lua_consolidate
+        karm.refresh_bubble = self._lua_refresh_bubble
+        karm.revoke_bubble = self._lua_revoke_bubble
+        karm.archive_to_hologram = self._lua_archive_to_hologram
+        karm.generate_from_idea = self._lua_generate_from_idea
 
         # UI API
         from karmazyn_ui import gfx
@@ -125,12 +130,17 @@ class LuaExecutor:
         def corrupt(amount):
             with self.lock:
                 self.rt.corrupt_atom(atom.id, amount * 100.0)
+
+        def consolidate():
+            with self.lock:
+                return self.rt.consolidate(atom.id)
                 
         atom_table.get_T = get_T
         atom_table.set_T = set_T
         atom_table.set_E = set_E
         atom_table.refresh = refresh
         atom_table.corrupt = corrupt
+        atom_table.consolidate = consolidate
         
         return atom_table
 
@@ -200,6 +210,40 @@ class LuaExecutor:
 
     def _lua_read_line(self, prompt: str = ""):
         return input(prompt)
+
+    def _lua_consolidate(self, label: str):
+        with self.lock:
+            try:
+                return self.rt.consolidate(label)
+            except Exception as e:
+                return f"Błąd konsolidacji: {str(e)}"
+
+    def _lua_archive_to_hologram(self, topic: str, atom_ids, remove_originals: bool = False):
+        with self.lock:
+            try:
+                # Lupa przekazuje tabele Lua jako obiekty, które mogą nie być listami Pythona
+                python_ids = list(atom_ids.values()) if hasattr(atom_ids, 'values') else list(atom_ids)
+                return self.rt.archive_to_hologram(topic, python_ids, remove_originals=remove_originals)
+            except Exception as e:
+                return f"Błąd tworzenia hologramu: {str(e)}"
+
+    def _lua_generate_from_idea(self, hologram_id: str, prompt: str, temperature: float = 0.3):
+        with self.lock:
+            try:
+                vec = self.rt.generate_from_idea(hologram_id, prompt, temperature=temperature)
+                if vec is not None:
+                    return self.lua.table(*vec.tolist())
+                return None
+            except Exception as e:
+                return f"Błąd generowania: {str(e)}"
+
+    def _lua_refresh_bubble(self, label: str):
+        with self.lock:
+            return self.rt.refresh_bubble(label)
+
+    def _lua_revoke_bubble(self, label: str):
+        with self.lock:
+            return self.rt.revoke_bubble(label)
 
     # =================================================================
     # WYKONYWANIE KODU
