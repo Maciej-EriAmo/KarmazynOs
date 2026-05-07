@@ -133,9 +133,10 @@ def save_soul(karmazyn_os, path: str = "./karmazyn_data") -> bool:
 
             # ── metadane atomów Φ ─────────────────────────────────────────────
             for a in ko.phi._mx.atoms:
-                _write_record(f, {
+                lbl = a.id
+                rec = {
                     "type":      "atom",
-                    "label":     a.id,
+                    "label":     lbl,
                     "S_topic":   getattr(a, 'S', ''),
                     "E":         getattr(a, 'E', ''),
                     "T_max":     getattr(a, 'T_max', 100.0),
@@ -143,7 +144,13 @@ def save_soul(karmazyn_os, path: str = "./karmazyn_data") -> bool:
                     "age":       getattr(a, 'age', 0),
                     "session":   a.session,
                     "splamiony": getattr(a, 'splamiony', False),
-                })
+                }
+                # Dodaj dane z KarmazynOS (atomy Φ nie-skonsolidowane)
+                if hasattr(ko, '_amap') and lbl in ko._amap: rec["inode"] = ko._amap[lbl]
+                if hasattr(ko, '_fp')   and lbl in ko._fp:   rec["fp_b64"] = _b64(ko._fp[lbl])
+                if hasattr(ko, '_raw')  and lbl in ko._raw:  rec["raw_b64"] = _b64(ko._raw[lbl])
+                if hasattr(ko, '_ac')   and lbl in ko._ac:   rec["auto_consolidate"] = ko._ac[lbl]
+                _write_record(f, rec)
 
         # ── wektory numpy (osobny plik binarny) ───────────────────────────────
         npz_data = {}
@@ -229,6 +236,12 @@ def load_soul(karmazyn_os, path: str = "./karmazyn_data") -> bool:
     ko.phi._sem.clear()
     ko.phi._rc.clear()
     ko.phi._mx.atoms.clear()
+
+    # KarmazynOS atom mappings
+    if hasattr(ko, '_amap'): ko._amap.clear()
+    if hasattr(ko, '_fp'):   ko._fp.clear()
+    if hasattr(ko, '_raw'):  ko._raw.clear()
+    if hasattr(ko, '_ac'):   ko._ac.clear()
 
     n_bubbles = 0
     n_holograms = 0
@@ -327,7 +340,16 @@ def load_soul(karmazyn_os, path: str = "./karmazyn_data") -> bool:
             ko.phi._rc.update(rec.get("data", {}))
 
         elif rtype == "atom":
-            atom_meta[rec["label"]] = rec
+            lbl = rec["label"]
+            atom_meta[lbl] = rec
+            if "inode" in rec and hasattr(ko, '_amap'):
+                ko._amap[lbl] = rec["inode"]
+            if "fp_b64" in rec and hasattr(ko, '_fp'):
+                ko._fp[lbl] = _ub64(rec["fp_b64"])
+            if "raw_b64" in rec and hasattr(ko, '_raw'):
+                ko._raw[lbl] = _ub64(rec["raw_b64"])
+            if "auto_consolidate" in rec and hasattr(ko, '_ac'):
+                ko._ac[lbl] = rec["auto_consolidate"]
 
     # ── synchronizacja tożsamości i szyfrowania po wczytaniu bąbli ───────────
     # Bąbel tożsamości może nie mieć jeszcze poprawnego klucza do odszyfrowania

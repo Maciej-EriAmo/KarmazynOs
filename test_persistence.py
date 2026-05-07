@@ -22,6 +22,10 @@ content_after = ko2.read_bubble(label)
 
 atom_after = ko2.phi._mx.get_atom(label)
 
+assert label in ko2._amap, f"_amap nie odtworzone dla {label}"
+assert label in ko2._raw, f"_raw nie odtworzone dla {label}"
+assert ko2._raw[label] == "test persystencji kluczy".encode(), "_raw treść różna"
+
 assert key_before == key_after, f"KLUCZE RÓŻNE!\nPrzed: {key_before[:16]}...\nPo:    {key_after[:16]}..."
 assert content_before == content_after, f"TREŚĆ RÓŻNA!\nPrzed: {content_before}\nPo:    {content_after}"
 assert atom_after is not None, "Atom nie został odtworzony!"
