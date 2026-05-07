@@ -16,6 +16,7 @@ except ImportError:
     LuaRuntime = None
 
 from runtime import SanctuaryRuntime
+from karmazyn_ui import gfx
 
 class LuaSandbox:
     """Izolowane środowisko dla skryptów Lua."""
@@ -65,7 +66,7 @@ class LuaExecutor:
         karm.step = self._lua_step
         karm.on = self._lua_on_event
 
-        # Nowe funkcje API
+        # Funkcje API jądra i systemu
         karm.list_atoms = self._lua_list_atoms
         karm.get_atom = self._lua_get_atom
         karm.delete_atom = self._lua_delete_atom
@@ -79,8 +80,6 @@ class LuaExecutor:
         karm.generate_from_idea = self._lua_generate_from_idea
 
         # UI API
-        from karmazyn_ui import gfx
-
         def lua_draw_frame(title, lines, style="phi_core"):
             # Lupa przekazuje tabele Lua jako obiekty, które mogą nie być listami Pythona
             python_lines = list(lines.values()) if hasattr(lines, 'values') else list(lines)
