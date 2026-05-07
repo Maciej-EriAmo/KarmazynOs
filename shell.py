@@ -45,14 +45,16 @@ from command_engine import Command, CommandRegistry, make_arg_schema
 # Inicjalizacja systemu
 # ----------------------------------------------------------------------
 RUNTIME = SanctuaryRuntime()
-FS = KarmazynFS(RUNTIME)
-RUNTIME.start_loop()
-
 BUBBLES = BubbleRuntime()
 bubble_init(BUBBLES, RUNTIME)
 
+# Wstrzykujemy BUBBLES do FS, aby umożliwić nawigację po bąblach i aliasy
+FS = KarmazynFS(RUNTIME, bubbles_runtime=BUBBLES)
+
 KARM = KarmazynExecutor(RUNTIME) if KARM_LOADED else None
 LUA_EXECUTOR = LuaExecutor(RUNTIME) if LUA_AVAILABLE else None
+
+RUNTIME.start_loop()
 
 # ----------------------------------------------------------------------
 # HUD (z informacją o stanie pętli runtime)
@@ -391,6 +393,39 @@ def main():
         print("📜 KarmazynScript gotowy")
     if LUA_AVAILABLE:
         print("🌙 Środowisko LuaJIT gotowe")
+
+    # Sekcja Auto-Discovery konfiguracji
+    config_bubble_id = None
+    all_bubbles = BUBBLES.list_bubbles()
+    for b in all_bubbles:
+        if b.get('label') == 'sys_config' or 'sys_config' in str(b.get('id', '')):
+            config_bubble_id = b['id']
+            break
+
+    if config_bubble_id:
+        FS.set_config_bubble(config_bubble_id)
+        print(f"⚙️ System: Wczytano konfigurację z bąbla {config_bubble_id}")
+
+        # Rejestracja narzędzi: Szukamy atomów S="BIN" (E = ścieżka .lua lub id bąbla)
+        config_atoms = BUBBLES.get_active_atoms(config_bubble_id)
+        for a in config_atoms:
+            s_val = a.get('S') if isinstance(a, dict) else a.S
+            if s_val == "BIN":
+                cmd_id = a.get('id') if isinstance(a, dict) else a.id
+                cmd_name = cmd_id.upper()
+                target = a.get('E') if isinstance(a, dict) else a.E
+
+                # Tworzymy domknięcie (closure) dla handlera
+                def create_lua_handler(t):
+                    return lambda args: LUA_EXECUTOR.run_file(t) if t.endswith('.lua') else LUA_EXECUTOR.run_bubble(t)
+
+                registry.register(Command(
+                    cmd_name,
+                    create_lua_handler(target),
+                    f"Narzędzie użytkownika: {target}",
+                    "tools"
+                ))
+        print(f"🔧 Narzędzia systemowe zarejestrowane.")
     print()
 
     while True:

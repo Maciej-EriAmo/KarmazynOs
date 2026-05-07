@@ -103,21 +103,29 @@ class KarmazynIntegration:
             content = getattr(atom_obj, 'content', '')
             atom_id = getattr(atom_obj, 'id', '')
             metadata = getattr(atom_obj, 'metadata', {})
+            S = getattr(atom_obj, 'S', '')
+            E = getattr(atom_obj, 'E', '')
         elif hasattr(atom_obj, 'energy'):
             energy = float(atom_obj.energy)
             content = getattr(atom_obj, 'content', '')
             atom_id = getattr(atom_obj, 'id', '')
             metadata = getattr(atom_obj, 'metadata', {})
+            S = getattr(atom_obj, 'S', '')
+            E = getattr(atom_obj, 'E', '')
         else:
             energy = float(atom_obj.get('energy', 0.0))
             content = atom_obj.get('content', '')
             atom_id = atom_obj.get('id', '')
             metadata = atom_obj.get('metadata', {})
+            S = atom_obj.get('S', '')
+            E = atom_obj.get('E', '')
         return {
             'id': atom_id,
             'content': content,
             'energy': energy,
-            'metadata': metadata
+            'metadata': metadata,
+            'S': S,
+            'E': E
         }
 
     def create_bubble(self, name: str, bubble_type: str = "document") -> str:
@@ -219,6 +227,7 @@ class KarmazynIntegration:
             bubbles.append({
                 'id': bid,
                 'name': data['bubble']['name'],
+                'label': data['bubble'].get('label', data['bubble']['name']),
                 'active_atoms': len(data.get('atoms', [])),
                 'created_at': data['bubble']['created_at'],
                 'type': data['bubble']['manifest']['type'],
@@ -297,6 +306,41 @@ class KarmazynIntegration:
 
     def add_text(self, bubble_id: str, text: str) -> Optional[str]:
         return self.add_atom_to_bubble(bubble_id, text)
+
+    def assemble(self, bubble_id: str, prism: str = "CORE") -> str:
+        """Alias dla get_bubble_content dla kompatybilności."""
+        return self.get_bubble_content(bubble_id, prism)
+
+    def add_file(self, bubble_id: str, filepath: str) -> Optional[str]:
+        """Wczytuje plik i dodaje jego treść do bąbla."""
+        try:
+            with open(filepath, 'r', encoding='utf-8') as f:
+                content = f.read()
+            return self.add_atom_to_bubble(bubble_id, content)
+        except Exception as e:
+            print(f"⚠️ Błąd add_file: {e}")
+            return None
+
+    def add_directory(self, bubble_id: str, dirpath: str, recursive: bool = False) -> List[str]:
+        """Dodaje wszystkie pliki z katalogu do bąbla."""
+        added_ids = []
+        path = Path(dirpath)
+        pattern = "**/*" if recursive else "*"
+        for fp in path.glob(pattern):
+            if fp.is_file():
+                aid = self.add_file(bubble_id, str(fp))
+                if aid:
+                    added_ids.append(aid)
+        return added_ids
+
+    def import_to_bubble(self, bubble_id: str, atom_id: str, runtime):
+        """Importuje atom z runtime do bąbla."""
+        atom = runtime.get_atom(atom_id)
+        if atom:
+            # Łączymy S i E dla zachowania pełni informacji
+            content = f"{atom.S}\n{atom.E}" if hasattr(atom, 'E') and atom.E else atom.S
+            return self.add_atom_to_bubble(bubble_id, content)
+        return None
 
     def snapshot_runtime(self, bubble_id: str, atoms: List) -> int:
         count = 0
