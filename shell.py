@@ -48,7 +48,7 @@ RUNTIME = SanctuaryRuntime()
 BUBBLES = BubbleRuntime()
 bubble_init(BUBBLES, RUNTIME)
 
-# Wstrzykujemy BUBBLES do FS, aby umożliwić nawigację po bąblach i aliasy
+# Wstrzykujemy BUBBLES do FS, aby umożliwić nawigację po bąblach
 FS = KarmazynFS(RUNTIME, bubbles_runtime=BUBBLES)
 
 KARM = KarmazynExecutor(RUNTIME) if KARM_LOADED else None
@@ -394,9 +394,9 @@ def main():
     if LUA_AVAILABLE:
         print("🌙 Środowisko LuaJIT gotowe")
 
-    # Sekcja Auto-Discovery konfiguracji
+    # Auto-Discovery: Ładowanie bąbla konfiguracyjnego
     config_bubble_id = None
-    all_bubbles = BUBBLES.list_bubbles()
+    all_bubbles = BUBBLES.list_bubbles() or []
     for b in all_bubbles:
         if b.get('label') == 'sys_config' or 'sys_config' in str(b.get('id', '')):
             config_bubble_id = b['id']
@@ -404,28 +404,26 @@ def main():
 
     if config_bubble_id:
         FS.set_config_bubble(config_bubble_id)
-        print(f"⚙️ System: Wczytano konfigurację z bąbla {config_bubble_id}")
+        print(f"⚙️ Wczytano bąbel konfiguracyjny: {config_bubble_id}")
 
-        # Rejestracja narzędzi: Szukamy atomów S="BIN" (E = ścieżka .lua lub id bąbla)
+        # Rejestracja narzędzi (Emanacja definiuje ścieżkę do skryptu Lua lub id bąbla Lua)
         config_atoms = BUBBLES.get_active_atoms(config_bubble_id)
+        tools_loaded = 0
         for a in config_atoms:
             s_val = a.get('S') if isinstance(a, dict) else a.S
             if s_val == "BIN":
-                cmd_id = a.get('id') if isinstance(a, dict) else a.id
-                cmd_name = cmd_id.upper()
-                target = a.get('E') if isinstance(a, dict) else a.E
+                cmd_name = (a.get('id') if isinstance(a, dict) else a.id).upper()
+                lua_target = a.get('E') if isinstance(a, dict) else a.E
 
-                # Tworzymy domknięcie (closure) dla handlera
-                def create_lua_handler(t):
-                    return lambda args: LUA_EXECUTOR.run_file(t) if t.endswith('.lua') else LUA_EXECUTOR.run_bubble(t)
+                # Dynamiczne tworzenie handlera dla narzędzia
+                def make_handler(target):
+                    return lambda args: LUA_EXECUTOR.run_file(target) if target.endswith('.lua') else LUA_EXECUTOR.run_bubble(target)
 
-                registry.register(Command(
-                    cmd_name,
-                    create_lua_handler(target),
-                    f"Narzędzie użytkownika: {target}",
-                    "tools"
-                ))
-        print(f"🔧 Narzędzia systemowe zarejestrowane.")
+                registry.register(Command(cmd_name, make_handler(lua_target), f"Narzędzie użytkownika ({lua_target})", "tools", []))
+                tools_loaded += 1
+
+        if tools_loaded > 0:
+            print(f"🔧 Zarejestrowano narzędzi z konfiguracji: {tools_loaded}")
     print()
 
     while True:
