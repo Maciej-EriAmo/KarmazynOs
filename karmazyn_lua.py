@@ -87,7 +87,6 @@ class LuaExecutor:
         karm.list_holograms = self._lua_list_holograms
         karm.get_tvac = self._lua_get_tvac
         karm.clear_screen = self._lua_clear_screen
-        karm.route_output = self._lua_route_output
         import time
         karm.sleep = time.sleep
 
@@ -338,26 +337,17 @@ class LuaExecutor:
     def _lua_clear_screen(self):
         print("\033[H\033[J", end="")
     def _lua_route_output(self, atom_id: str, target_alias: str):
-        """Kieruje wygenerowany atom do logicznego bąbla-sinku na podstawie aliasu."""
+        """Przesyła atom do bąbla wynikowego na podstawie aliasu z konfiguracji."""
         with self.lock:
-            try:
-                # Rozwiązanie aliasu za pomocą FS (wymaga importu FS lub podpięcia instancji)
-                from shell import FS, BUBBLES
+            # Importy lokalne, aby uniknąć cykli przy inicjalizacji
+            from shell import FS, BUBBLES
 
-                if not FS or not BUBBLES:
-                    return "Brak dostępu do warstwy zarządzania bąblami."
-
-                target_bubble_id = FS.resolve_alias(target_alias)
-
-                if not BUBBLES.get_bubble(target_bubble_id):
-                    return f"Błąd: Cel '{target_alias}' (rozwiązany jako {target_bubble_id}) nie istnieje jako Bąbel."
-
-                # Wykonujemy konsolidację/import bezpośrednio do wskazanego bąbla
-                BUBBLES.import_to_bubble(target_bubble_id, atom_id, self.rt)
-
-                return f"✅ Owoce pracy ({atom_id}) zrzucone do: {target_alias}"
-            except Exception as e:
-                return f"Błąd routingu wyników: {e}"
+            target_id = FS.resolve_alias(target_alias)
+            if BUBBLES.get_bubble(target_id):
+                # Logika importu atomu do bąbla
+                BUBBLES.import_to_bubble(target_id, atom_id, self.rt)
+                return f"✅ Wynik {atom_id} przesłany do {target_alias} ({target_id})"
+            return f"❌ Nie znaleziono celu dla aliasu: {target_alias}"
 
     # =================================================================
     # WYKONYWANIE KODU
