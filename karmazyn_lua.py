@@ -55,7 +55,7 @@ class LuaExecutor:
         g = self.lua.globals()
         
         # Tworzymy główną tablicę 'karmazyn'
-        self.lua.execute("karmazyn = {}")
+        self.lua.execute("karmazyn = { ui = {} }")
         karm = g.karmazyn
         
         # Rejestracja funkcji API KarmazynOS
@@ -64,6 +64,26 @@ class LuaExecutor:
         karm.get_state = self._lua_get_state
         karm.step = self._lua_step
         karm.on = self._lua_on_event
+
+        # Nowe funkcje API
+        karm.list_atoms = self._lua_list_atoms
+        karm.get_atom = self._lua_get_atom
+        karm.delete_atom = self._lua_delete_atom
+        karm.stabilize_atom = self._lua_stabilize_atom
+        karm.recall = self._lua_recall
+        karm.read_line = self._lua_read_line
+
+        # UI API
+        from karmazyn_ui import gfx
+
+        def lua_draw_frame(title, lines, style="phi_core"):
+            # Lupa przekazuje tabele Lua jako obiekty, które mogą nie być listami Pythona
+            python_lines = list(lines.values()) if hasattr(lines, 'values') else list(lines)
+            return gfx.draw_frame(title, python_lines, style)
+
+        karm.ui.draw_frame = lua_draw_frame
+        karm.ui.progress_bar = gfx.progress_bar
+        karm.ui.status_dot = gfx.status_dot
 
     # =================================================================
     # MAPOWANIE API (Python -> Lua)
@@ -84,6 +104,7 @@ class LuaExecutor:
         atom_table.id = atom.id
         atom_table.S = atom.S
         atom_table.E = atom.E
+        atom_table.state = atom.state
         
         def get_T():
             return atom.T / 100.0
@@ -92,6 +113,11 @@ class LuaExecutor:
             with self.lock:
                 atom.T = max(0.0, min(100.0, value * 100.0))
                 
+        def set_E(value):
+            with self.lock:
+                atom.E = str(value)
+                self.rt.phi.register(atom.id, f"{atom.S} {atom.E}")
+
         def refresh():
             with self.lock:
                 self.rt.stabilize_atom(atom.id)
@@ -102,6 +128,7 @@ class LuaExecutor:
                 
         atom_table.get_T = get_T
         atom_table.set_T = set_T
+        atom_table.set_E = set_E
         atom_table.refresh = refresh
         atom_table.corrupt = corrupt
         
@@ -137,6 +164,43 @@ class LuaExecutor:
         with self.lock:
             self.rt.events.on(event_name, wrapper)
 
+    def _lua_list_atoms(self, layer: str = None):
+        with self.lock:
+            atoms = self.rt.list_atoms(layer=layer)
+            return self.lua.table(*[self._wrap_atom(a) for a in atoms])
+
+    def _lua_get_atom(self, atom_id: str):
+        with self.lock:
+            atom = self.rt.get_atom(atom_id)
+            if atom:
+                return self._wrap_atom(atom)
+            return None
+
+    def _lua_delete_atom(self, atom_id: str):
+        with self.lock:
+            try:
+                self.rt.delete_atom(atom_id)
+                return True
+            except Exception:
+                return False
+
+    def _lua_stabilize_atom(self, atom_id: str):
+        with self.lock:
+            try:
+                self.rt.stabilize_atom(atom_id)
+                return True
+            except Exception:
+                return False
+
+    def _lua_recall(self, query: str, k: int = 5):
+        with self.lock:
+            results = self.rt.recall(query, k=k)
+            # Wyniki z SanctuaryRuntime.recall to lista słowników
+            return self.lua.table(*results)
+
+    def _lua_read_line(self, prompt: str = ""):
+        return input(prompt)
+
     # =================================================================
     # WYKONYWANIE KODU
     # =================================================================
@@ -150,6 +214,15 @@ class LuaExecutor:
                 return self.lua.execute(script_content)
             except Exception as e:
                 return f"  [Lua Error] {str(e)}"
+
+    def run_file(self, filepath: str) -> Any:
+        """Wczytuje plik i wykonuje go jako kod Lua."""
+        try:
+            with open(filepath, 'r', encoding='utf-8') as f:
+                content = f.read()
+            return self.run_script(content)
+        except Exception as e:
+            return f"Błąd odczytu pliku: {str(e)}"
 
     def run_bubble(self, bubble_label: str) -> Any:
         """
