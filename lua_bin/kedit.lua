@@ -7,13 +7,33 @@ if not atom then
     return
 end
 
-print("Edycja atomu: " .. atom.id)
-print("Aktualna Emanacja (E): " .. atom.E)
+while true do
+    local menu = {
+        "1. Zmień Emanację (E)",
+        "2. Stabilizuj (Refresh)",
+        "3. Skonsoliduj do bąbla",
+        "4. Wyjdź"
+    }
+    print(karmazyn.ui.draw_frame("KEDIT: " .. atom.id, menu, "phi_core"))
 
-local new_e = karmazyn.read_line("Nowa Emanacja: ")
-if new_e ~= "" then
-    atom.set_E(new_e)
-    print("✓ Emanacja zaktualizowana.")
-else
-    print("Anulowano.")
+    local choice = karmazyn.read_line("Wybór: ")
+
+    if choice == "1" then
+        print("Aktualna E: " .. atom.E)
+        local new_e = karmazyn.read_line("Nowa Emanacja: ")
+        if new_e ~= "" then
+            atom.set_E(new_e)
+            print("✓ Zaktualizowano.")
+        end
+    elseif choice == "2" then
+        atom.refresh()
+        print("✓ Atom zastabilizowany.")
+    elseif choice == "3" then
+        local bid = atom.consolidate()
+        print("✓ Skonsolidowano: " .. bid)
+    elseif choice == "4" or choice == "" then
+        break
+    else
+        print("Nieprawidłowy wybór.")
+    end
 end
