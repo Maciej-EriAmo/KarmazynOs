@@ -103,21 +103,29 @@ class KarmazynIntegration:
             content = getattr(atom_obj, 'content', '')
             atom_id = getattr(atom_obj, 'id', '')
             metadata = getattr(atom_obj, 'metadata', {})
+            S = getattr(atom_obj, 'S', '')
+            E = getattr(atom_obj, 'E', '')
         elif hasattr(atom_obj, 'energy'):
             energy = float(atom_obj.energy)
             content = getattr(atom_obj, 'content', '')
             atom_id = getattr(atom_obj, 'id', '')
             metadata = getattr(atom_obj, 'metadata', {})
+            S = getattr(atom_obj, 'S', '')
+            E = getattr(atom_obj, 'E', '')
         else:
             energy = float(atom_obj.get('energy', 0.0))
             content = atom_obj.get('content', '')
             atom_id = atom_obj.get('id', '')
             metadata = atom_obj.get('metadata', {})
+            S = atom_obj.get('S', '')
+            E = atom_obj.get('E', '')
         return {
             'id': atom_id,
             'content': content,
             'energy': energy,
-            'metadata': metadata
+            'metadata': metadata,
+            'S': S,
+            'E': E
         }
 
     def create_bubble(self, name: str, bubble_type: str = "document") -> str:
@@ -147,28 +155,35 @@ class KarmazynIntegration:
         self._local_bubbles[bubble_id] = bubble_data
         return bubble_id
 
-    def add_atom_to_bubble(self, bubble_id: str, content: str) -> Optional[str]:
+    def add_atom_to_bubble(self, bubble_id: str, content: str, S: str = "", E: str = "", atom_id: str = None) -> Optional[str]:
         atoms = self.get_active_atoms(bubble_id)
         if len(atoms) >= MAX_ATOMS_PER_BUBBLE:
             print(f"❌ Limit atomów osiągnięty ({MAX_ATOMS_PER_BUBBLE})")
             return None
 
-        atom_id = str(uuid.uuid4())[:12]
+        if not atom_id:
+            atom_id = str(uuid.uuid4())[:12]
 
         if self.kernel:
             try:
                 # Użyjemy write() z jądra – zwraca label atomu
-                atom_id = self.kernel.write(content)
+                # Uwaga: kernel.write() tworzy nowy atom w matrycy i generuje ID.
+                # Aby zachować spójność nazw narzędzi (np. KEDIT), używamy podanego ID jeśli możliwe.
+                final_id = self.kernel.write(content) if not atom_id else atom_id
+
                 # Jeśli kernel ma własne bąble, trzeba dodać atom do bąbla – tutaj upraszczamy
                 if bubble_id in self._local_bubbles:
                     self._local_bubbles[bubble_id]['atoms'].append({
-                        'id': atom_id,
+                        'id': final_id,
                         'content': content,
+                        'S': S or "TEXT",
+                        'E': E or content[:100],
                         'type': 'text',
                         'energy': 1.0,
                         'created_at': time.time(),
                         'metadata': {'tags': [], 'links': []}
                     })
+                return final_id
             except Exception as e:
                 print(f"⚠️ Błąd dodawania atomu przez kernel: {e}")
                 return None
@@ -177,6 +192,8 @@ class KarmazynIntegration:
                 self._local_bubbles[bubble_id]['atoms'].append({
                     'id': atom_id,
                     'content': content,
+                    'S': S or "TEXT",
+                    'E': E or content[:100],
                     'type': 'text',
                     'energy': 1.0,
                     'created_at': time.time(),
@@ -219,6 +236,7 @@ class KarmazynIntegration:
             bubbles.append({
                 'id': bid,
                 'name': data['bubble']['name'],
+                'label': data['bubble'].get('label', data['bubble']['name']),
                 'active_atoms': len(data.get('atoms', [])),
                 'created_at': data['bubble']['created_at'],
                 'type': data['bubble']['manifest']['type'],
@@ -298,12 +316,55 @@ class KarmazynIntegration:
     def add_text(self, bubble_id: str, text: str) -> Optional[str]:
         return self.add_atom_to_bubble(bubble_id, text)
 
+    def assemble(self, bubble_id: str, prism: str = "CORE") -> str:
+        """Alias dla get_bubble_content dla kompatybilności."""
+        return self.get_bubble_content(bubble_id, prism)
+
+    def add_file(self, bubble_id: str, filepath: str) -> Optional[str]:
+        """Wczytuje plik i dodaje jego treść do bąbla."""
+        try:
+            with open(filepath, 'r', encoding='utf-8') as f:
+                content = f.read()
+            return self.add_atom_to_bubble(bubble_id, content)
+        except Exception as e:
+            print(f"⚠️ Błąd add_file: {e}")
+            return None
+
+    def add_directory(self, bubble_id: str, dirpath: str, recursive: bool = False) -> List[str]:
+        """Dodaje wszystkie pliki z katalogu do bąbla."""
+        added_ids = []
+        path = Path(dirpath)
+        pattern = "**/*" if recursive else "*"
+        for fp in path.glob(pattern):
+            if fp.is_file():
+                aid = self.add_file(bubble_id, str(fp))
+                if aid:
+                    added_ids.append(aid)
+        return added_ids
+
+    def import_to_bubble(self, bubble_id: str, atom_id: str, runtime):
+        """Importuje atom z runtime do bąbla, zachowując metadane S i E oraz ID."""
+        atom = runtime.get_atom(atom_id)
+        if atom:
+            # Zachowujemy ID atomu (istotne dla narzędzi BIN) oraz metadane S i E
+            return self.add_atom_to_bubble(bubble_id, atom.E, S=atom.S, E=atom.E, atom_id=atom.id)
+        return None
+
     def snapshot_runtime(self, bubble_id: str, atoms: List) -> int:
+        """Przenosi wszystkie atomy z listy do bąbla."""
         count = 0
         for atom in atoms:
-            if hasattr(atom, 'S'):
-                content = f"{atom.S}\n{atom.E}" if hasattr(atom, 'E') else atom.S
-                if self.add_atom_to_bubble(bubble_id, content):
+            # Używamy import_to_bubble zamiast ręcznego dodawania, aby zachować ID i metadane
+            # Przekazujemy self.kernel jako runtime jeśli istnieje, w przeciwnym razie mockujemy minimalnie
+            # W praktyce w shellu RUNTIME jest dostępny.
+            if hasattr(atom, 'id'):
+                # Tworzymy tymczasowy wrapper jeśli atom nie ma metody get_atom (ale atoms[] w runtime to obiekty Atom)
+                # import_to_bubble potrzebuje obiektu z metodą get_atom(id).
+                # Wygodniej będzie wywołać bezpośrednio add_atom_to_bubble
+                S = getattr(atom, 'S', 'TEXT')
+                E = getattr(atom, 'E', '')
+                content = E if E else S
+                if self.add_atom_to_bubble(bubble_id, content, S=S, E=E, atom_id=atom.id):
                     count += 1
         return count
 
