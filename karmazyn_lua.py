@@ -82,6 +82,8 @@ class LuaExecutor:
         karm.get_resources = self._lua_get_resources
         karm.get_epoch = self._lua_get_epoch
         karm.list_agents = self._lua_list_agents
+        karm.get_tvac = self._lua_get_tvac
+        karm.clear_screen = self._lua_clear_screen
 
         # UI API
         def lua_draw_frame(title, lines, style="phi_core"):
@@ -287,6 +289,13 @@ class LuaExecutor:
                     "prisms": self.lua.table(*agent.prisms)
                 })
             return self.lua.table(*agents)
+
+    def _lua_get_tvac(self):
+        with self.lock:
+            return self.rt.phi.t_vacuum()
+
+    def _lua_clear_screen(self):
+        print("\033[H\033[J", end="")
 
     # =================================================================
     # WYKONYWANIE KODU
