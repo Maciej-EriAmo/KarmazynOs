@@ -800,91 +800,22 @@ class KarmazynOS:
     # ──────────────────────────── PERSISTENCE ────────────────────────────
 
     def save(self, path="./karmazyn_data"):
-        os.makedirs(path, exist_ok=True)
-        self.phi._mx.save(os.path.join(path, "hss_matrix.npz"))
-        np.savez(os.path.join(path, "phi_sem.npz"), **self.phi._sem)
-        with open(os.path.join(path, "phi_rc.json"), "w") as f:
-            json.dump(self.phi._rc, f)
-        with open(os.path.join(path, "bubbles.pkl"), "wb") as f:
-            pickle.dump({
-                "_b": self.bubbles._b, "_idx": self.bubbles._idx,
-                "_rev": self.bubbles._rev, "_phi2": self.bubbles._phi2.hex(),
-                "_amap": self._amap, "_fp": self._fp, "_raw": self._raw, "_ac": self._ac
-            }, f)
-        holo_dict = {}
-        for hid, h in self.holograms.items():
-            holo_dict[hid] = {
-                "topic": h.topic, "proto": h.proto.tolist(),
-                "generators": [g.tolist() for g in h.generators],
-                "weights": h.weights, "bubble_labels": h.bubble_labels,
-                "epoch_created": h.epoch_created, "decay_rate": h.decay_rate,
-                "metadata": h.metadata
-            }
-        with open(os.path.join(path, "holograms.json"), "w") as f:
-            json.dump(holo_dict, f, indent=2)
-        # [fix] p2s usunięte z meta.json – przechowywane wyłącznie w bąblu
-        meta = {
-            "epoch":       self.phi.epoch,
-            "temperature": self.phi.temperature(),
-            "pid":         self._pid,
-            "version":     VERSION,
-        }
-        with open(os.path.join(path, "meta.json"), "w") as f:
-            json.dump(meta, f)
-        print(f"Stan zapisany w {path}")
+        """Zapisuje stan jądra używając formatu .soul (soul_store)."""
+        try:
+            from soul_store import save_soul
+            return save_soul(self, path)
+        except ImportError:
+            print("  [!] Błąd: soul_store.py nieodnaleziony. Zapis niemożliwy.")
+            return False
 
     def load(self, path="./karmazyn_data"):
-        if not os.path.isdir(path):
-            print(f"Nie znaleziono katalogu {path}")
+        """Wczytuje stan jądra używając formatu .soul (soul_store)."""
+        try:
+            from soul_store import load_soul
+            return load_soul(self, path)
+        except ImportError:
+            print("  [!] Błąd: soul_store.py nieodnaleziony. Odczyt niemożliwy.")
             return False
-        self.phi._mx.load(os.path.join(path, "hss_matrix.npz"))
-        sem_data = np.load(os.path.join(path, "phi_sem.npz"), allow_pickle=True)
-        self.phi._sem = {k: sem_data[k] for k in sem_data.files}
-        with open(os.path.join(path, "phi_rc.json"), "r") as f:
-            self.phi._rc = json.load(f)
-        with open(os.path.join(path, "bubbles.pkl"), "rb") as f:
-            bdata = pickle.load(f)
-        self.bubbles._b = bdata["_b"]
-        self.bubbles._idx = bdata["_idx"]
-        self.bubbles._rev = set(bdata["_rev"])
-        self.bubbles._phi2 = bytes.fromhex(bdata["_phi2"])
-        self._amap = bdata.get("_amap", {})
-        self._fp = bdata.get("_fp", {})
-        self._raw = bdata.get("_raw", {})
-        self._ac = bdata.get("_ac", {})
-        with open(os.path.join(path, "holograms.json"), "r") as f:
-            holo_dict = json.load(f)
-        self.holograms.clear()
-        for hid, hd in holo_dict.items():
-            self.holograms[hid] = Hologram(
-                id=hid, topic=hd["topic"],
-                proto=np.array(hd["proto"], dtype=np.float32),
-                generators=[np.array(g, dtype=np.float32) for g in hd["generators"]],
-                weights=hd["weights"], bubble_labels=hd["bubble_labels"],
-                epoch_created=hd["epoch_created"], decay_rate=hd["decay_rate"],
-                metadata=hd["metadata"]
-            )
-        with open(os.path.join(path, "meta.json"), "r") as f:
-            meta = json.load(f)
-        self._pid = meta.get("pid", 100)
-
-        # [fix] _p2s odczytywane z bąbla tożsamości zamiast z meta.json
-        p2s_from_bubble = self.read_p2s_bubble()
-        if p2s_from_bubble:
-            self.phi._p2s = p2s_from_bubble
-            print(f"  [Φ-ID] Wczytano tożsamość: {self.get_phi_id()}")
-        else:
-            # Kompatybilność wsteczna: stare zapisy mogły mieć p2s w meta.json
-            if "p2s" in meta:
-                self.phi._p2s = bytes.fromhex(meta["p2s"])
-                print(f"  [Φ-ID] Migracja p2s z meta.json → bąbel")
-                self._init_p2s_bubble()
-            else:
-                print(f"  [!] Brak bąbla tożsamości – generuję nowy Φ-ID")
-                self._init_p2s_bubble()
-
-        print(f"Stan wczytany z {path} (epoka: {meta['epoch']})")
-        return True
 
     def __repr__(self):
         s = self.stats()

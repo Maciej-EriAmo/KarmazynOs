@@ -115,6 +115,11 @@ class AtomsWrapper:
     def __getitem__(self, index):
         return self._get_list()[index]
 
+    def clear(self):
+        """Clears all atoms from the matrix."""
+        self.matrix._atoms.clear()
+        self._list_cache = None
+
 class HSSKarmazynMatrix:
     """
     Macierz termodynamiczna KarmazynOS.
