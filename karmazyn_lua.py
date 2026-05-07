@@ -78,6 +78,7 @@ class LuaExecutor:
         karm.revoke_bubble = self._lua_revoke_bubble
         karm.archive_to_hologram = self._lua_archive_to_hologram
         karm.generate_from_idea = self._lua_generate_from_idea
+        karm.clone_atom = self._lua_clone_atom
 
         # UI API
         def lua_draw_frame(title, lines, style="phi_core"):
@@ -133,6 +134,14 @@ class LuaExecutor:
         def consolidate():
             with self.lock:
                 return self.rt.consolidate(atom.id)
+
+        def set_state(new_layer):
+            with self.lock:
+                try:
+                    self.rt.update_atom(atom.id, state=new_layer)
+                    return True
+                except Exception:
+                    return False
                 
         atom_table.get_T = get_T
         atom_table.set_T = set_T
@@ -140,6 +149,7 @@ class LuaExecutor:
         atom_table.refresh = refresh
         atom_table.corrupt = corrupt
         atom_table.consolidate = consolidate
+        atom_table.set_state = set_state
         
         return atom_table
 
@@ -243,6 +253,14 @@ class LuaExecutor:
     def _lua_revoke_bubble(self, label: str):
         with self.lock:
             return self.rt.revoke_bubble(label)
+
+    def _lua_clone_atom(self, src_id: str, dst_id: str):
+        with self.lock:
+            try:
+                atom = self.rt.clone_atom(src_id, dst_id)
+                return self._wrap_atom(atom)
+            except Exception as e:
+                return f"Błąd klonowania: {str(e)}"
 
     # =================================================================
     # WYKONYWANIE KODU
