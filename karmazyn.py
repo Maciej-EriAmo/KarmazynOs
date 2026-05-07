@@ -39,7 +39,7 @@ sys.path.insert(0, _DIR)
 from hss_karmazyn_matrix import HSSKarmazynMatrix
 from hss_demo import HSSDaemon, kdf, decrypt, N, Q
 
-VERSION      = "1.3.0"
+VERSION      = "1.3.1"
 ALPHA        = 0.3
 LAMBDA_DECAY = 0.1
 DELTA_T_BASE = 5.0
@@ -338,6 +338,7 @@ class KarmazynOS:
         self._steps_since_cleanup = 0
         self.holograms: Dict[str, Hologram] = {}
         self.crimson_key: Optional[bytes] = None
+        self._init_p2s_bubble()
         print(f"  KarmazynOS v{VERSION} — Thermodynamic Memory Kernel")
         print(f"  Φ + Bąble + Hologramy | T_vacuum = {self.phi.t_vacuum():.4f} bit")
 
@@ -807,7 +808,8 @@ class KarmazynOS:
         with open(os.path.join(path, "bubbles.pkl"), "wb") as f:
             pickle.dump({
                 "_b": self.bubbles._b, "_idx": self.bubbles._idx,
-                "_rev": self.bubbles._rev, "_phi2": self.bubbles._phi2.hex()
+                "_rev": self.bubbles._rev, "_phi2": self.bubbles._phi2.hex(),
+                "_amap": self._amap, "_fp": self._fp, "_raw": self._raw, "_ac": self._ac
             }, f)
         holo_dict = {}
         for hid, h in self.holograms.items():
@@ -846,6 +848,10 @@ class KarmazynOS:
         self.bubbles._idx = bdata["_idx"]
         self.bubbles._rev = set(bdata["_rev"])
         self.bubbles._phi2 = bytes.fromhex(bdata["_phi2"])
+        self._amap = bdata.get("_amap", {})
+        self._fp = bdata.get("_fp", {})
+        self._raw = bdata.get("_raw", {})
+        self._ac = bdata.get("_ac", {})
         with open(os.path.join(path, "holograms.json"), "r") as f:
             holo_dict = json.load(f)
         self.holograms.clear()
