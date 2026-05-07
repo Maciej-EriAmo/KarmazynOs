@@ -25,12 +25,6 @@ SOUL_LOADED = False
 HSS_LOADED = False
 
 try:
-    import numpy as np
-except ImportError:
-    np = None
-    print("⚠️ Brak numpy – tryb standalone (zainstaluj: pip install numpy)")
-
-try:
     from karmazyn import KarmazynOS
     KARMAZYN_LOADED = True
 except ImportError as e:
