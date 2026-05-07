@@ -79,6 +79,9 @@ class LuaExecutor:
         karm.archive_to_hologram = self._lua_archive_to_hologram
         karm.generate_from_idea = self._lua_generate_from_idea
         karm.clone_atom = self._lua_clone_atom
+        karm.get_resources = self._lua_get_resources
+        karm.get_epoch = self._lua_get_epoch
+        karm.list_agents = self._lua_list_agents
 
         # UI API
         def lua_draw_frame(title, lines, style="phi_core"):
@@ -261,6 +264,29 @@ class LuaExecutor:
                 return self._wrap_atom(atom)
             except Exception as e:
                 return f"Błąd klonowania: {str(e)}"
+
+    def _lua_get_resources(self):
+        with self.lock:
+            t = self.lua.table()
+            for k, v in self.rt.resources.items():
+                t[k] = v
+            return t
+
+    def _lua_get_epoch(self):
+        with self.lock:
+            return self.rt.phi.epoch
+
+    def _lua_list_agents(self):
+        with self.lock:
+            agents = []
+            for pid, agent in self.rt._agents.items():
+                agents.append({
+                    "pid": pid,
+                    "name": agent.name,
+                    "task": agent.task,
+                    "prisms": self.lua.table(*agent.prisms)
+                })
+            return self.lua.table(*agents)
 
     # =================================================================
     # WYKONYWANIE KODU
