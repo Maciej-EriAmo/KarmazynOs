@@ -80,7 +80,16 @@ def save_soul(karmazyn_os, path: str = "./karmazyn_data") -> bool:
                 "pid":         ko._pid,
                 "dim":         ko.phi.dim,
                 "bubble_idx":  dict(ko.bubbles._idx),
+                "reg":         ko._reg,
+                "steps_since_cleanup": ko._steps_since_cleanup,
                 # p2s usunięte z meta – teraz w bąblu identity
+            })
+
+            # ── phi idf ───────────────────────────────────────────────────────
+            _write_record(f, {
+                "type":  "phi_idf",
+                "ndocs": ko.phi._idf._ndocs,
+                "freq":  dict(ko.phi._idf._freq),
             })
 
             # ── bąble ─────────────────────────────────────────────────────────
@@ -272,6 +281,13 @@ def load_soul(karmazyn_os, path: str = "./karmazyn_data") -> bool:
             if "bubble_idx" in rec:
                 ko.bubbles._idx.update(rec["bubble_idx"])
 
+            # Przywróć rejestr agentów i stan porządkowania
+            if "reg" in rec:
+                # json konwertuje klucze int na str
+                ko._reg = {int(k): tuple(v) for k, v in rec["reg"].items()}
+            if "steps_since_cleanup" in rec:
+                ko._steps_since_cleanup = rec["steps_since_cleanup"]
+
             # odtwórz czas w macierzy Φ
             ko.phi._mx.time = meta_epoch
 
@@ -338,6 +354,10 @@ def load_soul(karmazyn_os, path: str = "./karmazyn_data") -> bool:
 
         elif rtype == "phi_rc":
             ko.phi._rc.update(rec.get("data", {}))
+
+        elif rtype == "phi_idf":
+            ko.phi._idf._ndocs = rec.get("ndocs", 0)
+            ko.phi._idf._freq.update(rec.get("freq", {}))
 
         elif rtype == "atom":
             lbl = rec["label"]

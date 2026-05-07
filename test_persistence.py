@@ -9,6 +9,10 @@ atom_before.E = "extra context"
 atom_before.decay = 0.05
 atom_before.age = 10
 
+# Test rejestru agentów i IDF
+ko.derive_agent("test_agent", "verification_task")
+ko.phi.embed_semantic(b"doc for idf", update=True)
+
 bid = ko.consolidate(label)
 key_before = ko.bubbles._b[bid].bubble_key.hex()
 content_before = ko.read_bubble(label)
@@ -32,5 +36,10 @@ assert atom_after is not None, "Atom nie został odtworzony!"
 assert atom_after.E == "extra context", f"E RÓŻNE! {atom_after.E}"
 assert atom_after.decay == 0.05, f"decay RÓŻNE! {atom_after.decay}"
 assert atom_after.age == 10, f"age RÓŻNE! {atom_after.age}"
+
+# Weryfikacja rejestru i IDF
+assert 101 in ko2._reg, "Agent registry not restored!"
+assert ko2._reg[101][0] == "verification_task"
+assert ko2.phi._idf._ndocs > 0, "IDF ndocs not restored!"
 
 print("✓ TEST ZALICZONY: klucze i treść identyczne po save/load")
