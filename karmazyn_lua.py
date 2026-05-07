@@ -336,6 +336,18 @@ class LuaExecutor:
 
     def _lua_clear_screen(self):
         print("\033[H\033[J", end="")
+    def _lua_route_output(self, atom_id: str, target_alias: str):
+        """Przesyła atom do bąbla wynikowego na podstawie aliasu z konfiguracji."""
+        with self.lock:
+            # Importy lokalne, aby uniknąć cykli przy inicjalizacji
+            from shell import FS, BUBBLES
+
+            target_id = FS.resolve_alias(target_alias)
+            if BUBBLES.get_bubble(target_id):
+                # Logika importu atomu do bąbla
+                BUBBLES.import_to_bubble(target_id, atom_id, self.rt)
+                return f"✅ Wynik {atom_id} przesłany do {target_alias} ({target_id})"
+            return f"❌ Nie znaleziono celu dla aliasu: {target_alias}"
 
     # =================================================================
     # WYKONYWANIE KODU
