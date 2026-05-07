@@ -59,6 +59,22 @@ class Atom:
         self._vec      = vec if vec is not None else np.zeros(64, dtype=np.float32)
         self.state     = _classify(self.T)
 
+    def __getitem__(self, key):
+        if key == 'label': return self.id
+        if key == 'S': return self._vec
+        if key == 'T': return self.T
+        if key == 'session': return self.session
+        raise KeyError(key)
+
+    def __setitem__(self, key, value):
+        if key == 'T': self.T = float(value)
+        elif key == 'S': self._vec = value
+        else: raise KeyError(f"Cannot set {key} via dict interface")
+
+    def get(self, key, default=None):
+        try: return self[key]
+        except KeyError: return default
+
     def __repr__(self):
         return f"Atom({self.id!r} T={self.T:.1f} state={self.state})"
 
@@ -73,6 +89,31 @@ def _classify(T: float) -> str:
 # =====================================================================
 # HSS KARMAZYN MATRIX v2.1
 # =====================================================================
+
+class AtomsWrapper:
+    """Wrapper supporting both atoms() call and direct iteration over atoms."""
+    def __init__(self, matrix):
+        self.matrix = matrix
+        self._list_cache = None
+        self._cache_time = -1
+
+    def _get_list(self):
+        if self._list_cache is None or self._cache_time != self.matrix.time:
+            self._list_cache = list(self.matrix._atoms.values())
+            self._cache_time = self.matrix.time
+        return self._list_cache
+
+    def __iter__(self):
+        return iter(self.matrix._atoms.values())
+
+    def __call__(self):
+        return self._get_list()
+
+    def __len__(self):
+        return len(self.matrix._atoms)
+
+    def __getitem__(self, index):
+        return self._get_list()[index]
 
 class HSSKarmazynMatrix:
     """
@@ -96,12 +137,12 @@ class HSSKarmazynMatrix:
     # INTERFEJS PUBLICZNY
     # ================================================================
 
+    @property
     def atoms(self):
         """
-        Zwraca listę wszystkich atomów (metoda, nie atrybut).
-        Zgodne z runtime.py który woła self.matrix.atoms().
+        Zwraca wrapper wspierający iterację i wywołanie atoms().
         """
-        return list(self._atoms.values())
+        return AtomsWrapper(self)
 
     def create_atom(self, id: str, S: str, E: str,
                     T: float, decay: float = 0.01,
