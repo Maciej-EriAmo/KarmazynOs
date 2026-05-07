@@ -43,7 +43,7 @@ except ImportError as e:
     print(f"⚠️ bubblefs.py – {e} – eksport/import niedostępny")
 
 try:
-    from soul_store import save_soul, load_soul, inspect_soul
+    import soul_store
     SOUL_LOADED = True
 except ImportError as e:
     print(f"⚠️ soul_store.py – {e} – zapis/odczyt .soul niedostępny")
@@ -236,14 +236,11 @@ class KarmazynIntegration:
         return results
 
     def save(self):
-        """Zapisuje stan używając soul_store (jeśli dostępny) lub domyślnego JSON."""
-        if self.soul_available and self.kernel:
-            try:
-                save_soul(self.kernel, str(self.workspace / "soul_data"))
-                print("💾 Zapisano przez soul_store")
+        """Zapisuje stan używając jądra (soul_store) lub domyślnego JSON."""
+        if self.kernel:
+            if self.kernel.save(str(self.workspace / "soul_data")):
+                print("💾 Zapisano przez KarmazynOS (.soul)")
                 return
-            except Exception as e:
-                print(f"⚠️ Błąd zapisu soul_store: {e} – używam fallbacku")
 
         # Fallback: zapis do plików .bubble
         for bid, data in self._local_bubbles.items():
@@ -254,17 +251,11 @@ class KarmazynIntegration:
         print("💾 Zapisano bąble do plików .bubble")
 
     def load(self):
-        """Wczytuje stan przez soul_store (jeśli dostępny) lub z plików .bubble."""
-        if self.soul_available and self.kernel:
-            try:
-                load_soul(self.kernel, str(self.workspace / "soul_data"))
-                print("📂 Wczytano przez soul_store")
-                # Po wczytaniu przez soul_store, stan jądra jest zastąpiony – musimy zsynchronizować _local_bubbles?
-                # Dla uproszczenia – czyszczenie lokalnych bąbli i ponowne ich odtworzenie z jądra wymagałoby dodatkowej logiki.
-                # Na razie zostawiamy.
+        """Wczytuje stan przez jądro (soul_store) lub z plików .bubble."""
+        if self.kernel:
+            if self.kernel.load(str(self.workspace / "soul_data")):
+                print("📂 Wczytano przez KarmazynOS (.soul)")
                 return
-            except Exception as e:
-                print(f"⚠️ Błąd odczytu soul_store: {e} – używam fallbacku")
 
         # Fallback: wczytaj z plików .bubble
         self._local_bubbles.clear()
