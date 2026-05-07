@@ -131,6 +131,46 @@ def cmd_monitor(args):
     s = RUNTIME.status_summary()
     return gfx.draw_frame("MONITOR", [f"{k}: {v}" for k, v in s.items()])
 
+def cmd_consolidate(args):
+    if not args:
+        return "CONSOLIDATE <id_lub_nazwa_bąbla> [id_atomu]"
+
+    # Obsługa przypadku: CONSOLIDATE <nazwa_bąbla> (konsoliduje wszystkie aktywne atomy z Φ do bąbla)
+    # Lub: CONSOLIDATE <atom_id> <nazwa_bąbla>
+
+    if len(args) == 1:
+        # Jeśli tylko jeden argument, sprawdzamy czy to id atomu w Φ czy nazwa bąbla
+        target = args[0]
+        if RUNTIME.has_atom(target):
+            atom_id = target
+            bubble_name = BUBBLE_CTX.current_bubble_name
+        else:
+            bubble_name = target
+            atom_id = None
+    else:
+        atom_id = args[0]
+        bubble_name = args[1]
+
+    if not bubble_name:
+        return "❌ Najpierw otwórz bąbel (EDIT <nazwa>) lub podaj nazwę bąbla."
+
+    bubble_id = BUBBLES.find_bubble_by_name(bubble_name)
+    if not bubble_id:
+        bubble_id = BUBBLES.create_bubble(bubble_name)
+
+    if atom_id:
+        res = BUBBLES.import_to_bubble(bubble_id, atom_id, RUNTIME)
+        if res:
+            return f"✅ Atom {atom_id} skonsolidowany do bąbla {bubble_name} ({bubble_id})"
+        return f"❌ Nie udało się skonsolidować atomu {atom_id}"
+    else:
+        # Konsolidacja wszystkich atomów (snapshot)
+        atoms = RUNTIME.matrix.atoms()
+        if not atoms:
+            return "Brak atomów w Φ do konsolidacji."
+        count = BUBBLES.snapshot_runtime(bubble_id, atoms)
+        return f"✅ Skonsolidowano {count} atomów do bąbla {bubble_name}"
+
 def cmd_stabilizuj(args):
     if not args:
         return "STABILIZUJ <id>"
@@ -315,6 +355,9 @@ reg("SETE", cmd_sete, "Zmienia emanację atomu", category="atoms",
 reg("FIND", cmd_find, "Szuka tekstu w atomach", category="atoms",
     args_schema=[make_arg_schema("zapytanie", required=True)])
 reg("MONITOR", cmd_monitor, "Wyświetla podsumowanie stanów atomów", category="system")
+reg("CONSOLIDATE", cmd_consolidate, "Przenosi atom do bąbla (trwały zapis)", category="atoms",
+    args_schema=[make_arg_schema("id", required=True),
+                 make_arg_schema("nazwa_bąbla", required=False)])
 reg("STABILIZUJ", cmd_stabilizuj, "Podnosi temperaturę atomu", category="atoms",
     args_schema=[make_arg_schema("id", required=True)])
 reg("DOTKNIJ PUSTKI", cmd_dotknij_pustki, "Obniża temperaturę atomu", category="atoms",
