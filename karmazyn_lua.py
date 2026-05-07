@@ -79,10 +79,16 @@ class LuaExecutor:
         karm.archive_to_hologram = self._lua_archive_to_hologram
         karm.generate_from_idea = self._lua_generate_from_idea
         karm.clone_atom = self._lua_clone_atom
+        karm.get_similarity = self._lua_get_similarity
         karm.get_resources = self._lua_get_resources
         karm.get_epoch = self._lua_get_epoch
         karm.list_agents = self._lua_list_agents
-        karm.route_output = self._lua_route_output
+        karm.delete_agent = self._lua_delete_agent
+        karm.list_holograms = self._lua_list_holograms
+        karm.get_tvac = self._lua_get_tvac
+        karm.clear_screen = self._lua_clear_screen
+        import time
+        karm.sleep = time.sleep
 
         # UI API
         def lua_draw_frame(title, lines, style="phi_core"):
@@ -114,6 +120,8 @@ class LuaExecutor:
         atom_table.S = atom.S
         atom_table.E = atom.E
         atom_table.state = atom.state
+        atom_table.age = atom.age
+        atom_table.T_raw = atom.T
         
         def get_T():
             return atom.T / 100.0
@@ -266,6 +274,20 @@ class LuaExecutor:
             except Exception as e:
                 return f"Błąd klonowania: {str(e)}"
 
+    def _lua_get_similarity(self, id1: str, id2: str):
+        with self.lock:
+            try:
+                import numpy as np
+                a1 = self.rt.get_atom(id1)
+                a2 = self.rt.get_atom(id2)
+                if not a1 or not a2:
+                    return None
+                v1 = self.rt.phi.get(id1) or a1._vec
+                v2 = self.rt.phi.get(id2) or a2._vec
+                return float(np.dot(v1, v2) / (np.linalg.norm(v1) * np.linalg.norm(v2) + 1e-9))
+            except Exception:
+                return None
+
     def _lua_get_resources(self):
         with self.lock:
             t = self.lua.table()
@@ -289,6 +311,31 @@ class LuaExecutor:
                 })
             return self.lua.table(*agents)
 
+    def _lua_delete_agent(self, pid: int):
+        with self.lock:
+            if pid in self.rt._agents:
+                del self.rt._agents[pid]
+                return True
+            return False
+
+    def _lua_list_holograms(self):
+        with self.lock:
+            holos = []
+            for hid, h in self.rt._holograms.items():
+                holos.append({
+                    "id": hid,
+                    "topic": h.topic,
+                    "epoch_created": h.epoch_created,
+                    "atom_labels": self.lua.table(*h.atom_labels)
+                })
+            return self.lua.table(*holos)
+
+    def _lua_get_tvac(self):
+        with self.lock:
+            return self.rt.phi.t_vacuum()
+
+    def _lua_clear_screen(self):
+        print("\033[H\033[J", end="")
     def _lua_route_output(self, atom_id: str, target_alias: str):
         """Przesyła atom do bąbla wynikowego na podstawie aliasu z konfiguracji."""
         with self.lock:
