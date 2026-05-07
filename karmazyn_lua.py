@@ -79,6 +79,7 @@ class LuaExecutor:
         karm.archive_to_hologram = self._lua_archive_to_hologram
         karm.generate_from_idea = self._lua_generate_from_idea
         karm.clone_atom = self._lua_clone_atom
+        karm.get_similarity = self._lua_get_similarity
         karm.get_resources = self._lua_get_resources
         karm.get_epoch = self._lua_get_epoch
         karm.list_agents = self._lua_list_agents
@@ -119,6 +120,8 @@ class LuaExecutor:
         atom_table.S = atom.S
         atom_table.E = atom.E
         atom_table.state = atom.state
+        atom_table.age = atom.age
+        atom_table.T_raw = atom.T
         
         def get_T():
             return atom.T / 100.0
@@ -270,6 +273,20 @@ class LuaExecutor:
                 return self._wrap_atom(atom)
             except Exception as e:
                 return f"Błąd klonowania: {str(e)}"
+
+    def _lua_get_similarity(self, id1: str, id2: str):
+        with self.lock:
+            try:
+                import numpy as np
+                a1 = self.rt.get_atom(id1)
+                a2 = self.rt.get_atom(id2)
+                if not a1 or not a2:
+                    return None
+                v1 = self.rt.phi.get(id1) or a1._vec
+                v2 = self.rt.phi.get(id2) or a2._vec
+                return float(np.dot(v1, v2) / (np.linalg.norm(v1) * np.linalg.norm(v2) + 1e-9))
+            except Exception:
+                return None
 
     def _lua_get_resources(self):
         with self.lock:
