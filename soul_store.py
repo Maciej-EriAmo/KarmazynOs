@@ -131,6 +131,20 @@ def save_soul(karmazyn_os, path: str = "./karmazyn_data") -> bool:
                 "data": ko.phi._rc,
             })
 
+            # ── metadane atomów Φ ─────────────────────────────────────────────
+            for a in ko.phi._mx.atoms:
+                _write_record(f, {
+                    "type":      "atom",
+                    "label":     a.id,
+                    "S_topic":   getattr(a, 'S', ''),
+                    "E":         getattr(a, 'E', ''),
+                    "T_max":     getattr(a, 'T_max', 100.0),
+                    "decay":     getattr(a, 'decay', 0.01),
+                    "age":       getattr(a, 'age', 0),
+                    "session":   a.session,
+                    "splamiony": getattr(a, 'splamiony', False),
+                })
+
         # ── wektory numpy (osobny plik binarny) ───────────────────────────────
         npz_data = {}
 
@@ -218,6 +232,7 @@ def load_soul(karmazyn_os, path: str = "./karmazyn_data") -> bool:
 
     n_bubbles = 0
     n_holograms = 0
+    atom_meta = {} # label -> dict
     meta_epoch = 0
 
     # ── importuj klasy dynamicznie ────────────────────────────────────────────
@@ -239,6 +254,11 @@ def load_soul(karmazyn_os, path: str = "./karmazyn_data") -> bool:
                 # Kompatybilność wsteczna
                 ko.phi._p2s     = bytes.fromhex(p2s_hex)
                 ko.bubbles._phi2 = ko.phi.phi2_bytes()
+
+            # Przywróć indeks bąbli
+            if "bubble_idx" in rec:
+                ko.bubbles._idx.update(rec["bubble_idx"])
+
             # odtwórz czas w macierzy Φ
             ko.phi._mx.time = meta_epoch
 
@@ -306,6 +326,9 @@ def load_soul(karmazyn_os, path: str = "./karmazyn_data") -> bool:
         elif rtype == "phi_rc":
             ko.phi._rc.update(rec.get("data", {}))
 
+        elif rtype == "atom":
+            atom_meta[rec["label"]] = rec
+
     # ── synchronizacja tożsamości i szyfrowania po wczytaniu bąbli ───────────
     # Bąbel tożsamości może nie mieć jeszcze poprawnego klucza do odszyfrowania
     for b in ko.bubbles._b.values():
@@ -341,11 +364,23 @@ def load_soul(karmazyn_os, path: str = "./karmazyn_data") -> bool:
     # ── odtwórz wektory semantyczne i atomy Φ ─────────────────────────────────
     ko.phi._sem.update(sem_map)
 
-    for label, (S, T) in str_map.items():
+    for label, (S_vec, T) in str_map.items():
+        meta = atom_meta.get(label, {})
         ko.phi._mx.add_atom_vector(
-            label=label, topic="soul_restore",
-            vector=S, init_T=T, session=ko.phi._sid
+            label=label,
+            topic=meta.get("S_topic", "soul_restore"),
+            vector=S_vec,
+            init_T=T,
+            session=meta.get("session", ko.phi._sid)
         )
+        # Przywróć dodatkowe pola których add_atom_vector nie obsługuje bezpośrednio
+        atom = ko.phi._mx.get_atom(label)
+        if atom and meta:
+            atom.E = meta.get("E", "")
+            atom.T_max = meta.get("T_max", 100.0)
+            atom.decay = meta.get("decay", 0.01)
+            atom.age = meta.get("age", 0)
+            atom.splamiony = meta.get("splamiony", False)
 
     print(f"  [.soul] Wczytano ← {soul_path}")
     print(f"  bąble={n_bubbles}  hologramy={n_holograms}"
