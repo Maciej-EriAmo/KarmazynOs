@@ -29,11 +29,13 @@
 
 Phi → konsolidacja → Bąbel → archiwizacja → Hologram → generacja → Phi
 
-## 3. Model bezpieczeństwa
+## 3. Model bezpieczeństwa (HSS v2.5.0)
 
 - **Ring‑LWE** do wymiany kluczy między agentami a demonem.
 - **HMAC‑SHA256** fingerprint na każdym bąblu (próg Hamminga ≤ średnia + 2σ).
-- **Most LSM** (`holo_lsm`) deleguje decyzje o dostępie do KarmazynOS w przestrzeni użytkownika.
+- **Most LSM** (`holo_lsm`) pełni wyłącznie rolę **upcall filter** i deleguje decyzje o dostępie do uprzywilejowanego demona `hss-daemon` w przestrzeni użytkownika (zasada "No-Plaintext-In-Kernel").
+- Zamiast przestarzałego Additive Key Modification, używany jest mechanizm **KDF-Based Attenuation** wyprowadzający klucze agentów: $s_A = \text{KDF}(s_{\text{sess}}, \text{agent\_id}, \mathcal{P}_{\text{task}})$.
+- **Izolacja HSS vs VM:** VM izoluje zasoby (CPU/RAM), podczas gdy HSS izoluje informacje geometrycznie. Bezpieczeństwo jest tu traktowane jako własność topologiczna przestrzeni wykonawczej, chronionej kryptograficznie, z rygorystycznym zakazem zapisu w rdzeniu Φ (AAD Context Binding).
 
 ## 4. Warstwa embeddingu
 
