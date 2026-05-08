@@ -42,17 +42,28 @@ except ImportError:
 from command_engine import Command, CommandRegistry, make_arg_schema
 
 # ----------------------------------------------------------------------
-# Inicjalizacja systemu
+# Inicjalizacja systemu i wiązanie spójności
 # ----------------------------------------------------------------------
 RUNTIME = SanctuaryRuntime()
-FS = KarmazynFS(RUNTIME)
-RUNTIME.start_loop()
-
 BUBBLES = BubbleRuntime()
 bubble_init(BUBBLES, RUNTIME)
 
+# Wstrzykujemy BUBBLES do FS, aby umożliwić nawigację po bąblach i aliasy
+FS = KarmazynFS(RUNTIME, bubbles_runtime=BUBBLES)
+
 KARM = KarmazynExecutor(RUNTIME) if KARM_LOADED else None
-LUA_EXECUTOR = LuaExecutor(RUNTIME) if LUA_AVAILABLE else None
+
+if LUA_AVAILABLE:
+    LUA_EXECUTOR = LuaExecutor(RUNTIME)
+    # DEPENDENCY INJECTION: Wiążemy środowisko Lua z usługami powłoki
+    LUA_EXECUTOR.bind_system_services(
+        resolver_func=FS.resolve_alias,
+        importer_func=BUBBLES.import_to_bubble
+    )
+else:
+    LUA_EXECUTOR = None
+
+RUNTIME.start_loop()
 
 # ----------------------------------------------------------------------
 # HUD (z informacją o stanie pętli runtime)
@@ -128,6 +139,46 @@ def cmd_find(args):
 def cmd_monitor(args):
     s = RUNTIME.status_summary()
     return gfx.draw_frame("MONITOR", [f"{k}: {v}" for k, v in s.items()])
+
+def cmd_consolidate(args):
+    if not args:
+        return "CONSOLIDATE <id_lub_nazwa_bąbla> [id_atomu]"
+
+    # Obsługa przypadku: CONSOLIDATE <nazwa_bąbla> (konsoliduje wszystkie aktywne atomy z Φ do bąbla)
+    # Lub: CONSOLIDATE <atom_id> <nazwa_bąbla>
+
+    if len(args) == 1:
+        # Jeśli tylko jeden argument, sprawdzamy czy to id atomu w Φ czy nazwa bąbla
+        target = args[0]
+        if RUNTIME.has_atom(target):
+            atom_id = target
+            bubble_name = BUBBLE_CTX.current_bubble_name
+        else:
+            bubble_name = target
+            atom_id = None
+    else:
+        atom_id = args[0]
+        bubble_name = args[1]
+
+    if not bubble_name:
+        return "❌ Najpierw otwórz bąbel (EDIT <nazwa>) lub podaj nazwę bąbla."
+
+    bubble_id = BUBBLES.find_bubble_by_name(bubble_name)
+    if not bubble_id:
+        bubble_id = BUBBLES.create_bubble(bubble_name)
+
+    if atom_id:
+        res = BUBBLES.import_to_bubble(bubble_id, atom_id, RUNTIME)
+        if res:
+            return f"✅ Atom {atom_id} skonsolidowany do bąbla {bubble_name} ({bubble_id})"
+        return f"❌ Nie udało się skonsolidować atomu {atom_id}"
+    else:
+        # Konsolidacja wszystkich atomów (snapshot)
+        atoms = RUNTIME.matrix.atoms()
+        if not atoms:
+            return "Brak atomów w Φ do konsolidacji."
+        count = BUBBLES.snapshot_runtime(bubble_id, atoms)
+        return f"✅ Skonsolidowano {count} atomów do bąbla {bubble_name}"
 
 def cmd_stabilizuj(args):
     if not args:
@@ -319,6 +370,9 @@ reg("SETE", cmd_sete, "Zmienia emanację atomu", category="atoms",
 reg("FIND", cmd_find, "Szuka tekstu w atomach", category="atoms",
     args_schema=[make_arg_schema("zapytanie", required=True)])
 reg("MONITOR", cmd_monitor, "Wyświetla podsumowanie stanów atomów", category="system")
+reg("CONSOLIDATE", cmd_consolidate, "Przenosi atom do bąbla (trwały zapis)", category="atoms",
+    args_schema=[make_arg_schema("id", required=True),
+                 make_arg_schema("nazwa_bąbla", required=False)])
 reg("STABILIZUJ", cmd_stabilizuj, "Podnosi temperaturę atomu", category="atoms",
     args_schema=[make_arg_schema("id", required=True)])
 reg("DOTKNIJ PUSTKI", cmd_dotknij_pustki, "Obniża temperaturę atomu", category="atoms",
@@ -415,6 +469,39 @@ def main():
         print("📜 KarmazynScript gotowy")
     if LUA_AVAILABLE:
         print("🌙 Środowisko LuaJIT gotowe")
+
+    # Sekcja Auto-Discovery konfiguracji
+    config_bubble_id = None
+    all_bubbles = BUBBLES.list_bubbles()
+    for b in all_bubbles:
+        if b.get('label') == 'sys_config' or 'sys_config' in str(b.get('id', '')):
+            config_bubble_id = b['id']
+            break
+
+    if config_bubble_id:
+        FS.set_config_bubble(config_bubble_id)
+        print(f"⚙️ System: Wczytano konfigurację z bąbla {config_bubble_id}")
+
+        # Rejestracja narzędzi: Szukamy atomów S="BIN" (E = ścieżka .lua lub id bąbla)
+        config_atoms = BUBBLES.get_active_atoms(config_bubble_id)
+        for a in config_atoms:
+            s_val = a.get('S') if isinstance(a, dict) else a.S
+            if s_val == "BIN":
+                cmd_id = a.get('id') if isinstance(a, dict) else a.id
+                cmd_name = cmd_id.upper()
+                target = a.get('E') if isinstance(a, dict) else a.E
+
+                # Tworzymy domknięcie (closure) dla handlera
+                def create_lua_handler(t):
+                    return lambda args: LUA_EXECUTOR.run_file(t) if t.endswith('.lua') else LUA_EXECUTOR.run_bubble(t)
+
+                registry.register(Command(
+                    cmd_name,
+                    create_lua_handler(target),
+                    f"Narzędzie użytkownika: {target}",
+                    "tools"
+                ))
+        print(f"🔧 Narzędzia systemowe zarejestrowane.")
     print()
 
     while True:
