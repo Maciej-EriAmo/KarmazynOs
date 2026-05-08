@@ -92,6 +92,7 @@ class LuaExecutor:
         karm.get_resources = self._lua_get_resources
         karm.get_epoch = self._lua_get_epoch
         karm.list_agents = self._lua_list_agents
+        karm.route_output = self._lua_route_output
         karm.delete_agent = self._lua_delete_agent
         karm.list_holograms = self._lua_list_holograms
         karm.list_bubbles = self._lua_list_bubbles
@@ -324,6 +325,18 @@ class LuaExecutor:
                 })
             return self.lua.table(*agents)
 
+    def _lua_route_output(self, atom_id: str, target_alias: str):
+        """Przesyła atom do bąbla wynikowego na podstawie aliasu z konfiguracji."""
+        with self.lock:
+            # Importy lokalne, aby uniknąć cykli przy inicjalizacji
+            from shell import FS, BUBBLES
+
+            target_id = FS.resolve_alias(target_alias)
+            if BUBBLES.get_bubble(target_id):
+                # Logika importu atomu do bąbla
+                BUBBLES.import_to_bubble(target_id, atom_id, self.rt)
+                return f"✅ Wynik {atom_id} przesłany do {target_alias} ({target_id})"
+            return f"❌ Nie znaleziono celu dla aliasu: {target_alias}"
     def _lua_delete_agent(self, pid: int):
         with self.lock:
             if pid in self.rt._agents:
