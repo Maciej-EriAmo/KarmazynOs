@@ -15,6 +15,7 @@ end
 
 print("Edycja Emanacji (E) dla " .. atom.id)
 print("Komendy: .save (Φ), .soul (Bąbel - trwały), .abort, .del <n>, .ins <n> <tekst>, .list")
+print("Komendy: .save, .abort, .del <n>, .ins <n> <tekst>, .list")
 print("Wpisanie tekstu dodaje nową linię na końcu.")
 
 local function list_lines()
@@ -42,6 +43,7 @@ while true do
         else
             print("✗ Błąd konsolidacji.")
         end
+        print("✓ Zapisano.")
         break
     elseif input == ".abort" then
         print("Anulowano.")

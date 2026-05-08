@@ -12,6 +12,9 @@ while true do
         "1. Zmień Emanację (E) [Φ - ulotna]",
         "2. Stabilizuj (Refresh) [Φ]",
         "3. ZAPISZ TRWALE (Skonsoliduj do bąbla)",
+        "1. Zmień Emanację (E)",
+        "2. Stabilizuj (Refresh)",
+        "3. Skonsoliduj do bąbla",
         "4. Wyjdź"
     }
     print(karmazyn.ui.draw_frame("KEDIT: " .. atom.id, menu, "phi_core"))
@@ -36,6 +39,14 @@ while true do
         else
             print("✗ Błąd utrwalania informacji.")
         end
+            print("✓ Zaktualizowano.")
+        end
+    elseif choice == "2" then
+        atom.refresh()
+        print("✓ Atom zastabilizowany.")
+    elseif choice == "3" then
+        local bid = atom.consolidate()
+        print("✓ Skonsolidowano: " .. bid)
     elseif choice == "4" or choice == "" then
         break
     else

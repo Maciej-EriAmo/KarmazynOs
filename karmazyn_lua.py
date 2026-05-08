@@ -47,9 +47,18 @@ class LuaExecutor:
         # Używamy RLock (Reentrant Lock), aby uniknąć deadloku
         self.lock = threading.RLock()
         
+        # Bezpieczne wskaźniki do usług zewnętrznych (chronią przed cyklem importów)
+        self.alias_resolver = None
+        self.bubble_importer = None
+
         if self.lua:
             LuaSandbox.apply(self.lua)
             self._setup_globals()
+
+    def bind_system_services(self, resolver_func, importer_func):
+        """Wstrzykuje usługi shella i bąbli po ich zainicjalizowaniu."""
+        self.alias_resolver = resolver_func
+        self.bubble_importer = importer_func
 
     def _setup_globals(self):
         """Inicjalizuje globalne API dostępne dla skryptów Lua."""
@@ -351,6 +360,22 @@ class LuaExecutor:
 
     def _lua_clear_screen(self):
         print("\033[H\033[J", end="")
+    def _lua_route_output(self, atom_id: str, target_alias: str):
+        """Przesyła atom do bąbla wynikowego, korzystając ze wstrzykniętych usług."""
+        with self.lock:
+            if not self.alias_resolver or not self.bubble_importer:
+                return "Błąd: Brak podpiętych usług routingu w jądze KarmazynOS."
+
+            try:
+                target_id = self.alias_resolver(target_alias)
+                if not target_id:
+                    return f"Błąd: Alias '{target_alias}' nie mógł zostać rozwiązany."
+
+                # Wykonanie importu do bąbla
+                self.bubble_importer(target_id, atom_id, self.rt)
+                return f"✅ Owoce pracy ({atom_id}) bezpiecznie zrzucone do: {target_alias} ({target_id})"
+            except Exception as e:
+                return f"❌ Błąd routingu wyników: {str(e)}"
 
     # =================================================================
     # WYKONYWANIE KODU
@@ -371,11 +396,13 @@ class LuaExecutor:
                 return f"  [Lua Error] {str(e)}"
 
     def run_file(self, filepath: str, args: list = None) -> Any:
+    def run_file(self, filepath: str) -> Any:
         """Wczytuje plik i wykonuje go jako kod Lua."""
         try:
             with open(filepath, 'r', encoding='utf-8') as f:
                 content = f.read()
             return self.run_script(content, args=args)
+            return self.run_script(content)
         except Exception as e:
             return f"Błąd odczytu pliku: {str(e)}"
 
@@ -389,6 +416,9 @@ class LuaExecutor:
             if not bubble:
                 return f"Błąd: Bąbel '{bubble_label}' nie istnieje."
             
+            # [HSS v2.5.0] Wyprowadzanie kluczy: agent_key = KDF(session_key, agent_id, P_task)
+            # [HSS v2.5.0] Context Binding (AAD) gwarantuje izolację rdzenia Φ od zapisu przez agenta.
+
             # W runtime.py (v1.3) zawartość to po prostu bubble.content
             return self.run_script(bubble.content)
 

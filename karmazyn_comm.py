@@ -128,19 +128,19 @@ class PhiScheduler:
     def enqueue(self, cmdline: str, action: callable, init_T: float = DELTA_T_BASE):
         label = self.ko.write(cmdline)
         # ustaw temperaturę manualnie przez atom
-        for a in self.ko.phi._mx.atoms:
-            if a['label'] == label:
-                a['T'] = init_T
-                break
+        a = self.ko.phi._mx.get_atom(label)
+        if a is not None:
+            a['T'] = init_T
         self._queue[label] = action
         return label
 
     def next(self) -> Optional[Tuple[str, callable]]:
         best_label, best_T = None, -1.0
-        for a in self.ko.phi._mx.atoms:
-            lbl = a['label']
-            if lbl in self._queue and a['T'] > best_T:
-                best_label, best_T = lbl, a['T']
+        for lbl in self._queue:
+            a = self.ko.phi._mx.get_atom(lbl)
+            if a is not None:
+                if a['T'] > best_T:
+                    best_label, best_T = lbl, a['T']
         if best_label:
             action = self._queue.pop(best_label)
             return best_label, action
