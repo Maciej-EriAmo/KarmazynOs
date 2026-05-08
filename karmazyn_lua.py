@@ -395,6 +395,9 @@ class LuaExecutor:
             if not bubble:
                 return f"Błąd: Bąbel '{bubble_label}' nie istnieje."
             
+            # [HSS v2.5.0] Wyprowadzanie kluczy: agent_key = KDF(session_key, agent_id, P_task)
+            # [HSS v2.5.0] Context Binding (AAD) gwarantuje izolację rdzenia Φ od zapisu przez agenta.
+
             # W runtime.py (v1.3) zawartość to po prostu bubble.content
             return self.run_script(bubble.content)
 
