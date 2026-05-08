@@ -94,6 +94,7 @@ class LuaExecutor:
         karm.list_agents = self._lua_list_agents
         karm.delete_agent = self._lua_delete_agent
         karm.list_holograms = self._lua_list_holograms
+        karm.list_bubbles = self._lua_list_bubbles
         karm.get_tvac = self._lua_get_tvac
         karm.clear_screen = self._lua_clear_screen
         import time
@@ -179,7 +180,10 @@ class LuaExecutor:
         with self.lock:
             atoms = self.rt.list_atoms()
             if not atoms:
-                return self.rt.phi.t_vacuum()
+                # SanctuaryRuntime has PhiSpace in rt.phi
+                # PhiSpace doesn't have t_vacuum() but kernel KarmazynOS does.
+                # In SanctuaryRuntime, PhiSpace doesn't seem to have t_vacuum attribute.
+                return 0.05
             return sum(a.T for a in atoms) / len(atoms) / 100.0
 
     def _lua_get_state(self, atom_id: str):
@@ -339,6 +343,17 @@ class LuaExecutor:
                 })
             return self.lua.table(*holos)
 
+    def _lua_list_bubbles(self):
+        with self.lock:
+            bubbles = []
+            for label, b in self.rt._bubbles.items():
+                bubbles.append({
+                    "label": label,
+                    "id": f"bubble_{label}",
+                    "content": b.content
+                })
+            return self.lua.table(*bubbles)
+
     def _lua_get_tvac(self):
         with self.lock:
             return self.rt.phi.t_vacuum()
@@ -366,21 +381,27 @@ class LuaExecutor:
     # WYKONYWANIE KODU
     # =================================================================
 
-    def run_script(self, script_content: str) -> Any:
+    def run_script(self, script_content: str, args: list = None) -> Any:
         """Kompiluje i wykonuje podany ciąg znaków jako kod Lua."""
         if not self.lua:
             return "Błąd: Środowisko LuaJIT (lupa) nie jest dostępne."
         with self.lock:
             try:
+                if args:
+                    self.lua.globals().arg = self.lua.table(*args)
+                else:
+                    self.lua.globals().arg = self.lua.table()
                 return self.lua.execute(script_content)
             except Exception as e:
                 return f"  [Lua Error] {str(e)}"
 
+    def run_file(self, filepath: str, args: list = None) -> Any:
     def run_file(self, filepath: str) -> Any:
         """Wczytuje plik i wykonuje go jako kod Lua."""
         try:
             with open(filepath, 'r', encoding='utf-8') as f:
                 content = f.read()
+            return self.run_script(content, args=args)
             return self.run_script(content)
         except Exception as e:
             return f"Błąd odczytu pliku: {str(e)}"
