@@ -56,43 +56,26 @@ def karmazyn_exec(code: str) -> dict:
     Wykonuje kod Python w kontekście KarmazynOS.
     System może modyfikować samego siebie przez ten interfejs.
     """
-    # Środowisko ograniczone (restricted builtins) dla bezpieczeństwa.
-    # Usunięto funkcje typu getattr, type, id, które mogą być użyte do ucieczki z piaskownicy.
-    safe_builtins = {
-        'abs': abs, 'all': all, 'any': any, 'ascii': ascii, 'bin': bin, 'bool': bool,
-        'bytearray': bytearray, 'bytes': bytes, 'callable': callable, 'chr': chr,
-        'complex': complex, 'dict': dict, 'divmod': divmod,
-        'enumerate': enumerate, 'filter': filter, 'float': float, 'format': format,
-        'frozenset': frozenset, 'hasattr': hasattr, 'hash': hash,
-        'hex': hex, 'int': int, 'isinstance': isinstance, 'issubclass': issubclass,
-        'iter': iter, 'len': len, 'list': list, 'map': map, 'max': max,
-        'min': min, 'next': next, 'object': object, 'oct': oct, 'ord': ord, 'pow': pow,
-        'print': print, 'range': range, 'repr': repr, 'reversed': reversed,
-        'round': round, 'set': set, 'slice': slice, 'sorted': sorted,
-        'str': str, 'sum': sum, 'tuple': tuple, 'zip': zip,
-        '__doc__': None,
-        '__package__': None,
-    }
-
-    captured = []
-    def capture_print(*args, **kwargs):
-        text = " ".join(str(a) for a in args)
-        captured.append(text)
-        # wywołaj prawdziwy print do konsoli serwera
-        import builtins as _b
-        _b.print(*args, **kwargs)
-
-    safe_builtins['print'] = capture_print
-
     env = {
         "ko":      _ko,
         "phi":     _ko.phi,
         "bubbles": _ko.bubbles,
         "np":      np,
+        "os":      os,
+        "sys":     sys,
         "__name__": "__karmazyn__",
-        "__builtins__": safe_builtins,
     }
     out_buf = io.StringIO()
+    import builtins
+    old_print = builtins.print
+
+    captured = []
+    def capture_print(*args, **kwargs):
+        text = " ".join(str(a) for a in args)
+        captured.append(text)
+        old_print(*args, **kwargs)
+
+    builtins.print = capture_print
     result = {"ok": False, "output": "", "error": "", "result": None}
     try:
         exec(compile(code, "<karmazyn_studio>", "exec"), env)
@@ -111,7 +94,7 @@ def karmazyn_exec(code: str) -> dict:
         result["error"] = traceback.format_exc()
         result["output"] = "\n".join(captured)
     finally:
-        pass
+        builtins.print = old_print
 
     _exec_log.append({
         "ts":     time.time(),
