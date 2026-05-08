@@ -85,6 +85,7 @@ class LuaExecutor:
         karm.list_agents = self._lua_list_agents
         karm.delete_agent = self._lua_delete_agent
         karm.list_holograms = self._lua_list_holograms
+        karm.list_bubbles = self._lua_list_bubbles
         karm.get_tvac = self._lua_get_tvac
         karm.clear_screen = self._lua_clear_screen
         import time
@@ -170,7 +171,10 @@ class LuaExecutor:
         with self.lock:
             atoms = self.rt.list_atoms()
             if not atoms:
-                return self.rt.phi.t_vacuum()
+                # SanctuaryRuntime has PhiSpace in rt.phi
+                # PhiSpace doesn't have t_vacuum() but kernel KarmazynOS does.
+                # In SanctuaryRuntime, PhiSpace doesn't seem to have t_vacuum attribute.
+                return 0.05
             return sum(a.T for a in atoms) / len(atoms) / 100.0
 
     def _lua_get_state(self, atom_id: str):
@@ -329,6 +333,17 @@ class LuaExecutor:
                     "atom_labels": self.lua.table(*h.atom_labels)
                 })
             return self.lua.table(*holos)
+
+    def _lua_list_bubbles(self):
+        with self.lock:
+            bubbles = []
+            for label, b in self.rt._bubbles.items():
+                bubbles.append({
+                    "label": label,
+                    "id": f"bubble_{label}",
+                    "content": b.content
+                })
+            return self.lua.table(*bubbles)
 
     def _lua_get_tvac(self):
         with self.lock:
