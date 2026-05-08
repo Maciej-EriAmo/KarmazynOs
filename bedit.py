@@ -25,12 +25,6 @@ SOUL_LOADED = False
 HSS_LOADED = False
 
 try:
-    import numpy as np
-except ImportError:
-    np = None
-    print("⚠️ Brak numpy – tryb standalone (zainstaluj: pip install numpy)")
-
-try:
     from karmazyn import KarmazynOS
     KARMAZYN_LOADED = True
 except ImportError as e:
@@ -297,6 +291,48 @@ class KarmazynIntegration:
 
     def add_text(self, bubble_id: str, text: str) -> Optional[str]:
         return self.add_atom_to_bubble(bubble_id, text)
+
+    def assemble(self, bubble_id: str, prism: str = "CORE") -> str:
+        """Alias dla get_bubble_content dla kompatybilności."""
+        return self.get_bubble_content(bubble_id, prism)
+
+    def add_file(self, bubble_id: str, filepath: str) -> Optional[str]:
+        """Wczytuje plik i dodaje jego treść do bąbla."""
+        try:
+            with open(filepath, 'r', encoding='utf-8') as f:
+                content = f.read()
+            return self.add_atom_to_bubble(bubble_id, content)
+        except Exception as e:
+            print(f"⚠️ Błąd add_file: {e}")
+            return None
+
+    def add_directory(self, bubble_id: str, dirpath: str, recursive: bool = False) -> List[str]:
+        """Dodaje wszystkie pliki z katalogu do bąbla."""
+        added_ids = []
+        path = Path(dirpath)
+        pattern = "**/*" if recursive else "*"
+        for fp in path.glob(pattern):
+            if fp.is_file():
+                aid = self.add_file(bubble_id, str(fp))
+                if aid:
+                    added_ids.append(aid)
+        return added_ids
+
+    def import_to_bubble(self, bubble_id: str, atom_id: str, runtime):
+        """Programowy interfejs do konsolidacji/importu atomu do bąbla."""
+        bubble = self.get_bubble(bubble_id)
+        if not bubble:
+            # Jeśli bąbel wynikowy nie istnieje, tworzymy go w locie
+            self.create_bubble(bubble_id, f"Grupa Wynikowa: {bubble_id}")
+
+        atom = runtime.get_atom(atom_id)
+        if atom:
+            # Zachowujemy ID atomu (istotne dla narzędzi BIN) oraz metadane S i E
+            self.add_atom_to_bubble(bubble_id, atom.E, S=atom.S, E=atom.E, atom_id=atom.id)
+            self.save_all()
+            return atom.id
+        else:
+            raise ValueError(f"Atom {atom_id} nie istnieje w macierzy bazowej.")
 
     def snapshot_runtime(self, bubble_id: str, atoms: List) -> int:
         count = 0
