@@ -18,7 +18,6 @@ class KarmazynFS:
         layer = layer or self.cwd
         atoms = self.rt.list_atoms(
             layer=layer,
-            prism=self.current_prism,
             emanation=self.current_emanation
         )
         if not atoms:
