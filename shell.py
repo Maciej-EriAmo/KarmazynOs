@@ -42,7 +42,7 @@ except ImportError:
 from command_engine import Command, CommandRegistry, make_arg_schema
 
 # ----------------------------------------------------------------------
-# Inicjalizacja systemu
+# Inicjalizacja systemu i wiązanie spójności
 # ----------------------------------------------------------------------
 RUNTIME = SanctuaryRuntime()
 FS = KarmazynFS(RUNTIME)
@@ -52,7 +52,16 @@ BUBBLES = BubbleRuntime()
 bubble_init(BUBBLES, RUNTIME)
 
 KARM = KarmazynExecutor(RUNTIME) if KARM_LOADED else None
-LUA_EXECUTOR = LuaExecutor(RUNTIME) if LUA_AVAILABLE else None
+
+if LUA_AVAILABLE:
+    LUA_EXECUTOR = LuaExecutor(RUNTIME)
+    # DEPENDENCY INJECTION: Wiążemy środowisko Lua z usługami powłoki
+    LUA_EXECUTOR.bind_system_services(
+        resolver_func=FS.resolve_alias,
+        importer_func=BUBBLES.import_to_bubble
+    )
+else:
+    LUA_EXECUTOR = None
 
 # ----------------------------------------------------------------------
 # HUD (z informacją o stanie pętli runtime)
