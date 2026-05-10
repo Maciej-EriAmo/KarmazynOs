@@ -409,13 +409,11 @@ class LuaExecutor:
                 return f"  [Lua Error] {str(e)}"
 
     def run_file(self, filepath: str, args: list = None) -> Any:
-    def run_file(self, filepath: str) -> Any:
         """Wczytuje plik i wykonuje go jako kod Lua."""
         try:
             with open(filepath, 'r', encoding='utf-8') as f:
                 content = f.read()
             return self.run_script(content, args=args)
-            return self.run_script(content)
         except Exception as e:
             return f"Błąd odczytu pliku: {str(e)}"
 
