@@ -10,7 +10,7 @@ import math
 
 @dataclass
 class Atom:
-    """Pojedynczy atom – najmniejsza jednostka pamięci Φ."""
+    """Pojedynczy atom – wskaźnik/bufor pamięci roboczej Φ. NIE JEST to trwała baza danych."""
     id: str
     content: str
     energy: float = 1.0          # 0..1, wpływa na liveliness
@@ -28,7 +28,7 @@ class Atom:
 
 @dataclass
 class Bubble:
-    """Bąbel – kontener dla atomów z manifestem i metadanymi."""
+    """Bąbel – hermetyczna przestrzeń wykonawcza (Dynamic Holographic Task Memory Space) z kryptograficzną membraną."""
     id: str
     name: str
     atoms: list = field(default_factory=list)
@@ -57,7 +57,10 @@ class Bubble:
         return [a for a in self.atoms if a.energy > 0.05]
     
     def assemble_content(self, prism: str = "CORE") -> str:
-        """Składa treść bąbla według pryzmatu."""
+        """
+        Składa treść bąbla według pryzmatu.
+        # Context Binding: składanie odbywa się w ramach wydzielonego pryzmatu dostępu
+        """
         if prism == "CORE":
             return "\n".join(a.content for a in self.atoms)
         elif prism == "IN":

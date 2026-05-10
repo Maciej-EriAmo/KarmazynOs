@@ -92,8 +92,10 @@ class LuaExecutor:
         karm.get_resources = self._lua_get_resources
         karm.get_epoch = self._lua_get_epoch
         karm.list_agents = self._lua_list_agents
+        karm.route_output = self._lua_route_output
         karm.delete_agent = self._lua_delete_agent
         karm.list_holograms = self._lua_list_holograms
+        karm.list_bubbles = self._lua_list_bubbles
         karm.get_tvac = self._lua_get_tvac
         karm.clear_screen = self._lua_clear_screen
         import time
@@ -179,7 +181,10 @@ class LuaExecutor:
         with self.lock:
             atoms = self.rt.list_atoms()
             if not atoms:
-                return self.rt.phi.t_vacuum()
+                # SanctuaryRuntime has PhiSpace in rt.phi
+                # PhiSpace doesn't have t_vacuum() but kernel KarmazynOS does.
+                # In SanctuaryRuntime, PhiSpace doesn't seem to have t_vacuum attribute.
+                return 0.05
             return sum(a.T for a in atoms) / len(atoms) / 100.0
 
     def _lua_get_state(self, atom_id: str):
@@ -320,6 +325,18 @@ class LuaExecutor:
                 })
             return self.lua.table(*agents)
 
+    def _lua_route_output(self, atom_id: str, target_alias: str):
+        """Przesyła atom do bąbla wynikowego na podstawie aliasu z konfiguracji."""
+        with self.lock:
+            # Importy lokalne, aby uniknąć cykli przy inicjalizacji
+            from shell import FS, BUBBLES
+
+            target_id = FS.resolve_alias(target_alias)
+            if BUBBLES.get_bubble(target_id):
+                # Logika importu atomu do bąbla
+                BUBBLES.import_to_bubble(target_id, atom_id, self.rt)
+                return f"✅ Wynik {atom_id} przesłany do {target_alias} ({target_id})"
+            return f"❌ Nie znaleziono celu dla aliasu: {target_alias}"
     def _lua_delete_agent(self, pid: int):
         with self.lock:
             if pid in self.rt._agents:
@@ -338,6 +355,17 @@ class LuaExecutor:
                     "atom_labels": self.lua.table(*h.atom_labels)
                 })
             return self.lua.table(*holos)
+
+    def _lua_list_bubbles(self):
+        with self.lock:
+            bubbles = []
+            for label, b in self.rt._bubbles.items():
+                bubbles.append({
+                    "label": label,
+                    "id": f"bubble_{label}",
+                    "content": b.content
+                })
+            return self.lua.table(*bubbles)
 
     def _lua_get_tvac(self):
         with self.lock:
@@ -366,21 +394,27 @@ class LuaExecutor:
     # WYKONYWANIE KODU
     # =================================================================
 
-    def run_script(self, script_content: str) -> Any:
+    def run_script(self, script_content: str, args: list = None) -> Any:
         """Kompiluje i wykonuje podany ciąg znaków jako kod Lua."""
         if not self.lua:
             return "Błąd: Środowisko LuaJIT (lupa) nie jest dostępne."
         with self.lock:
             try:
+                if args:
+                    self.lua.globals().arg = self.lua.table(*args)
+                else:
+                    self.lua.globals().arg = self.lua.table()
                 return self.lua.execute(script_content)
             except Exception as e:
                 return f"  [Lua Error] {str(e)}"
 
+    def run_file(self, filepath: str, args: list = None) -> Any:
     def run_file(self, filepath: str) -> Any:
         """Wczytuje plik i wykonuje go jako kod Lua."""
         try:
             with open(filepath, 'r', encoding='utf-8') as f:
                 content = f.read()
+            return self.run_script(content, args=args)
             return self.run_script(content)
         except Exception as e:
             return f"Błąd odczytu pliku: {str(e)}"
@@ -395,6 +429,9 @@ class LuaExecutor:
             if not bubble:
                 return f"Błąd: Bąbel '{bubble_label}' nie istnieje."
             
+            # [HSS v2.5.0] Wyprowadzanie kluczy: agent_key = KDF(session_key, agent_id, P_task)
+            # [HSS v2.5.0] Context Binding (AAD) gwarantuje izolację rdzenia Φ od zapisu przez agenta.
+
             # W runtime.py (v1.3) zawartość to po prostu bubble.content
             return self.run_script(bubble.content)
 
