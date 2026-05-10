@@ -78,9 +78,9 @@ def save_soul(karmazyn_os, path: str = "./karmazyn_data") -> bool:
                 "temperature": ko.phi.temperature(),
                 "t_vacuum":    ko.phi.t_vacuum(),
                 "pid":         ko._pid,
+                "p2s":         ko.phi._p2s.hex(),   # ← klucz sesji
                 "dim":         ko.phi.dim,
                 "bubble_idx":  dict(ko.bubbles._idx),
-                # p2s usunięte z meta – teraz w bąblu identity
             })
 
             # ── bąble ─────────────────────────────────────────────────────────
@@ -98,7 +98,6 @@ def save_soul(karmazyn_os, path: str = "./karmazyn_data") -> bool:
                     "consolidated_from":  b.consolidated_from,
                     "metadata":           b.metadata,
                     "revoked":            revoked,
-                    "immortal":           getattr(b, 'immortal', False),
                     "content_b64":        _b64(raw),
                     "fingerprint_b64":    _b64(b.fingerprint),
                     "S_struct":           b.S_struct.tolist(),
@@ -236,9 +235,8 @@ def load_soul(karmazyn_os, path: str = "./karmazyn_data") -> bool:
             ko._pid    = rec.get("pid", 100)
             p2s_hex    = rec.get("p2s")
             if p2s_hex:
-                # Kompatybilność wsteczna
                 ko.phi._p2s     = bytes.fromhex(p2s_hex)
-                ko.bubbles._phi2 = ko.phi.phi2_bytes()
+                ko.bubbles._phi2 = ko.phi.phi2_bytes()  # ← sync BubbleStore
             # odtwórz czas w macierzy Φ
             ko.phi._mx.time = meta_epoch
 
@@ -247,11 +245,13 @@ def load_soul(karmazyn_os, path: str = "./karmazyn_data") -> bool:
                 bid   = rec["id"]
                 label = rec["label"]
 
-                # odtwórz klucz z p2s (prowizoryczny, zostanie poprawiony w syncu)
+                # odtwórz klucz z p2s (już odtworzony z meta)
                 new_key = ko.bubbles._make_key(bid) if not rec.get("revoked") else b""
 
-                # zawartość plaintextowa z b64
+                # re-encrypt zawartością plaintextową
                 raw_content = _ub64(rec["content_b64"])
+                from karmazyn import _xor_crypt
+                new_encrypted = _xor_crypt(raw_content, new_key) if new_key else raw_content
 
                 b = Bubble(
                     id=bid,
@@ -260,16 +260,13 @@ def load_soul(karmazyn_os, path: str = "./karmazyn_data") -> bool:
                     S_sem=np.array(rec["S_sem"],    dtype=np.float32),
                     fingerprint=_ub64(rec["fingerprint_b64"]),
                     bubble_key=new_key,
-                    encrypted_content=b"", # tymczasowo puste, zaszyfrujemy po syncu
+                    encrypted_content=new_encrypted,
                     inode=rec.get("inode", f"karmazyn://bubbles/{label}"),
                     epoch_born=rec.get("epoch_born", 0),
                     recall_count=rec.get("recall_count", 0),
                     consolidated_from=rec.get("consolidated_from", ""),
                     metadata=rec.get("metadata", {}),
-                    immortal=rec.get("immortal", False),
                 )
-                # przechowujemy surową treść tymczasowo w metadata dla synca
-                b.metadata["__raw_content_temp"] = raw_content
                 if "decay_start_epoch" in rec:
                     b.decay_start_epoch = rec["decay_start_epoch"]
                     b.decay_rate        = rec.get("decay_rate", 0.0)
@@ -305,38 +302,6 @@ def load_soul(karmazyn_os, path: str = "./karmazyn_data") -> bool:
 
         elif rtype == "phi_rc":
             ko.phi._rc.update(rec.get("data", {}))
-
-    # ── synchronizacja tożsamości i szyfrowania po wczytaniu bąbli ───────────
-    # Bąbel tożsamości może nie mieć jeszcze poprawnego klucza do odszyfrowania
-    for b in ko.bubbles._b.values():
-        if b.metadata.get("type") == "phi_identity":
-            # Bąbel tożsamości przechowuje surowe _p2s (32 bajty).
-            # Odzyskujemy je bezpośrednio z tymczasowych danych.
-            p2s_raw = b.metadata.get("__raw_content_temp")
-            if p2s_raw and len(p2s_raw) == 32:
-                ko.phi._p2s = p2s_raw
-                ko.bubbles._phi2 = ko.phi.phi2_bytes()
-                print(f"  [.soul] Odzyskano tożsamość: {ko.get_phi_id()}")
-
-            # Przywróć bąbel do indeksu jeśli go tam nie ma
-            if b.label not in ko.bubbles._idx:
-                ko.bubbles._idx[b.label] = b.id
-            break
-
-    if not ko.phi._p2s:
-        # Jeśli nadal brak (nowa instalacja lub błąd), zainicjuj nową tożsamość
-        ko._init_p2s_bubble()
-
-    from karmazyn import _xor_crypt
-    for bid, b in ko.bubbles._b.items():
-        raw = b.metadata.pop("__raw_content_temp", None)
-        if raw is not None:
-            if bid not in ko.bubbles._rev:
-                b.bubble_key = ko.bubbles._make_key(bid)
-                b.encrypted_content = _xor_crypt(raw, b.bubble_key)
-            else:
-                b.bubble_key = b""
-                b.encrypted_content = raw
 
     # ── odtwórz wektory semantyczne i atomy Φ ─────────────────────────────────
     ko.phi._sem.update(sem_map)
