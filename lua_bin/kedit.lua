@@ -9,6 +9,9 @@ end
 
 while true do
     local menu = {
+        "1. Zmień Emanację (E) [Φ - ulotna]",
+        "2. Stabilizuj (Refresh) [Φ]",
+        "3. ZAPISZ TRWALE (Skonsoliduj do bąbla)",
         "1. Zmień Emanację (E)",
         "2. Stabilizuj (Refresh)",
         "3. Skonsoliduj do bąbla",
@@ -23,6 +26,19 @@ while true do
         local new_e = karmazyn.read_line("Nowa Emanacja: ")
         if new_e ~= "" then
             atom.set_E(new_e)
+            print("✓ Zaktualizowano w pamięci operacyjnej Φ.")
+        end
+    elseif choice == "2" then
+        atom.refresh()
+        print("✓ Energia atomu przywrócona w Φ.")
+    elseif choice == "3" then
+        local bid = atom.consolidate()
+        if bid then
+            print("✓ Pomyślnie zapisano do trwałego Bąbla: " .. tostring(bid))
+            print("  [Informacja przetrwa restart systemu i Vacuum Decay]")
+        else
+            print("✗ Błąd utrwalania informacji.")
+        end
             print("✓ Zaktualizowano.")
         end
     elseif choice == "2" then

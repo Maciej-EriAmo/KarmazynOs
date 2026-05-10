@@ -67,6 +67,7 @@ def cmd_import(args) -> str:
         RUNTIME.resources["żywica"] -= koszt
 
     if os.path.isfile(path):
+        # [HSS v2.5.0] I/O powiązane z ograniczonym pryzmatem bąbla
         atom_id = BUBBLES.add_file(CTX.current_bubble_id, path)
         if atom_id:
             atom_type = MediaType.from_filename(path)
@@ -108,6 +109,7 @@ def cmd_export(args) -> str:
         return "❌ Najpierw otwórz bąbel"
 
     output_dir = args[0] if args else f"./export_{CTX.current_bubble_name}"
+    # [HSS v2.5.0] Ograniczony przepływ wychodzący (Context Binding)
     files = BUBBLES.export_files(CTX.current_bubble_id, output_dir)
 
     return f"📦 Wyeksportowano {len(files)} plików do: {output_dir}" if files else "Brak plików do eksportu"
