@@ -42,7 +42,7 @@ except ImportError:
 from command_engine import Command, CommandRegistry, make_arg_schema
 
 # ----------------------------------------------------------------------
-# Inicjalizacja systemu
+# Inicjalizacja systemu i wiązanie spójności
 # ----------------------------------------------------------------------
 RUNTIME = SanctuaryRuntime()
 BUBBLES = BubbleRuntime()
@@ -52,7 +52,18 @@ bubble_init(BUBBLES, RUNTIME)
 FS = KarmazynFS(RUNTIME, bubbles_runtime=BUBBLES)
 
 KARM = KarmazynExecutor(RUNTIME) if KARM_LOADED else None
-LUA_EXECUTOR = LuaExecutor(RUNTIME) if LUA_AVAILABLE else None
+
+if LUA_AVAILABLE:
+    LUA_EXECUTOR = LuaExecutor(RUNTIME)
+    # DEPENDENCY INJECTION: Wiążemy środowisko Lua z usługami powłoki
+    LUA_EXECUTOR.bind_system_services(
+        resolver_func=FS.resolve_alias,
+        importer_func=BUBBLES.import_to_bubble
+    )
+else:
+    LUA_EXECUTOR = None
+
+RUNTIME.start_loop()
 
 RUNTIME.start_loop()
 
@@ -289,7 +300,13 @@ def cmd_lua(args):
             return f"❌ {result}"
         return f"✅ Wykonano bąbel Lua: {args[1]}"
     filepath = args[0]
-    result = LUA_EXECUTOR.run_file(filepath)
+    if not os.path.isfile(filepath):
+        # Fallback do lua_bin/
+        alt_path = os.path.join("lua_bin", filepath if filepath.endswith(".lua") else filepath + ".lua")
+        if os.path.isfile(alt_path):
+            filepath = alt_path
+
+    result = LUA_EXECUTOR.run_file(filepath, args=args[1:])
     if isinstance(result, str) and result.startswith("Błąd"):
         return f"❌ {result}"
     return f"✅ Wykonano plik Lua: {filepath}"
@@ -390,14 +407,32 @@ def completer(text, state):
         tokens = []
     current_token = line[begidx:endidx]
 
-    # Brak tokenów – podpowiadamy pierwsze słowo komendy
+    # Brak tokenów – podpowiadamy pierwsze słowo komendy (lub skrypty Lua)
     if len(tokens) == 0:
-        matches = registry.complete(current_token, state)
-        if matches is not None:
-            return matches
-    # Jeden token – podpowiadamy drugie słowo dla komend dwuczłonowych
+        matches = [cmd for cmd in registry.list_commands() if cmd.lower().startswith(current_token.lower())]
+
+        # Dodaj skrypty Lua z lua_bin do podpowiedzi na pierwszym poziomie
+        if os.path.isdir("lua_bin"):
+            lua_scripts = [f[:-4].upper() for f in os.listdir("lua_bin") if f.endswith(".lua")]
+            for s in lua_scripts:
+                if s.startswith(current_token.upper()) and s not in matches:
+                    matches.append(s)
+
+        matches.sort()
+        if state < len(matches):
+            return matches[state]
+    # Jeden token – podpowiadamy drugie słowo dla komend dwuczłonowych LUB skrypty Lua
     elif len(tokens) == 1:
         first = tokens[0].upper()
+
+        # Podpowiedzi dla LUA
+        if first == "LUA":
+            if os.path.isdir("lua_bin"):
+                lua_files = [f for f in os.listdir("lua_bin") if f.endswith(".lua")]
+                matches = [f for f in lua_files if f.lower().startswith(current_token.lower())]
+                if state < len(matches):
+                    return matches[state]
+
         full_candidates = [cmd for cmd in registry.list_commands() if cmd.startswith(first + " ")]
         second_words = [cmd.split()[1] for cmd in full_candidates]
         matches = [w for w in second_words if w.lower().startswith(current_token.lower())]
@@ -507,7 +542,22 @@ def main():
             args = parts[1:]
 
         if cmd is None:
-            print(f"{theme.ansi_fg('phi_bright')}[BŁĄD]{theme.RESET} Nieznana komenda: {verb1}")
+            # Próba wywołania skryptu Lua z lua_bin/
+            lua_script = verb1.lower()
+            if not lua_script.endswith(".lua"):
+                lua_script += ".lua"
+
+            lua_path = os.path.join("lua_bin", lua_script)
+            if LUA_AVAILABLE and os.path.isfile(lua_path):
+                try:
+                    # Przekazujemy resztę argumentów do skryptu Lua
+                    result = LUA_EXECUTOR.run_file(lua_path, args=args)
+                    if result: print(result)
+                except Exception as e:
+                    print(f"{theme.ansi_fg('phi_bright')}[BŁĄD LUA]{theme.RESET} {e}")
+            else:
+                print(f"{theme.ansi_fg('phi_bright')}[BŁĄD]{theme.RESET} Nieznana komenda: {verb1}")
+
             print_hud()
             continue
 
