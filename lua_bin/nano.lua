@@ -14,6 +14,7 @@ for line in string.gmatch(atom.E, "[^\r\n]+") do
 end
 
 print("Edycja Emanacji (E) dla " .. atom.id)
+print("Komendy: .save (Φ), .soul (Bąbel - trwały), .abort, .del <n>, .ins <n> <tekst>, .list")
 print("Komendy: .save, .abort, .del <n>, .ins <n> <tekst>, .list")
 print("Wpisanie tekstu dodaje nową linię na końcu.")
 
@@ -32,6 +33,16 @@ while true do
 
     if input == ".save" then
         atom.set_E(table.concat(lines, "\n"))
+        print("✓ Zapisano w pamięci ulotnej Φ.")
+        break
+    elseif input == ".soul" then
+        atom.set_E(table.concat(lines, "\n"))
+        local bid = atom.consolidate()
+        if bid then
+            print("✓ Utrwalono w Bąblu: " .. tostring(bid))
+        else
+            print("✗ Błąd konsolidacji.")
+        end
         print("✓ Zapisano.")
         break
     elseif input == ".abort" then
