@@ -42,17 +42,28 @@ except ImportError:
 from command_engine import Command, CommandRegistry, make_arg_schema
 
 # ----------------------------------------------------------------------
-# Inicjalizacja systemu
+# Inicjalizacja systemu i wiązanie spójności
 # ----------------------------------------------------------------------
 RUNTIME = SanctuaryRuntime()
 BUBBLES = BubbleRuntime()
 bubble_init(BUBBLES, RUNTIME)
 
-# Wstrzykujemy BUBBLES do FS, aby umożliwić nawigację po bąblach
+# Wstrzykujemy BUBBLES do FS, aby umożliwić nawigację po bąblach i aliasy
 FS = KarmazynFS(RUNTIME, bubbles_runtime=BUBBLES)
 
 KARM = KarmazynExecutor(RUNTIME) if KARM_LOADED else None
-LUA_EXECUTOR = LuaExecutor(RUNTIME) if LUA_AVAILABLE else None
+
+if LUA_AVAILABLE:
+    LUA_EXECUTOR = LuaExecutor(RUNTIME)
+    # DEPENDENCY INJECTION: Wiążemy środowisko Lua z usługami powłoki
+    LUA_EXECUTOR.bind_system_services(
+        resolver_func=FS.resolve_alias,
+        importer_func=BUBBLES.import_to_bubble
+    )
+else:
+    LUA_EXECUTOR = None
+
+RUNTIME.start_loop()
 
 RUNTIME.start_loop()
 
@@ -289,7 +300,13 @@ def cmd_lua(args):
             return f"❌ {result}"
         return f"✅ Wykonano bąbel Lua: {args[1]}"
     filepath = args[0]
-    result = LUA_EXECUTOR.run_file(filepath)
+    if not os.path.isfile(filepath):
+        # Fallback do lua_bin/
+        alt_path = os.path.join("lua_bin", filepath if filepath.endswith(".lua") else filepath + ".lua")
+        if os.path.isfile(alt_path):
+            filepath = alt_path
+
+    result = LUA_EXECUTOR.run_file(filepath, args=args[1:])
     if isinstance(result, str) and result.startswith("Błąd"):
         return f"❌ {result}"
     return f"✅ Wykonano plik Lua: {filepath}"
@@ -390,14 +407,32 @@ def completer(text, state):
         tokens = []
     current_token = line[begidx:endidx]
 
-    # Brak tokenów – podpowiadamy pierwsze słowo komendy
+    # Brak tokenów – podpowiadamy pierwsze słowo komendy (lub skrypty Lua)
     if len(tokens) == 0:
-        matches = registry.complete(current_token, state)
-        if matches is not None:
-            return matches
-    # Jeden token – podpowiadamy drugie słowo dla komend dwuczłonowych
+        matches = [cmd for cmd in registry.list_commands() if cmd.lower().startswith(current_token.lower())]
+
+        # Dodaj skrypty Lua z lua_bin do podpowiedzi na pierwszym poziomie
+        if os.path.isdir("lua_bin"):
+            lua_scripts = [f[:-4].upper() for f in os.listdir("lua_bin") if f.endswith(".lua")]
+            for s in lua_scripts:
+                if s.startswith(current_token.upper()) and s not in matches:
+                    matches.append(s)
+
+        matches.sort()
+        if state < len(matches):
+            return matches[state]
+    # Jeden token – podpowiadamy drugie słowo dla komend dwuczłonowych LUB skrypty Lua
     elif len(tokens) == 1:
         first = tokens[0].upper()
+
+        # Podpowiedzi dla LUA
+        if first == "LUA":
+            if os.path.isdir("lua_bin"):
+                lua_files = [f for f in os.listdir("lua_bin") if f.endswith(".lua")]
+                matches = [f for f in lua_files if f.lower().startswith(current_token.lower())]
+                if state < len(matches):
+                    return matches[state]
+
         full_candidates = [cmd for cmd in registry.list_commands() if cmd.startswith(first + " ")]
         second_words = [cmd.split()[1] for cmd in full_candidates]
         matches = [w for w in second_words if w.lower().startswith(current_token.lower())]
@@ -437,9 +472,9 @@ def main():
     if LUA_AVAILABLE:
         print("🌙 Środowisko LuaJIT gotowe")
 
-    # Auto-Discovery: Ładowanie bąbla konfiguracyjnego
+    # Sekcja Auto-Discovery konfiguracji
     config_bubble_id = None
-    all_bubbles = BUBBLES.list_bubbles() or []
+    all_bubbles = BUBBLES.list_bubbles()
     for b in all_bubbles:
         if b.get('label') == 'sys_config' or 'sys_config' in str(b.get('id', '')):
             config_bubble_id = b['id']
@@ -447,26 +482,28 @@ def main():
 
     if config_bubble_id:
         FS.set_config_bubble(config_bubble_id)
-        print(f"⚙️ Wczytano bąbel konfiguracyjny: {config_bubble_id}")
+        print(f"⚙️ System: Wczytano konfigurację z bąbla {config_bubble_id}")
 
-        # Rejestracja narzędzi (Emanacja definiuje ścieżkę do skryptu Lua lub id bąbla Lua)
+        # Rejestracja narzędzi: Szukamy atomów S="BIN" (E = ścieżka .lua lub id bąbla)
         config_atoms = BUBBLES.get_active_atoms(config_bubble_id)
-        tools_loaded = 0
         for a in config_atoms:
             s_val = a.get('S') if isinstance(a, dict) else a.S
             if s_val == "BIN":
-                cmd_name = (a.get('id') if isinstance(a, dict) else a.id).upper()
-                lua_target = a.get('E') if isinstance(a, dict) else a.E
+                cmd_id = a.get('id') if isinstance(a, dict) else a.id
+                cmd_name = cmd_id.upper()
+                target = a.get('E') if isinstance(a, dict) else a.E
 
-                # Dynamiczne tworzenie handlera dla narzędzia
-                def make_handler(target):
-                    return lambda args: LUA_EXECUTOR.run_file(target) if target.endswith('.lua') else LUA_EXECUTOR.run_bubble(target)
+                # Tworzymy domknięcie (closure) dla handlera
+                def create_lua_handler(t):
+                    return lambda args: LUA_EXECUTOR.run_file(t) if t.endswith('.lua') else LUA_EXECUTOR.run_bubble(t)
 
-                registry.register(Command(cmd_name, make_handler(lua_target), f"Narzędzie użytkownika ({lua_target})", "tools", []))
-                tools_loaded += 1
-
-        if tools_loaded > 0:
-            print(f"🔧 Zarejestrowano narzędzi z konfiguracji: {tools_loaded}")
+                registry.register(Command(
+                    cmd_name,
+                    create_lua_handler(target),
+                    f"Narzędzie użytkownika: {target}",
+                    "tools"
+                ))
+        print(f"🔧 Narzędzia systemowe zarejestrowane.")
     print()
 
     while True:
@@ -505,7 +542,22 @@ def main():
             args = parts[1:]
 
         if cmd is None:
-            print(f"{theme.ansi_fg('phi_bright')}[BŁĄD]{theme.RESET} Nieznana komenda: {verb1}")
+            # Próba wywołania skryptu Lua z lua_bin/
+            lua_script = verb1.lower()
+            if not lua_script.endswith(".lua"):
+                lua_script += ".lua"
+
+            lua_path = os.path.join("lua_bin", lua_script)
+            if LUA_AVAILABLE and os.path.isfile(lua_path):
+                try:
+                    # Przekazujemy resztę argumentów do skryptu Lua
+                    result = LUA_EXECUTOR.run_file(lua_path, args=args)
+                    if result: print(result)
+                except Exception as e:
+                    print(f"{theme.ansi_fg('phi_bright')}[BŁĄD LUA]{theme.RESET} {e}")
+            else:
+                print(f"{theme.ansi_fg('phi_bright')}[BŁĄD]{theme.RESET} Nieznana komenda: {verb1}")
+
             print_hud()
             continue
 
