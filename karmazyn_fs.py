@@ -43,6 +43,12 @@ class KarmazynFS:
         return name
 
     # ─── Nawigacja ─────────────────────────
+    def ls(self, layer: str = None) -> str:
+        layer = layer or self.cwd
+        atoms = self.rt.list_atoms(
+            layer=layer,
+            emanation=self.current_emanation
+        )
     def ls(self, path: str = None) -> str:
         target = path or self.cwd
         target = self.resolve_alias(target)
