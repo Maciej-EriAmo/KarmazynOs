@@ -25,12 +25,6 @@ SOUL_LOADED = False
 HSS_LOADED = False
 
 try:
-    import numpy as np
-except ImportError:
-    np = None
-    print("⚠️ Brak numpy – tryb standalone (zainstaluj: pip install numpy)")
-
-try:
     from karmazyn import KarmazynOS
     KARMAZYN_LOADED = True
 except ImportError as e:
@@ -343,6 +337,12 @@ class KarmazynIntegration:
         return added_ids
 
     def import_to_bubble(self, bubble_id: str, atom_id: str, runtime):
+        """Importuje atom z runtime do bąbla, zachowując metadane S i E oraz ID."""
+        atom = runtime.get_atom(atom_id)
+        if atom:
+            # Zachowujemy ID atomu (istotne dla narzędzi BIN) oraz metadane S i E
+            return self.add_atom_to_bubble(bubble_id, atom.E, S=atom.S, E=atom.E, atom_id=atom.id)
+        return None
         """Programowy interfejs do konsolidacji/importu atomu do bąbla."""
         bubble = self.get_bubble(bubble_id)
         if not bubble:
