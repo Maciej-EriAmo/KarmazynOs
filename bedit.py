@@ -25,12 +25,6 @@ SOUL_LOADED = False
 HSS_LOADED = False
 
 try:
-    import numpy as np
-except ImportError:
-    np = None
-    print("⚠️ Brak numpy – tryb standalone (zainstaluj: pip install numpy)")
-
-try:
     from karmazyn import KarmazynOS
     KARMAZYN_LOADED = True
 except ImportError as e:
@@ -349,6 +343,20 @@ class KarmazynIntegration:
             # Zachowujemy ID atomu (istotne dla narzędzi BIN) oraz metadane S i E
             return self.add_atom_to_bubble(bubble_id, atom.E, S=atom.S, E=atom.E, atom_id=atom.id)
         return None
+        """Programowy interfejs do konsolidacji/importu atomu do bąbla."""
+        bubble = self.get_bubble(bubble_id)
+        if not bubble:
+            # Jeśli bąbel wynikowy nie istnieje, tworzymy go w locie
+            self.create_bubble(bubble_id, f"Grupa Wynikowa: {bubble_id}")
+
+        atom = runtime.get_atom(atom_id)
+        if atom:
+            # Zachowujemy ID atomu (istotne dla narzędzi BIN) oraz metadane S i E
+            self.add_atom_to_bubble(bubble_id, atom.E, S=atom.S, E=atom.E, atom_id=atom.id)
+            self.save_all()
+            return atom.id
+        else:
+            raise ValueError(f"Atom {atom_id} nie istnieje w macierzy bazowej.")
 
     def snapshot_runtime(self, bubble_id: str, atoms: List) -> int:
         """Przenosi wszystkie atomy z listy do bąbla."""
