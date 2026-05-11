@@ -153,7 +153,7 @@ Lua wygrywa kompromisem: tani interpreter, łatwa składnia, zerowe zależności
 - [x] Moduł 9: Userdata i bindings
 - [x] Moduł 10: Sandboxing
 - [x] Moduł 11: DSL dla KarmazynOS
-- [ ] Moduł 12: Capstone
+- [x] Moduł 12: Capstone
 
 ---
 
@@ -166,3 +166,7 @@ Wszystkie przykłady kodu są w domenie publicznej.
 ---
 
 *Następny krok: otwórz `M01_fundamenty.md` i zacznij od Lekcji 1.1.*
+
+### Dodatkowe
+
+- [x] Moduł Bonus: KarmazynOS Warp Engine Demo (multi-agent swarm + termodynamika)
