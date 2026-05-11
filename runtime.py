@@ -25,6 +25,21 @@ import numpy as np
 
 from hss_karmazyn_matrix import HSSKarmazynMatrix
 from karmazyn_ui import audio, gfx
+from core.phi_math import PhiPhysics
+
+# =====================================================================
+# ADAPTER ATOMÓW (ETAP 2)
+# =====================================================================
+class Atom:
+    def __init__(self, id_str, S_raw, E, T):
+        self.id = id_str
+
+        # WARSTWA ADAPTACYJNA (NIE DESTRUKCYJNA)
+        self._S_raw = S_raw
+        self.S = PhiPhysics.normalize_to_phi_space(S_raw)
+
+        self.E = E
+        self.T = T
 
 # =====================================================================
 # MAPOWANIE STANÓW
@@ -140,6 +155,13 @@ class Bubble:
         self.label = label
         self.content = content
         self.immortal = immortal
+        self.density = 1.0
+
+    def get_core_vector(self):
+        return PhiPhysics.normalize_to_phi_space(self.content)
+
+    def absorb(self, atom):
+        self.content = f"{self.content} {atom._S_raw} {atom.E}".strip()
 
     def liveliness(self, runtime) -> float:
         atom = runtime.get_atom(self.label)
@@ -361,6 +383,29 @@ class SanctuaryRuntime:
         self._name_to_id[name] = label
         self.events.emit("atom_created", atom)
         return label
+
+    def consolidate_to_bubble(self, atom, bubble):
+        core = bubble.get_core_vector()
+
+        result = PhiPhysics.snell_refraction(
+            atom.S,
+            core,
+            bubble.density
+        )
+
+        if not result["penetrates"]:
+            return {
+                "status": "reflected",
+                "atom": atom.id,
+                "reason": "phase_mismatch",
+                "coherence": result["coherence"]
+            }
+
+        bubble.absorb(atom)
+        return {
+            "status": "absorbed",
+            "atom": atom.id
+        }
 
     def consolidate(self, label: str, metadata: dict = None) -> str:
         if label in self._bubbles:
