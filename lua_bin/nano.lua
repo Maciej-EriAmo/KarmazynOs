@@ -1,51 +1,55 @@
--- nano.lua – edytor atomów z opcją konsolidacji do bąbla
--- Użycie: nano [nazwa_atomu]
--- Jeśli atom nie istnieje, zostanie utworzony.
--- Komendy: .save (zapis do atomu), .bubble (konsoliduj do bąbla), .abort, .del N, .ins N tekst, .list
-
+-- nano.lua – edytor bąbla (trwały)
+-- Użycie: nano [nazwa_bąbla]
 local args = {...}
-local atom_name = args[1] or "notatka_" .. os.time()
+local bubble_name = args[1] or "notatki"
 
-local atom = karmazyn.get_atom(atom_name)
-if not atom then
-    print("Tworzę nowy atom: " .. atom_name)
-    atom = karmazyn.create_atom(atom_name, "Edycja", "notatka", 0.9)
+-- Pobierz lub utwórz bąbel
+local bubble = karmazyn.get_bubble(bubble_name)
+if not bubble then
+    bubble = karmazyn.create_bubble(bubble_name, "document")
+    print("🫧 Utworzono nowy bąbel: " .. bubble_name)
 end
 
--- Pobierz treść (zakładam, że jest w polu S – sygnatura semantyczna)
-local content = atom.S or ""
+-- Wczytaj istniejącą zawartość (pierwszy atom w bąblu)
 local lines = {}
-for line in string.gmatch(content, "[^\r\n]+") do
-    table.insert(lines, line)
+local atoms = bubble:get_atoms() or {}
+local main_atom = atoms[1]
+if main_atom then
+    local content = main_atom:get_content() or ""
+    for line in content:gmatch("[^\r\n]+") do
+        table.insert(lines, line)
+    end
 end
 
 local function list_lines()
-    print("\n===== " .. atom_name .. " =====")
+    local display = {}
     for i, line in ipairs(lines) do
-        print(string.format("%02d | %s", i, line))
+        table.insert(display, string.format("%02d | %s", i, line))
     end
-    print("==================")
+    print(karmazyn.ui.draw_frame(bubble_name, display, "phi_signal"))
+end
+
+local function save_to_bubble()
+    -- Usuń stare atomy
+    for _, a in ipairs(bubble:get_atoms() or {}) do
+        bubble:remove_atom(a.id)
+    end
+    -- Utwórz nowy atom z zawartością
+    local new_atom = karmazyn.create_atom("doc_" .. os.time(), "nano", "dokument", 1.0)
+    new_atom:set_content(table.concat(lines, "\n"))
+    bubble:add_atom(new_atom)
+    print("✓ Zapisano w bąblu: " .. bubble_name)
 end
 
 list_lines()
-print("Komendy: .save, .bubble, .abort, .del N, .ins N tekst, .list")
+print("Komendy: .save, .abort, .del N, .ins N tekst, .list")
 
 while true do
     local input = karmazyn.read_line("> ")
     if not input then break end
 
     if input == ".save" then
-        atom.set_E(table.concat(lines, "\n"))
-        print("✓ Zapisano w atomie (ulotny).")
-        break
-    elseif input == ".bubble" then
-        atom.set_E(table.concat(lines, "\n"))
-        local bid = atom.consolidate()
-        if bid then
-            print("✓ Skonsolidowano do bąbla: " .. tostring(bid))
-        else
-            print("✗ Błąd konsolidacji.")
-        end
+        save_to_bubble()
         break
     elseif input == ".abort" then
         print("Anulowano.")
@@ -58,7 +62,7 @@ while true do
             table.remove(lines, n)
             print("Usunięto linię " .. n)
         else
-            print("Nieprawidłowy numer.")
+            print("❌ Nieprawidłowy numer.")
         end
     elseif input:match("^%.ins (%d+) (.*)$") then
         local n, text = input:match("^%.ins (%d+) (.*)$")
@@ -67,10 +71,10 @@ while true do
             table.insert(lines, n, text)
             print("Wstawiono linię " .. n)
         else
-            print("Nieprawidłowe miejsce.")
+            print("❌ Nieprawidłowe miejsce.")
         end
     else
         table.insert(lines, input)
-        print("Dodano linię " .. #lines)
+        print("→ Dodano linię " .. #lines)
     end
 end
