@@ -325,6 +325,10 @@ class SanctuaryRuntime:
             self._loop_thread.join(timeout=1.0)
         self._loop_thread = None
 
+    def is_alive(self) -> bool:
+        """Zwraca prawdę, jeśli wątek pętli jest aktywny."""
+        return self._loop_thread is not None and self._loop_thread.is_alive()
+
     def start_system_loop(self, interval: float = 0.2):
         """Alias dla kompatybilności z hss_demo.py / sanktuarium."""
         self.start_loop(interval)

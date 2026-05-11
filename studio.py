@@ -850,16 +850,15 @@ class StudioHandler(BaseHTTPRequestHandler):
             self._send_json(api_shell(data.get("cmd","")))
 
         elif path == "/api/shell_karm":
-            # przekieruj przez KarmazynShell.execute()
+            # przekieruj przez process_command
             try:
-                from shell import KarmazynShell
+                from shell import process_command
                 import io as _io
-                sh = KarmazynShell.__new__(KarmazynShell)
-                sh.k = _ko
-                sh.last_label = None
                 old_stdout = sys.stdout
                 sys.stdout = buf = _io.StringIO()
-                sh.execute(data.get("cmd",""))
+                res = process_command(data.get("cmd", ""))
+                if res:
+                    print(res)
                 sys.stdout = old_stdout
                 self._send_json({"ok": True, "output": buf.getvalue()})
             except Exception as e:
