@@ -51,10 +51,11 @@ class LuaExecutor:
 
     def _setup_globals(self):
         g = self.lua.globals()
-        self.lua.execute("karmazyn = { ui = {} }")
+        self.lua.execute("karmazyn = { ui = {}, fs = {} }")
         karm = g.karmazyn
 
         # === API podstawowe ===
+        karm.fs.write = self._lua_fs_write
         karm.create_atom = self._lua_create_atom
         karm.get_temperature = self._lua_get_temperature
         karm.get_state = self._lua_get_state
@@ -143,6 +144,65 @@ class LuaExecutor:
         return atom_table
 
     # ---------- implementacje API ----------
+    def _sanitize_string(self, s):
+        if s is None: return ""
+        return str(s)
+
+    def _consume_energy(self, amount, reason):
+        # Stub, no energy consumption logic exists yet in _lua_fs_write context, but expected by the snippet
+        pass
+
+    def _lua_fs_write(self, bubble_alias: str, file_id: str, S: str, content: str):
+        """
+        Zapis z wbudowanym prawem Snella.
+        Zwraca (success: bool, reason: str, coherence: float)
+        Stare skrypty Lua zrobią: local ok = fs.write(...) - zignorują resztę.
+        Nowe zrobią: local ok, reason, coh = fs.write(...)
+        """
+        if not self.lua: return False, "Brak środowiska Lua", 0.0
+        self._consume_energy(20, "fs.write")
+
+        with self.lock:
+            if not self.alias_resolver or not self.bubble_importer:
+                return False, "Brak sterowników pamięci trwałej", 0.0
+
+            bubble_alias = self._sanitize_string(bubble_alias)
+            file_id = self._sanitize_string(file_id)
+            atom_created = False
+
+            try:
+                target_id = self.alias_resolver(bubble_alias)
+                if not target_id:
+                    return False, f"Nieznany Bąbel '{bubble_alias}'", 0.0
+
+                self.rt.create_atom(file_id, self._sanitize_string(S), self._sanitize_string(content), 100.0)
+                atom_created = True
+
+                # WYWOŁANIE NOWEJ FIZYKI (Etap 3 Konstytucji)
+                # Oczekujemy, że importer zwróci dict z wynikiem routingu.
+                result = self.bubble_importer(target_id, file_id, self.rt)
+
+                # Analiza refrakcji semantycznej
+                if isinstance(result, dict) and result.get("status") == "reflected":
+                    # ARTYKUŁ VII: Dyspersja odbita. Bąbel odrzucił wektor.
+                    reason = result.get("reason", "phase_mismatch")
+                    coherence = result.get("coherence", 0.0)
+                    return False, f"Odbicie: {reason}", coherence
+
+                # Sukces (penetrates / absorbed)
+                return True, "Zapis stabilny", 1.0
+
+            except Exception as e:
+                # Błąd twardy (np. I/O, brak dysku)
+                return False, f"Błąd krytyczny FS: {str(e)}", 0.0
+            finally:
+                # Higiena plazmy - usunięcie bufora transportowego
+                if atom_created:
+                    try:
+                        self.rt.delete_atom(file_id)
+                    except Exception:
+                        pass
+
     def _lua_create_atom(self, id_str, S, E, T):
         with self.lock:
             try:
