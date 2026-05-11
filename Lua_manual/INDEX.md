@@ -27,10 +27,9 @@ Kurs jest podzielony na **12 modułów** (plus opcjonalny Moduł 0 dla osób bez
 
 - Programiści znający dowolny inny język (Python, C, JavaScript, Ruby...)
 - Architekci systemów planujący wprowadzenie języka skryptowego do swojego produktu
-- Operatorzy KarmazynOS / HSS, którzy będą pisać programy i wykorzystywać aktywnie Φ-space
-
-**NIE**jest to kurs dla całkowicie początkujących w programowaniu. Zakładamy, że wiesz co to zmienna, pętla, funkcja, rekursja, stos, wskaźnik.
-
+- Operatorzy KarmazynOS / HSS, którzy będą pisać programy i wykorzystywać aktywnie Φ-space.
+  **Kurs** można zacząć od Modułu M00_dla_początkujących co powinno pomóc zrozumieć podstawy języka **Lua**.
+  **NIE**jest to jednak kurs dla całkowicie początkujących w programowaniu. Zakładam, że wiesz co to zmienna, pętla, funkcja, rekursja, stos, wskaźnik.
 ---
 
 ## Wymagania techniczne
@@ -133,7 +132,7 @@ Dla KarmazynOS jest to strzał w 10, (co prawda obecnie system napisany jest w P
 Konkurencja:
 - **Python** — za duży (~5 MB), za wolny do embeddingu, GIL, brak naturalnego sandboxa, osadzenie go w warstwie to tytaniczna niewdzięczna praca (ale jak ktoś się pokusi, zapraszam).
 - **JavaScript (V8/QuickJS)** — V8 to olbrzym; QuickJS jest mały i fajny ale to młody ekosystem.
-- **WASM** — uniwersalny, jednak wymaga łańcucha narzędzi po stronie autora skryptu; zbyt ciężki kaliber do sytuacji, w której „technokapłan rzeźbi proste reguły”.
+- **WASM** — uniwersalny, jednak wymaga łańcucha narzędzi po stronie autora skryptu; zbyt ciężki kaliber do sytuacji, w której „techkapłan rzeźbi proste reguły”.
 - **Rhai, Gluon, Wren** — niszowe, mały ekosystem, nikt ich prawie nie zna.
 
 Lua wygrywa kompromisem: tani interpreter, łatwa składnia, zerowe zależności, sandbox za darmo, 30+ lat dojrzałości.
