@@ -346,6 +346,7 @@ class LuaExecutor:
                 return f"[Lua Error] {e}"
 
     def run_file(self, filepath: str, args: list = None) -> Any:
+        """Wczytuje plik i wykonuje go jako kod Lua."""
         try:
             with open(filepath, 'r', encoding='utf-8') as f:
                 content = f.read()
