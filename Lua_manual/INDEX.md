@@ -120,7 +120,7 @@ Po rozwiązaniu zadania **i porównaniu** z rozwiązaniem z kursu, zachowaj plik
 
 ---
 
-##Dlaczego Lua
+## Dlaczego Lua
 
 Lua jest **językiem rozszerzania**, nie aplikacyjnym. To znaczy: nie pisze się w Lua całych systemów. System pisze się w C/C++/Rust, a Lua wstawia się jako warstwę:
 - konfiguracji (zamiast YAML/TOML — pełen Turing-complete config)
