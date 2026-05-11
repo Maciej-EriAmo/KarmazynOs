@@ -5,7 +5,15 @@ Zapewnia bezpieczne środowisko (piaskownicę) do wykonywania skryptów Lua
 operujących bezpośrednio na atomach i pętli termodynamicznej.
 Skrypty są ładowane i wykonywane natywnie z wnętrza Bąbli.
 """
+import sys
 
+def lua_read_line(prompt=""):
+    sys.stdout.write(prompt)
+    sys.stdout.flush()
+    line = sys.stdin.readline()
+    return line.rstrip('\n')
+
+g.karmazyn.read_line = lua_read_line
 import threading
 from typing import Optional, Any
 
