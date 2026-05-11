@@ -1,73 +1,76 @@
-local id = karmazyn.read_line("nano - ID Atomu: ")
-if id == "" then return end
+-- nano.lua – edytor atomów z opcją konsolidacji do bąbla
+-- Użycie: nano [nazwa_atomu]
+-- Jeśli atom nie istnieje, zostanie utworzony.
+-- Komendy: .save (zapis do atomu), .bubble (konsoliduj do bąbla), .abort, .del N, .ins N tekst, .list
 
-local atom = karmazyn.get_atom(id)
+local args = {...}
+local atom_name = args[1] or "notatka_" .. os.time()
+
+local atom = karmazyn.get_atom(atom_name)
 if not atom then
-    print("✗ Atom " .. id .. " nie istnieje.")
-    return
+    print("Tworzę nowy atom: " .. atom_name)
+    atom = karmazyn.create_atom(atom_name, "Edycja", "notatka", 0.9)
 end
 
--- Wczytaj istniejącą treść
+-- Pobierz treść (zakładam, że jest w polu S – sygnatura semantyczna)
+local content = atom.S or ""
 local lines = {}
-for line in string.gmatch(atom.E, "[^\r\n]+") do
+for line in string.gmatch(content, "[^\r\n]+") do
     table.insert(lines, line)
 end
 
-print("Edycja Emanacji (E) dla " .. atom.id)
-print("Komendy: .save (Φ), .soul (Bąbel - trwały), .abort, .del <n>, .ins <n> <tekst>, .list")
-print("Komendy: .save, .abort, .del <n>, .ins <n> <tekst>, .list")
-print("Wpisanie tekstu dodaje nową linię na końcu.")
-
 local function list_lines()
-    local display = {}
+    print("\n===== " .. atom_name .. " =====")
     for i, line in ipairs(lines) do
-        table.insert(display, string.format("%02d | %s", i, line))
+        print(string.format("%02d | %s", i, line))
     end
-    print(karmazyn.ui.draw_frame("BUFOR: " .. atom.id, display, "phi_signal"))
+    print("==================")
 end
 
 list_lines()
+print("Komendy: .save, .bubble, .abort, .del N, .ins N tekst, .list")
 
 while true do
     local input = karmazyn.read_line("> ")
+    if not input then break end
 
     if input == ".save" then
         atom.set_E(table.concat(lines, "\n"))
-        print("✓ Zapisano w pamięci ulotnej Φ.")
+        print("✓ Zapisano w atomie (ulotny).")
         break
-    elseif input == ".soul" then
+    elseif input == ".bubble" then
         atom.set_E(table.concat(lines, "\n"))
         local bid = atom.consolidate()
         if bid then
-            print("✓ Utrwalono w Bąblu: " .. tostring(bid))
+            print("✓ Skonsolidowano do bąbla: " .. tostring(bid))
         else
             print("✗ Błąd konsolidacji.")
         end
-        print("✓ Zapisano.")
         break
     elseif input == ".abort" then
         print("Anulowano.")
         break
     elseif input == ".list" then
         list_lines()
-    elseif string.match(input, "^.del %d+") then
-        local n = tonumber(string.match(input, "%d+"))
-        if lines[n] then
+    elseif input:match("^%.del (%d+)$") then
+        local n = tonumber(input:match("%d+"))
+        if n and lines[n] then
             table.remove(lines, n)
-            print("Line " .. n .. " deleted.")
+            print("Usunięto linię " .. n)
         else
-            print("Invalid line number.")
+            print("Nieprawidłowy numer.")
         end
-    elseif string.match(input, "^.ins %d+") then
-        local n, text = string.match(input, "^.ins (%d+) (.*)")
+    elseif input:match("^%.ins (%d+) (.*)$") then
+        local n, text = input:match("^%.ins (%d+) (.*)$")
         n = tonumber(n)
-        if n and n >= 1 and n <= #lines + 1 then
-            table.insert(lines, n, text or "")
-            print("Line inserted.")
+        if n and n >= 1 and n <= #lines+1 then
+            table.insert(lines, n, text)
+            print("Wstawiono linię " .. n)
         else
-            print("Invalid insertion point.")
+            print("Nieprawidłowe miejsce.")
         end
     else
         table.insert(lines, input)
+        print("Dodano linię " .. #lines)
     end
 end

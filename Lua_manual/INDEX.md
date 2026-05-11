@@ -14,7 +14,7 @@ Kurs jest podzielony na **12 modułów** (plus opcjonalny Moduł 0 dla osób bez
 
 1. **Cel** — co umiesz po lekcji
 2. **Materiał** — pojęcia i przykłady
-3. **Pułapki** — rzeczy, które *boli* gdy się przeoczy
+3. **Pułapki** — rzeczy, które *bolą* gdy się przeoczy
 4. **Zadania** — 3-5 problemów do rozwiązania samodzielnie
 5. **Rozwiązania** — pełen kod z wyjaśnieniem (dopiero po próbie!)
 6. **Sprawdź się** — lista pytań kontrolnych
@@ -27,10 +27,9 @@ Kurs jest podzielony na **12 modułów** (plus opcjonalny Moduł 0 dla osób bez
 
 - Programiści znający dowolny inny język (Python, C, JavaScript, Ruby...)
 - Architekci systemów planujący wprowadzenie języka skryptowego do swojego produktu
-- Operatorzy KarmazynOS / HSS, którzy będą pisać polityki Φ-space
-
-**NIE** jest to kurs dla całkowicie początkujących w programowaniu. Zakładamy, że wiesz co to zmienna, pętla, funkcja, rekursja, stos, wskaźnik.
-
+- Operatorzy KarmazynOS / HSS, którzy będą pisać programy i wykorzystywać aktywnie Φ-space.
+  **Kurs** można zacząć od Modułu M00_dla_początkujących co powinno pomóc zrozumieć podstawy języka **Lua**.
+  **NIE**jest to jednak kurs dla całkowicie początkujących w programowaniu. Zakładam, że wiesz co to zmienna, pętla, funkcja, rekursja, stos, wskaźnik.
 ---
 
 ## Wymagania techniczne
@@ -39,8 +38,9 @@ Kurs jest podzielony na **12 modułów** (plus opcjonalny Moduł 0 dla osób bez
 - Edytor z podświetleniem składni (VS Code + rozszerzenie Lua, vim z syntax/lua, Neovim)
 - Terminal
 - Od Modułu 8: kompilator C (`gcc` lub `clang`), `make`, `liblua5.4-dev`
-
-Dla telefonu (Termux na Galaxy A54): wszystko działa, łącznie z kompilacją C — `pkg install lua54 lua54-dev clang make`.
+Jednym z założeń KarmazynOs jest wszędobylstwo i optymalizacja wynikająca z tego, że pierwszym sprzętem
+na którym powstawał system był Samsung A54 z Termuxem.
+Dlatego, wszystko działa na telefonach (takich ze średniej półki), łącznie z kompilacją C — `pkg install lua54 lua54-dev clang make`.
 
 ---
 
@@ -119,21 +119,21 @@ Po rozwiązaniu zadania **i porównaniu** z rozwiązaniem z kursu, zachowaj plik
 
 ---
 
-## Filozofia: dlaczego Lua
+## Dlaczego Lua
 
-Lua jest **językiem rozszerzania**, nie aplikacyjnym. To znaczy: nie pisze się w Lua całych systemów. Pisze się w C/C++/Rust system, a Lua wstawia się jako warstwę:
+Lua jest **językiem rozszerzania**, nie aplikacyjnym. To znaczy: nie pisze się w Lua całych systemów. System pisze się w C/C++/Rust, a Lua wstawia się jako warstwę:
 - konfiguracji (zamiast YAML/TOML — pełen Turing-complete config)
-- skryptów użytkownika (gracze, administratorzy, "techpriesty")
+- skryptów użytkownika (gracze, administratorzy, "Techkapłani")
 - polityk i reguł biznesowych
-- rapid prototyping fragmentów logiki
+- szybkiego prototypowania fragmentów logiki
 
-Dla KarmazynOS to dokładnie pasuje. HSS jako rdzeń pisany w C i Rust ("Sancta Ferrum"), ale polityki Φ-space, hooki sesji, pipeline multi-agent — wszystko to **może być Lua**, kompilowane jednorazowo i wykonywane w sandboxie z ograniczeniami CPU/RAM per session.
+Dla KarmazynOS jest to strzał w 10, (co prawda obecnie system napisany jest w Python ale, po osiągnięciu wersji stabilnej zamierzam przenieść go na C#/Rust). HSS jako rdzeń pisany w C i Rust ("Sancta Ferrum"), ale reguły Φ-space, hooki sesji, pipeline multi-agent — wszystko to **może być Lua**, kompilowane jednorazowo i wykonywane w sandboxie z ograniczeniami CPU/RAM per session.
 
 Konkurencja:
-- **Python** — za duży (~5 MB), za wolny do embeddingu, GIL, brak naturalnego sandboxa.
-- **JavaScript (V8/QuickJS)** — V8 to giant; QuickJS jest mały i fajny ale młodszy ekosystem.
-- **WASM** — uniwersalny ale potrzebujesz toolchaina po stronie autora skryptu; dla "techpriest pisze polityk" za ciężkie.
-- **Rhai, Gluon, Wren** — niszowe, mały ekosystem, nikt ich nie zna.
+- **Python** — za duży (~5 MB), za wolny do embeddingu, GIL, brak naturalnego sandboxa, osadzenie go w warstwie to tytaniczna niewdzięczna praca (ale jak ktoś się pokusi, zapraszam).
+- **JavaScript (V8/QuickJS)** — V8 to olbrzym; QuickJS jest mały i fajny ale to młody ekosystem.
+- **WASM** — uniwersalny, jednak wymaga łańcucha narzędzi po stronie autora skryptu; zbyt ciężki kaliber do sytuacji, w której „techkapłan rzeźbi proste reguły”.
+- **Rhai, Gluon, Wren** — niszowe, mały ekosystem, nikt ich prawie nie zna.
 
 Lua wygrywa kompromisem: tani interpreter, łatwa składnia, zerowe zależności, sandbox za darmo, 30+ lat dojrzałości.
 
@@ -153,16 +153,20 @@ Lua wygrywa kompromisem: tani interpreter, łatwa składnia, zerowe zależności
 - [x] Moduł 9: Userdata i bindings
 - [x] Moduł 10: Sandboxing
 - [x] Moduł 11: DSL dla KarmazynOS
-- [ ] Moduł 12: Capstone
+- [x] Moduł 12: Capstone
 
 ---
 
 ## Licencja i autorstwo
 
-Kurs powstał jako część dokumentacji **KarmazynOS** w ramach materiałów Schola Mechanica (HollyScriptSanctum extras). Możesz go modyfikować, przepisywać, dostosowywać do własnych potrzeb.
+Kurs powstał jako część dokumentacji **KarmazynOS** w ramach materiałów **Schola Mechanica** (HollyScriptSanctum extras). Możesz go modyfikować, przepisywać, dostosowywać do własnych potrzeb.
 
 Wszystkie przykłady kodu są w domenie publicznej.
 
 ---
 
 *Następny krok: otwórz `M01_fundamenty.md` i zacznij od Lekcji 1.1.*
+
+### Dodatkowe
+
+- [x] Moduł Bonus: KarmazynOS Warp Engine Demo (multi-agent swarm + termodynamika)
