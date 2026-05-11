@@ -33,6 +33,14 @@ Dla wygody — **wszystko w jednym pliku** (`karmazyn_demo.lua`). W produkcji ro
 -- karmazyn_demo.lua
 -- KarmazynOS Warp Engine Demo — termodynamiczna mechanika + multi-agent swarm
 -- Uruchom: lua5.4 karmazyn_demo.lua
+-- Sprawdzamy, czy działamy na Windowsie (rozdzielacz ścieżek to '\')
+if package.config:sub(1,1) == '\\' then
+    -- Wymuszamy stronę kodową 65001 (UTF-8)
+    -- '> nul' ukrywa niepotrzebny komunikat z konsoli
+    os.execute("chcp 65001 > nul")
+end
+
+print("Zażółć gęślą jaźń - test polskich znaków")
 
 math.randomseed(os.time())
 
