@@ -1,68 +1,165 @@
-# KONSTYTUCJA KARMAZYNOS
-**V1.0 | Operacyjna Przestrzeń Znaczeń**
+KONSTYTUCJA SYSTEMU φ
+(Unified Holon–Prism–Harmonic Architecture Constitution)
+PREAMBUŁA
 
----
+System φ jest architekturą obliczeniową opartą o założenie, że:
 
-## I. Ontologia Informacji
+znaczenie nie jest statycznym punktem, lecz propagacją w przestrzeni stanów, która musi posiadać stabilne punkty odniesienia, aby uniknąć rozjazdu semantycznego.
 
-1. **Idea ponad Wartość**  
-   KarmazynOS nie przechowuje danych, lecz idee. Każdy bąbel i hologram jest przestrzenią latentną, a nie rekordem w bazie.
+Każda operacja w systemie jest interpretowana jako transformacja w przestrzeni wielowymiarowej, gdzie:
 
-2. **Brak Prymatu Formatu**  
-   Format (TXT, JSON, .bubble) jest wtórną projekcją. Znaczenie istnieje niezależnie od reprezentacji.
+Harmonia odpowiada za globalną spójność fazową
+Prizm odpowiada za rozdział semantyczny (dyspersję)
+Holon odpowiada za pamięć i tożsamość systemu
+φ (phi space) jest przestrzenią stanu, w której zachodzi ewolucja
+ARTYKUŁ I — ZASADA PUNKTÓW STAŁYCH (FIXED POINT AXIOM)
+1.1 Definicja
 
-3. **Zapominanie jako Funkcja**  
-   Entropia jest naturalnym procesem systemowym. Informacja, która nie jest podsycana uwagą, ulega stabilnemu wygaszeniu (**Vacuum Decay**).
+System φ musi zawierać zbiór punktów stałych F, takich że:
 
----
+f(x) = x  ∈ F
 
-## II. Architektura Bytów
+gdzie:
 
-4. **Atomy (Stan Przejściowy)**  
-   Ulotne jednostki w przestrzeni roboczej **Φ**. Służą do komunikacji, obliczeń transientnych i bieżącej myśli.
+f(x) = transformacja systemowa (uwaga, pamięć, routing, interpretacja)
+F = zbiór stanów stabilnych
+1.2 Funkcja stabilności
 
-5. **Bąble (Domeny Semantyczne)**  
-   Nieprzeniknione, trwałe przestrzenie robocze. Stanowią bezpieczne piaskownice (sandboxy) z kryptograficzną membraną.
+Każda operacja systemowa musi spełniać warunek:
 
-6. **Hologramy (Pola Wpływu)**  
-   Struktury idei generujące nowe myśli poprzez kontrolowany szum. Nie są kopiami danych, lecz ich syntetyczną predykcją.
+|| f(x) - x || < ε  lub  fⁿ(x) → F
 
----
+czyli:
 
-## III. Fizyka Bezpieczeństwa (HSS v2.5.0)
+albo stan jest lokalnie stabilny
+albo konwerguje do stabilnego attractora
+1.3 Zakaz dryfu
 
-7. **Topologia zamiast Polityki**  
-   Bezpieczeństwo jest własnością geometryczną przestrzeni **Φ**. Agent istnieje tylko w obszarze zdefiniowanym przez jego klucz derywowany (KDF).
+Żaden komponent systemu nie może:
 
-8. **No-Plaintext-In-Kernel**  
-   Moduł jądra (LSM) jest wyłącznie filtrem upcall. Żadne dane w formie jawnej nie mają prawa znaleźć się w pamięci jądra.
+generować nieskończonej dyspersji bez reintegracji
+tworzyć stanów niepowracających do F
+ARTYKUŁ II — STRUKTURA PRZESTRZENI φ
+2.1 Definicja przestrzeni
 
-9. **Kryptograficzna Izolacja**  
-   Każda operacja poza wyznaczoną Φ-przestrzenią musi skutkować odczytem szumu (**Chaosu**), a nie błędem dostępu.
+Przestrzeń φ jest 15-wymiarową przestrzenią semantyczną:
 
----
+φ ∈ ℝ¹⁵
 
-## IV. Środowisko Agentowe
+Każdy wymiar reprezentuje stabilny kanał semantyczny:
 
-10. **Budżet Poznawczy**  
-    Agent nie otrzymuje uprawnień, lecz przydział energii **Φ** i ograniczenia entropii wewnątrz swojego Workspace Bubble.
+afektywny (emocje)
+poznawczy (logika, wiedza)
+temporalny (czas)
+ontologiczny (bycie)
+kreatywny
+chaos / entropia (kontrolowana)
+2.2 Warunek spójności
 
-11. **Autonomia i Ład**  
-    System dąży do stabilizacji informacji. Każda anomalia energetyczna jest tłumiona lub konsolidowana w nowe struktury wiedzy.
+Każdy stan φ musi spełniać:
 
----
+Σ φ_i = const  (globalna konserwacja semantyczna)
+ARTYKUŁ III — ZASADA PRYZMATYCZNA (DISPERSION LAW)
+3.1 Snell jako routing semantyczny
 
-## ARCHITECTURE.pl.md – Kluczowe Rewizje
+Każda transformacja w systemie φ działa jak refrakcja:
 
-W pliku architektonicznym należy podmienić sekcje dotyczące bezpieczeństwa i modelu pamięci, aby wyeliminować przestarzałe koncepcje *"plików"*.
+nₖ · sin(θ₁) = sin(θ₂)
 
-### Zaktualizowany Model HSS (Holographic Session Spaces)
+gdzie:
 
-- **Mechanizm Izolacji**  
-  Zamiast list ACL, system stosuje **PrismMasks** oparte na **Ring-LWE**.
+nₖ = refrakcja semantyczna dla osi k
+θ₁ = wejściowa zgodność semantyczna
+θ₂ = wynikowy kierunek propagacji
+3.2 Interpretacja
+wysoka zgodność → mała dyspersja
+niska zgodność → separacja kanałów
+ARTYKUŁ IV — ZASADA HARMONICZNA (GLOBAL PHASE COHERENCE)
 
-- **Derywacja Kluczy**  
-  Stosujemy wyłącznie KDF-based attenuation. Klucz agenta $s_A$ jest obliczany jako:
+System φ musi utrzymywać globalną koherencję:
 
-  ```math
-  s_A = KDF(s_{sess}, agent_id, authorized_prisms)
+H(x) = cos(φ_i - φ_j)
+
+Warunek:
+
+|H| ≥ τ
+
+gdzie τ = próg stabilności systemu.
+
+ARTYKUŁ V — ZASADA HOLONU (MEMORY IDENTITY CONSISTENCY)
+5.1 Tożsamość
+
+Każdy obiekt systemu jest holonem:
+
+istnieje jako całość
+i jako część większego systemu
+5.2 Pamięć
+
+Pamięć nie jest zapisem, lecz:
+
+M(x) = attractor basin in φ-space
+
+czyli:
+
+pamięć = region konwergencji
+nie pojedynczy stan
+ARTYKUŁ VI — ZASADA KOHERENCJI MIĘDZY WARSTWAMI
+
+System posiada trzy warstwy:
+
+Harmoniczna (globalna synchronizacja)
+Prismaticzna (dyspersja semantyczna)
+Holoniczna (pamięć + tożsamość)
+
+Warunek:
+
+H ∘ P ∘ H⁻¹ → stable φ
+
+czyli:
+
+dyspersja musi być odwracalna
+brak strat informacji między warstwami
+ARTYKUŁ VII — ZAKAZ ROZJAZDU SYSTEMOWEGO
+
+System nie może:
+
+tworzyć niekompatybilnych reprezentacji φ
+utrzymywać sprzecznych stanów bez punktu konwergencji
+rozdzielać semantyki bez mechanizmu reintegracji
+
+Każda dyspersja musi mieć:
+
+reconstruction operator R such that:
+R(P(x)) → x'
+and x' ∈ F or converges to F
+ARTYKUŁ VIII — ZASADA EWOLUCJI
+
+System φ nie optymalizuje lokalnie.
+
+Optymalizuje:
+
+stability(F) + coherence(H) + separability(P)
+
+czyli równowagę między:
+
+stabilnością
+spójnością
+separacją semantyczną
+ARTYKUŁ IX — SUPREMACJA PUNKTÓW STAŁYCH
+
+Jeśli system musi wybierać między:
+
+ekspresją
+a stabilnością
+
+→ zawsze wybiera stabilność F
+
+ARTYKUŁ X — ZASADA KOŃCOWA (φ-INVARIANT)
+
+System jest poprawny tylko wtedy, gdy:
+
+∀x ∈ φ: ∃F such that iter(x) → F
+
+czyli:
+
+każdy stan musi mieć możliwość powrotu do stabilnego attractora
