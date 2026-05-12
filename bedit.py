@@ -336,12 +336,13 @@ class KarmazynIntegration:
                     added_ids.append(aid)
         return added_ids
 
-    def import_to_bubble(self, bubble_id: str, atom_id: str, runtime):
+    def import_to_bubble(self, bubble_id: str, atom_id: str, runtime, target_name: Optional[str] = None):
         """Importuje atom z runtime do bąbla, zachowując metadane S i E oraz ID."""
         atom = runtime.get_atom(atom_id)
         if atom:
+            final_id = target_name if target_name else atom.id
             # Zachowujemy ID atomu (istotne dla narzędzi BIN) oraz metadane S i E
-            return self.add_atom_to_bubble(bubble_id, atom.E, S=atom.S, E=atom.E, atom_id=atom.id)
+            return self.add_atom_to_bubble(bubble_id, atom.E, S=atom.S, E=atom.E, atom_id=final_id)
         return None
         """Programowy interfejs do konsolidacji/importu atomu do bąbla."""
         bubble = self.get_bubble(bubble_id)
