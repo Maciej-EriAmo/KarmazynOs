@@ -202,7 +202,7 @@ class LuaExecutor:
                         self.rt.delete_atom(file_id)
                     except Exception:
                         pass
-
+                      
     def _lua_create_atom(self, id_str, S, E, T, decay_rate=0.0):
         with self.lock:
             try:
