@@ -31,7 +31,7 @@ from core.phi_math import PhiPhysics
 # ADAPTER ATOMÓW (ETAP 2)
 # =====================================================================
 class Atom:
-    def __init__(self, id_str, S_raw, E, T):
+    def __init__(self, id_str, S_raw, E, T, decay_rate=0.0):
         self.id = id_str
 
         # WARSTWA ADAPTACYJNA (NIE DESTRUKCYJNA)
@@ -40,6 +40,7 @@ class Atom:
 
         self.E = E
         self.T = T
+        self.decay = decay_rate
 
 # =====================================================================
 # MAPOWANIE STANÓW
@@ -222,6 +223,9 @@ class SanctuaryRuntime:
         self.events.on("atom_stabilized", lambda a: self.audio_engine.mandala_harmony())
         self.events.on("atom_corrupted", lambda a: self.audio_engine.corruption())
 
+        # Hard Save Broadcast
+        self.events.on("vacuum_decay", lambda a: self.events.emit("trigger_hard_save"))
+
         # Semantyczne warstwy (.karm)
         self.phi = PhiSpace(dim=_PHI_DIM)
         self._bubbles: Dict[str, Bubble] = {}
@@ -233,10 +237,10 @@ class SanctuaryRuntime:
     # API v1.1 — pełna kompatybilność z shell.py i grą
     # ================================================================
 
-    def create_atom(self, id: str, S: str, E: str, T: float):
+    def create_atom(self, id: str, S: str, E: str, T: float, decay_rate: float = 0.0):
         if self.matrix.has_atom(id):
             raise ValueError(f"Atom '{id}' już istnieje")
-        atom = self.matrix.create_atom(id, S, E, T)
+        atom = self.matrix.create_atom(id, S, E, T, decay_rate=decay_rate)
         self.phi.register(id, f"{S} {E}")
         self.events.emit("atom_created", atom)
         return atom
@@ -371,14 +375,14 @@ class SanctuaryRuntime:
     # API v1.3 — SEMANTYCZNE (.karm)
     # ================================================================
 
-    def write(self, name: str, S: str, E: str, T: float) -> str:
+    def write(self, name: str, S: str, E: str, T: float, decay_rate: float = 0.0) -> str:
         label = name
         suffix = 0
         while self.matrix.has_atom(label):
             suffix += 1
             label = f"{name}_{suffix}"
         T_scaled = max(1.0, min(100.0, float(T) * 100.0))
-        atom = self.matrix.create_atom(label, S, E, T_scaled)
+        atom = self.matrix.create_atom(label, S, E, T_scaled, decay_rate=decay_rate)
         self.phi.register(label, f"{S} {E}")
         self._name_to_id[name] = label
         self.events.emit("atom_created", atom)

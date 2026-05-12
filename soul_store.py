@@ -67,7 +67,8 @@ def save_soul(karmazyn_os, path: str = "./karmazyn_data") -> bool:
     ko = karmazyn_os
 
     try:
-        with open(soul_path, "w", encoding="utf-8") as f:
+        soul_path_tmp = soul_path + ".plasma"
+        with open(soul_path_tmp, "w", encoding="utf-8") as f:
 
             # ── meta (pierwszy rekord) ────────────────────────────────────────
             _write_record(f, {
@@ -130,6 +131,10 @@ def save_soul(karmazyn_os, path: str = "./karmazyn_data") -> bool:
                 "type": "phi_rc",
                 "data": ko.phi._rc,
             })
+            f.flush()
+            os.fsync(f.fileno())
+
+        os.replace(soul_path_tmp, soul_path)
 
         # ── wektory numpy (osobny plik binarny) ───────────────────────────────
         npz_data = {}
