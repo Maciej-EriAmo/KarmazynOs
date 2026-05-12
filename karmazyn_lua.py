@@ -152,7 +152,7 @@ class LuaExecutor:
         # Stub, no energy consumption logic exists yet in _lua_fs_write context, but expected by the snippet
         pass
 
-    def _lua_fs_write(self, bubble_alias: str, file_id: str, S: str, content: str):
+    def _lua_fs_write(self, bubble_alias: str, file_id: str, S: str, content: str, decay_rate: float = 0.0):
         """
         Zapis z wbudowanym prawem Snella.
         Zwraca (success: bool, reason: str, coherence: float)
@@ -175,7 +175,7 @@ class LuaExecutor:
                 if not target_id:
                     return False, f"Nieznany Bąbel '{bubble_alias}'", 0.0
 
-                self.rt.create_atom(file_id, self._sanitize_string(S), self._sanitize_string(content), 100.0)
+                self.rt.create_atom(file_id, self._sanitize_string(S), self._sanitize_string(content), 100.0, decay_rate=decay_rate)
                 atom_created = True
 
                 # WYWOŁANIE NOWEJ FIZYKI (Etap 3 Konstytucji)
@@ -202,11 +202,11 @@ class LuaExecutor:
                         self.rt.delete_atom(file_id)
                     except Exception:
                         pass
-
-    def _lua_create_atom(self, id_str, S, E, T):
+                      
+    def _lua_create_atom(self, id_str, S, E, T, decay_rate=0.0):
         with self.lock:
             try:
-                atom = self.rt.create_atom(id_str, S, E, T * 100.0)
+                atom = self.rt.create_atom(id_str, S, E, T * 100.0, decay_rate=decay_rate)
                 return self._wrap_atom(atom)
             except Exception as e:
                 return f"Błąd tworzenia atomu: {e}"

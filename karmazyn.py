@@ -493,8 +493,8 @@ class KarmazynOS:
     def _get_blinding(self, K: bytes, tag: str, length: int) -> np.ndarray:
         """Generuje deterministyczne maskowanie addytywne z K i tagu."""
         seed = hashlib.sha256(K + tag.encode()).digest()
-        rng = np.random.RandomState(int.from_bytes(seed[:4], 'big'))
-        return rng.randn(length).astype(np.float32)
+        rng = np.random.default_rng(int.from_bytes(seed[:4], 'big'))
+        return rng.standard_normal(length).astype(np.float32)
 
     def crimson_handshake(self, peer_blinded_bytes: bytes, is_initiator: bool,
                           K: bytes) -> Tuple[bool, Optional[bytes]]:

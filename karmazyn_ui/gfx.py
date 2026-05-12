@@ -39,3 +39,36 @@ def status_dot(state: str) -> str:
         "ghost": ansi_fg("phi_ghost") + "●" + RESET,
     }
     return mapping.get(state, " ")
+
+def table(headers: list[str], rows: list[list[str]]) -> str:
+    """Proste renderowanie tabeli tekstowej."""
+    # Usuwamy kody ANSI na potrzeby obliczania szerokości kolumn
+    import re
+    ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+
+    col_widths = []
+    for i, h in enumerate(headers):
+        max_len = len(ansi_escape.sub('', h))
+        for r in rows:
+            if i < len(r):
+                max_len = max(max_len, len(ansi_escape.sub('', str(r[i]))))
+        col_widths.append(max_len)
+
+    res = []
+
+    # Nagłówki
+    header_row = " | ".join(h + " " * (col_widths[i] - len(ansi_escape.sub('', h))) for i, h in enumerate(headers))
+    res.append(f"{ansi_fg('phi_bright')}{BOLD}{header_row}{RESET}")
+    res.append(f"{ansi_fg('phi_core')}{'-' * len(ansi_escape.sub('', header_row))}{RESET}")
+
+    # Wiersze
+    for row in rows:
+        formatted_row = []
+        for i, col in enumerate(row):
+            val = str(col)
+            visible_len = len(ansi_escape.sub('', val))
+            padding = " " * (col_widths[i] - visible_len) if i < len(col_widths) else ""
+            formatted_row.append(val + padding)
+        res.append(" | ".join(formatted_row))
+
+    return "\n".join(res)
