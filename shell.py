@@ -612,30 +612,37 @@ def main():
         if not line:
             continue
 
-        try:
-            parts = shlex.split(line)
-        except ValueError as e:
-            print(f"Błąd składni: {e}")
-            print_hud()
-            continue
+        result = process_command(line)
+        if result:
+            print(result)
+        print_hud()
 
-        if not parts:
-            continue
 
-        # Rozpoznanie komendy (jedno- lub dwuczłonowa)
-        verb1 = parts[0].upper()
-        if len(parts) > 1:
-            verb2 = f"{verb1} {parts[1].upper()}"
-            cmd = registry.get(verb2)
-            if cmd:
-                args = parts[2:]
-            else:
-                cmd = registry.get(verb1)
-                args = parts[1:]
+def process_command(line: str) -> str:
+    try:
+        parts = shlex.split(line)
+    except ValueError as e:
+        return f"Błąd składni: {e}"
+
+    if not parts:
+        return ""
+
+    # Rozpoznanie komendy (jedno- lub dwuczłonowa)
+    verb1 = parts[0].upper()
+    if len(parts) > 1:
+        verb2 = f"{verb1} {parts[1].upper()}"
+        cmd = registry.get(verb2)
+        if cmd:
+            args = parts[2:]
         else:
             cmd = registry.get(verb1)
             args = parts[1:]
+    else:
+        cmd = registry.get(verb1)
+        args = parts[1:]
 
+    if cmd is None:
+        return f"{theme.ansi_fg('phi_bright')}[BŁĄD]{theme.RESET} Nieznana komenda: {verb1}"
         if cmd is None:
             # Próba wywołania skryptu Lua z lua_bin/
             lua_script = verb1.lower()
@@ -656,21 +663,18 @@ def main():
             print_hud()
             continue
 
-        # Walidacja argumentów
-        ok, err_msg = cmd.validate_args(args)
-        if not ok:
-            print(f"{theme.ansi_fg('phi_bright')}[BŁĄD]{theme.RESET} {err_msg}")
-            print_hud()
-            continue
+    # Walidacja argumentów
+    ok, err_msg = cmd.validate_args(args)
+    if not ok:
+        return f"{theme.ansi_fg('phi_bright')}[BŁĄD]{theme.RESET} {err_msg}"
 
-        try:
-            result = cmd.handler(args)
-        except Exception as e:
-            result = f"{theme.ansi_fg('phi_bright')}[BŁĄD]{theme.RESET} {e}"
+    try:
+        result = cmd.handler(args)
+    except Exception as e:
+        result = f"{theme.ansi_fg('phi_bright')}[BŁĄD]{theme.RESET} {e}"
 
-        if result:
-            print(result)
-        print_hud()
+    return result if result else ""
+
 
 if __name__ == "__main__":
     main()
