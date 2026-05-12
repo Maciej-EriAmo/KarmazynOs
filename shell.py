@@ -15,6 +15,7 @@ from typing import Optional
 from runtime import SanctuaryRuntime, SystemState
 from karmazyn_fs import KarmazynFS
 from karmazyn_ui import theme, gfx
+from karmazyn_ui.editor import EmanationEditor
 
 # Bąble
 from bedit import KarmazynIntegration as BubbleRuntime
@@ -341,6 +342,94 @@ def cmd_exit(args):
     BUBBLES.save_all()
     sys.exit(0)
 
+def cmd_emanation_edit(args, current_bubble, runtime, resolver_func, bubble_getter, bubble_importer):
+    if len(args) < 2:
+        print("Błąd: Podaj alias Bąbla oraz ID Atomu (np. EDIT core_bubble agent_1).")
+        return
+
+    bubble_alias = args[0]
+    atom_id = args[1]
+
+    target_bubble_id = resolver_func(bubble_alias)
+    if not target_bubble_id:
+        print(f"Błąd: Nieznany bąbel '{bubble_alias}'.")
+        return
+
+    # Pobieranie istniejącej emanacji z Bąbla
+    existing_content = ""
+    bubble_atoms = bubble_getter(target_bubble_id)
+    if bubble_atoms:
+        for a in bubble_atoms:
+            a_id = a.get('id') if isinstance(a, dict) else getattr(a, 'id', None)
+            if str(a_id) == atom_id:
+                existing_content = a.get('E') if isinstance(a, dict) else getattr(a, 'E', "")
+                break
+
+    editor = EmanationEditor(target_name=f"{bubble_alias}::{atom_id}", initial_content=existing_content)
+
+    while True:
+        new_content = editor.run()
+
+        if new_content is None:
+            print("Emanacja rozproszona świadomie. Brak zmian.")
+            break
+
+        if not new_content.strip():
+            print("\n BŁĄD: Pusta Emanacja. Stan ulegałby kolapsowi.")
+            print(" Wciśnij Enter, aby powrócić do edytora...")
+            input()
+            editor = EmanationEditor(
+                target_name=f"{bubble_alias}::{atom_id} [PUSTA EMANACJA]",
+                initial_content=new_content
+            )
+            continue
+
+        buffer_id = f"__edit_buffer_{atom_id}_{int(time.time())}"
+
+        try:
+            runtime.create_atom(buffer_id, "LUA_SCRIPT", new_content, 100.0)
+
+            # Kluczowe: przekazujemy argument target_name do importera
+            result = bubble_importer(target_bubble_id, buffer_id, runtime, target_name=atom_id)
+
+            if isinstance(result, dict) and result.get("status") == "reflected":
+                coh = result.get("coherence", 0.0)
+                reason = result.get("reason", "phase_mismatch")
+                print(f"\n ODBICIE: Bąbel odrzucił wektor (Koherencja: {coh:.2f}). Powód: {reason}")
+
+                ans = input(" Czy chcesz nałożyć operator R (edytować dalej)? [t/n]: ").strip().lower()
+                if ans != 't':
+                    break
+
+                editor = EmanationEditor(
+                    target_name=f"{bubble_alias}::{atom_id} [POPRAWKA DYSONANSU]",
+                    initial_content=new_content
+                )
+            else:
+                print(f"\n Stabilizacja Emanacji do '{bubble_alias}::{atom_id}' zakończona sukcesem.")
+                break
+
+        except Exception as e:
+            print(f"\n Błąd krytyczny podczas konsolidacji: {e}")
+            ans = input(" Emanacja wciąż żyje w buforze. Próbować ponownej edycji? [t/n]: ").strip().lower()
+            if ans != 't':
+                break
+
+            editor = EmanationEditor(
+                target_name=f"{bubble_alias}::{atom_id} [BŁĄD ZAPISU]",
+                initial_content=new_content
+            )
+
+        finally:
+            try:
+                runtime.delete_atom(buffer_id)
+            except Exception:
+                pass
+
+def cmd_emanation_edit_wrapper(args):
+    return cmd_emanation_edit(args, BUBBLE_CTX.current_bubble_id, RUNTIME, FS.resolve_alias, BUBBLES.get_active_atoms, BUBBLES.import_to_bubble)
+
+
 # ----------------------------------------------------------------------
 # REJESTRACJA KOMEND (Command Engine)
 # ----------------------------------------------------------------------
@@ -382,7 +471,8 @@ reg("DOTKNIJ PUSTKI", cmd_dotknij_pustki, "Obniża temperaturę atomu", category
 reg("OBSERWUJ", cmd_obserwuj, "Uruchamia dynamiczny podgląd atomów (asynchroniczny)", category="system")
 reg("ATOM STATUS", cmd_atom_status, "Wyświetla szczegóły atomu", category="atoms",
     args_schema=[make_arg_schema("id", required=True)])
-reg("EDIT", cmd_edit, "Uruchamia edytor bąbli", category="bubbles")
+reg("BUBBLE_EDIT", cmd_edit, "Uruchamia edytor bąbli", category="bubbles")
+reg("EDIT", cmd_emanation_edit_wrapper, "Uruchamia termodynamiczny edytor liniowy", category="bubbles")
 reg("IMPORT", cmd_import, "Importuje plik lub katalog do bąbla", category="bubbles")
 reg("GALLERY", cmd_gallery, "Pokazuje multimedia w bąblu", category="bubbles")
 reg("EXPORT", cmd_export, "Eksportuje multimedia z bąbla", category="bubbles")
