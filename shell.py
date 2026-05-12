@@ -49,6 +49,8 @@ RUNTIME = SanctuaryRuntime()
 BUBBLES = BubbleRuntime()
 bubble_init(BUBBLES, RUNTIME)
 
+RUNTIME.events.on("trigger_hard_save", lambda: BUBBLES.save_all())
+
 # Wstrzykujemy BUBBLES do FS, aby umożliwić nawigację po bąblach i aliasy
 FS = KarmazynFS(RUNTIME, bubbles_runtime=BUBBLES)
 
@@ -321,18 +323,21 @@ def cmd_help(args):
         lines.append("Użyj HELP <komenda> aby uzyskać szczegóły.")
         lines.append("Użyj HELP <kategoria> aby wyświetlić komendy w danej kategorii.")
         return "\n".join(lines)
-    topic = args[0].upper()
-    cmd = registry.get(topic)
-    if cmd:
-        return cmd.format_help()
-    if topic in registry.get_categories():
-        cmds = registry.list_commands(category=topic)
-        lines = [f"Komendy w kategorii '{topic}':"]
+    topic_lower = args[0].lower()
+    topic_upper = args[0].upper()
+
+    if topic_lower in registry.get_categories():
+        cmds = registry.list_commands(category=topic_lower)
+        lines = [f"Komendy w kategorii '{topic_lower}':"]
         for cname in cmds:
             c = registry.get(cname)
             lines.append(f"  {cname:<20} – {c.help_text[:50]}")
         return "\n".join(lines)
-    return f"Nie znaleziono komendy ani kategorii: {topic}"
+
+    cmd = registry.get(topic_upper)
+    if cmd:
+        return cmd.format_help()
+    return f"Nie znaleziono komendy ani kategorii: {args[0]}"
 
 def cmd_exit(args):
     """Zatrzymuje pętlę, zapisuje stan i kończy pracę powłoki."""

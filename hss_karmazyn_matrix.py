@@ -31,6 +31,7 @@ class Atom:
         T_max   — maksymalna energia (float, domyślnie 100.0)
         state   — HOT / WARM / COLD / TOMB (str)
         decay   — współczynnik zaniku λ (float, domyślnie 0.01)
+        decay_rate — współczynnik wzrostu T z każdym tickiem (float, domyślnie 0.0)
         age     — liczba kroków od stworzenia (int)
         session — numer sesji (int)
 
@@ -41,11 +42,11 @@ class Atom:
 
     __slots__ = (
         "id", "S", "E", "T", "T_max", "state",
-        "decay", "age", "session", "_vec", "splamiony",
+        "decay", "decay_rate", "age", "session", "_vec", "splamiony",
     )
 
     def __init__(self, id: str, S: str, E: str, T: float,
-                 T_max: float = 100.0, decay: float = 0.01,
+                 T_max: float = 100.0, decay: float = 0.01, decay_rate: float = 0.0,
                  session: int = 0, vec: np.ndarray = None):
         self.id        = id
         self.S         = S
@@ -53,6 +54,7 @@ class Atom:
         self.T         = float(T)
         self.T_max     = float(T_max)
         self.decay     = float(decay)
+        self.decay_rate = float(decay_rate)
         self.age       = 0
         self.session   = session
         self.splamiony = False
@@ -150,7 +152,7 @@ class HSSKarmazynMatrix:
         return AtomsWrapper(self)
 
     def create_atom(self, id: str, S: str, E: str,
-                    T: float, decay: float = 0.01,
+                    T: float, decay_rate: float = 0.0,
                     session: int = 0) -> Atom:
         """
         Tworzy nowy atom.
@@ -166,7 +168,7 @@ class HSSKarmazynMatrix:
 
         vec  = self._embed(f"{S} {E}")
         atom = Atom(id=id, S=S, E=E, T=T_norm,
-                    T_max=100.0, decay=decay,
+                    T_max=100.0, decay=0.01, decay_rate=decay_rate,
                     session=session, vec=vec)
         self._atoms[id] = atom
         return atom
@@ -201,10 +203,19 @@ class HSSKarmazynMatrix:
             old_state = atom.state
             atom.age += 1
 
-            # Termodynamiczny zanik: prosty wykładniczy
-            atom.T *= (1.0 - self.lambd * atom.decay)
-            atom.T  = max(0.0, atom.T)
-            atom.state = _classify(atom.T)
+            if atom.decay_rate > 0.0:
+                # Rozpad aktywny - zwiększanie temperatury
+                atom.T += atom.decay_rate
+                atom.T  = max(0.0, atom.T)
+                if atom.T >= 100.0:
+                    atom.state = "TOMB"
+                else:
+                    atom.state = _classify(atom.T)
+            else:
+                # Oryginalne zachowanie: powolny wykładniczy spadek T
+                atom.T *= (1.0 - self.lambd * atom.decay)
+                atom.T  = max(0.0, atom.T)
+                atom.state = _classify(atom.T)
 
             if atom.state == "TOMB":
                 to_remove.append(atom.id)
@@ -233,7 +244,7 @@ class HSSKarmazynMatrix:
         T_norm = init_T * 100.0 if init_T <= 1.0 else float(init_T)
         T_norm = max(1.0, min(100.0, T_norm))
         atom   = Atom(id=label, S=topic, E="", T=T_norm,
-                      T_max=100.0, decay=0.01,
+                      T_max=100.0, decay=0.01, decay_rate=0.0,
                       session=session, vec=vector.copy())
         self._atoms[label] = atom
 
@@ -329,7 +340,7 @@ class HSSKarmazynMatrix:
                 T    = float(T_arr[i])
                 atom = Atom(
                     id=f"atom_{i}", S="", E="", T=T,
-                    T_max=100.0, decay=0.01, vec=vec,
+                    T_max=100.0, decay=0.01, decay_rate=0.0, vec=vec,
                 )
                 self._atoms[atom.id] = atom
 
