@@ -642,26 +642,21 @@ def process_command(line: str) -> str:
         args = parts[1:]
 
     if cmd is None:
-        return f"{theme.ansi_fg('phi_bright')}[BŁĄD]{theme.RESET} Nieznana komenda: {verb1}"
-        if cmd is None:
-            # Próba wywołania skryptu Lua z lua_bin/
-            lua_script = verb1.lower()
-            if not lua_script.endswith(".lua"):
-                lua_script += ".lua"
+        # Próba wywołania skryptu Lua z lua_bin/
+        lua_script = verb1.lower()
+        if not lua_script.endswith(".lua"):
+            lua_script += ".lua"
 
-            lua_path = os.path.join("lua_bin", lua_script)
-            if LUA_AVAILABLE and os.path.isfile(lua_path):
-                try:
-                    # Przekazujemy resztę argumentów do skryptu Lua
-                    result = LUA_EXECUTOR.run_file(lua_path, args=args)
-                    if result: print(result)
-                except Exception as e:
-                    print(f"{theme.ansi_fg('phi_bright')}[BŁĄD LUA]{theme.RESET} {e}")
-            else:
-                print(f"{theme.ansi_fg('phi_bright')}[BŁĄD]{theme.RESET} Nieznana komenda: {verb1}")
-
-            print_hud()
-            continue
+        lua_path = os.path.join("lua_bin", lua_script)
+        if LUA_AVAILABLE and os.path.isfile(lua_path):
+            try:
+                # Przekazujemy resztę argumentów do skryptu Lua
+                result = LUA_EXECUTOR.run_file(lua_path, args=args)
+                return result if result else ""
+            except Exception as e:
+                return f"{theme.ansi_fg('phi_bright')}[BŁĄD LUA]{theme.RESET} {e}"
+        else:
+            return f"{theme.ansi_fg('phi_bright')}[BŁĄD]{theme.RESET} Nieznana komenda: {verb1}"
 
     # Walidacja argumentów
     ok, err_msg = cmd.validate_args(args)

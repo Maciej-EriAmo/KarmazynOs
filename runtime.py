@@ -551,6 +551,11 @@ class SanctuaryRuntime:
         agent = Agent(name, task, prisms)
         self._agents[agent.pid] = agent
         s_agent = hashlib.sha256(f"{name}:{task}:{prisms}".encode()).digest()
+
+        # Tworzymy Tymczasowy Bąbel (Transient Bubble) dla agenta jako jego prywatną przestrzeń roboczą (cache)
+        bubble_label = f"transient_bubble_{agent.pid}"
+        self.write(bubble_label, "BUBBLE", f"Transient Bubble dla agenta {name} ({agent.pid})", 1.0, decay_rate=0.05)
+
         return agent.pid, s_agent
 
     def read_as_agent(self, atom_id: str, pid: int, s_agent: bytes) -> dict:
