@@ -147,6 +147,9 @@ class KarmazynIntegration:
             'atoms': []
         }
         self._local_bubbles[bubble_id] = bubble_data
+        # Save explicitly if we are fully loaded in a kernel context with persistence
+        if self.kernel and (self.bubblefs_available or self.soul_available):
+            self.save_all()
         return bubble_id
 
     def add_atom_to_bubble(self, bubble_id: str, content: str, S: str = "", E: str = "", atom_id: str = None) -> Optional[str]:
@@ -177,6 +180,8 @@ class KarmazynIntegration:
                         'created_at': time.time(),
                         'metadata': {'tags': [], 'links': []}
                     })
+                if self.kernel and (self.bubblefs_available or self.soul_available):
+                    self.save_all()
                 return final_id
             except Exception as e:
                 print(f"⚠️ Błąd dodawania atomu przez kernel: {e}")
@@ -193,6 +198,8 @@ class KarmazynIntegration:
                     'created_at': time.time(),
                     'metadata': {'tags': [], 'links': []}
                 })
+        if self.kernel and (self.bubblefs_available or self.soul_available):
+            self.save_all()
         return atom_id
 
     def get_active_atoms(self, bubble_id: str) -> List[Dict]:
@@ -336,8 +343,8 @@ class KarmazynIntegration:
                     added_ids.append(aid)
         return added_ids
 
-    def import_to_bubble(self, bubble_id: str, atom_id: str, runtime):
-        """Programowy interfejs do konsolidacji/importu atomu do bąbla."""
+    def import_to_bubble(self, bubble_id: str, atom_id: str, runtime, target_name: Optional[str] = None):
+        """Importuje atom z runtime do bąbla, zachowując metadane S i E oraz ID."""
         bubble = self.get_bubble(bubble_id)
         if not bubble:
             # Jeśli bąbel wynikowy nie istnieje, tworzymy go w locie
@@ -345,12 +352,13 @@ class KarmazynIntegration:
 
         atom = runtime.get_atom(atom_id)
         if atom:
+            final_id = target_name if target_name else atom.id
             # Zachowujemy ID atomu (istotne dla narzędzi BIN) oraz metadane S i E
-            self.add_atom_to_bubble(bubble_id, atom.E, S=atom.S, E=atom.E, atom_id=atom.id)
-            self.save_all()
-            return atom.id
-        else:
-            raise ValueError(f"Atom {atom_id} nie istnieje w macierzy bazowej.")
+            res = self.add_atom_to_bubble(bubble_id, atom.E, S=atom.S, E=atom.E, atom_id=final_id)
+            if self.kernel and (self.bubblefs_available or self.soul_available):
+                self.save_all()
+            return res
+        return None
 
     def snapshot_runtime(self, bubble_id: str, atoms: List) -> int:
         """Przenosi wszystkie atomy z listy do bąbla."""

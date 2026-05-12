@@ -15,6 +15,7 @@ from typing import Optional
 from runtime import SanctuaryRuntime, SystemState
 from karmazyn_fs import KarmazynFS
 from karmazyn_ui import theme, gfx
+from karmazyn_ui.editor import EmanationEditor
 
 # Bąble
 from bedit import KarmazynIntegration as BubbleRuntime
@@ -48,6 +49,8 @@ RUNTIME = SanctuaryRuntime()
 BUBBLES = BubbleRuntime()
 bubble_init(BUBBLES, RUNTIME)
 
+RUNTIME.events.on("trigger_hard_save", lambda: BUBBLES.save_all())
+
 # Wstrzykujemy BUBBLES do FS, aby umożliwić nawigację po bąblach i aliasy
 FS = KarmazynFS(RUNTIME, bubbles_runtime=BUBBLES)
 
@@ -62,6 +65,8 @@ if LUA_AVAILABLE:
     )
 else:
     LUA_EXECUTOR = None
+
+RUNTIME.start_loop()
 
 RUNTIME.start_loop()
 
@@ -298,7 +303,13 @@ def cmd_lua(args):
             return f"❌ {result}"
         return f"✅ Wykonano bąbel Lua: {args[1]}"
     filepath = args[0]
-    result = LUA_EXECUTOR.run_file(filepath)
+    if not os.path.isfile(filepath):
+        # Fallback do lua_bin/
+        alt_path = os.path.join("lua_bin", filepath if filepath.endswith(".lua") else filepath + ".lua")
+        if os.path.isfile(alt_path):
+            filepath = alt_path
+
+    result = LUA_EXECUTOR.run_file(filepath, args=args[1:])
     if isinstance(result, str) and result.startswith("Błąd"):
         return f"❌ {result}"
     return f"✅ Wykonano plik Lua: {filepath}"
@@ -312,18 +323,21 @@ def cmd_help(args):
         lines.append("Użyj HELP <komenda> aby uzyskać szczegóły.")
         lines.append("Użyj HELP <kategoria> aby wyświetlić komendy w danej kategorii.")
         return "\n".join(lines)
-    topic = args[0].upper()
-    cmd = registry.get(topic)
-    if cmd:
-        return cmd.format_help()
-    if topic in registry.get_categories():
-        cmds = registry.list_commands(category=topic)
-        lines = [f"Komendy w kategorii '{topic}':"]
+    topic_lower = args[0].lower()
+    topic_upper = args[0].upper()
+
+    if topic_lower in registry.get_categories():
+        cmds = registry.list_commands(category=topic_lower)
+        lines = [f"Komendy w kategorii '{topic_lower}':"]
         for cname in cmds:
             c = registry.get(cname)
             lines.append(f"  {cname:<20} – {c.help_text[:50]}")
         return "\n".join(lines)
-    return f"Nie znaleziono komendy ani kategorii: {topic}"
+
+    cmd = registry.get(topic_upper)
+    if cmd:
+        return cmd.format_help()
+    return f"Nie znaleziono komendy ani kategorii: {args[0]}"
 
 def cmd_exit(args):
     """Zatrzymuje pętlę, zapisuje stan i kończy pracę powłoki."""
@@ -332,6 +346,94 @@ def cmd_exit(args):
     RUNTIME.stop_loop()
     BUBBLES.save_all()
     sys.exit(0)
+
+def cmd_emanation_edit(args, current_bubble, runtime, resolver_func, bubble_getter, bubble_importer):
+    if len(args) < 2:
+        print("Błąd: Podaj alias Bąbla oraz ID Atomu (np. EDIT core_bubble agent_1).")
+        return
+
+    bubble_alias = args[0]
+    atom_id = args[1]
+
+    target_bubble_id = resolver_func(bubble_alias)
+    if not target_bubble_id:
+        print(f"Błąd: Nieznany bąbel '{bubble_alias}'.")
+        return
+
+    # Pobieranie istniejącej emanacji z Bąbla
+    existing_content = ""
+    bubble_atoms = bubble_getter(target_bubble_id)
+    if bubble_atoms:
+        for a in bubble_atoms:
+            a_id = a.get('id') if isinstance(a, dict) else getattr(a, 'id', None)
+            if str(a_id) == atom_id:
+                existing_content = a.get('E') if isinstance(a, dict) else getattr(a, 'E', "")
+                break
+
+    editor = EmanationEditor(target_name=f"{bubble_alias}::{atom_id}", initial_content=existing_content)
+
+    while True:
+        new_content = editor.run()
+
+        if new_content is None:
+            print("Emanacja rozproszona świadomie. Brak zmian.")
+            break
+
+        if not new_content.strip():
+            print("\n BŁĄD: Pusta Emanacja. Stan ulegałby kolapsowi.")
+            print(" Wciśnij Enter, aby powrócić do edytora...")
+            input()
+            editor = EmanationEditor(
+                target_name=f"{bubble_alias}::{atom_id} [PUSTA EMANACJA]",
+                initial_content=new_content
+            )
+            continue
+
+        buffer_id = f"__edit_buffer_{atom_id}_{int(time.time())}"
+
+        try:
+            runtime.create_atom(buffer_id, "LUA_SCRIPT", new_content, 100.0)
+
+            # Kluczowe: przekazujemy argument target_name do importera
+            result = bubble_importer(target_bubble_id, buffer_id, runtime, target_name=atom_id)
+
+            if isinstance(result, dict) and result.get("status") == "reflected":
+                coh = result.get("coherence", 0.0)
+                reason = result.get("reason", "phase_mismatch")
+                print(f"\n ODBICIE: Bąbel odrzucił wektor (Koherencja: {coh:.2f}). Powód: {reason}")
+
+                ans = input(" Czy chcesz nałożyć operator R (edytować dalej)? [t/n]: ").strip().lower()
+                if ans != 't':
+                    break
+
+                editor = EmanationEditor(
+                    target_name=f"{bubble_alias}::{atom_id} [POPRAWKA DYSONANSU]",
+                    initial_content=new_content
+                )
+            else:
+                print(f"\n Stabilizacja Emanacji do '{bubble_alias}::{atom_id}' zakończona sukcesem.")
+                break
+
+        except Exception as e:
+            print(f"\n Błąd krytyczny podczas konsolidacji: {e}")
+            ans = input(" Emanacja wciąż żyje w buforze. Próbować ponownej edycji? [t/n]: ").strip().lower()
+            if ans != 't':
+                break
+
+            editor = EmanationEditor(
+                target_name=f"{bubble_alias}::{atom_id} [BŁĄD ZAPISU]",
+                initial_content=new_content
+            )
+
+        finally:
+            try:
+                runtime.delete_atom(buffer_id)
+            except Exception:
+                pass
+
+def cmd_emanation_edit_wrapper(args):
+    return cmd_emanation_edit(args, BUBBLE_CTX.current_bubble_id, RUNTIME, FS.resolve_alias, BUBBLES.get_active_atoms, BUBBLES.import_to_bubble)
+
 
 # ----------------------------------------------------------------------
 # REJESTRACJA KOMEND (Command Engine)
@@ -374,7 +476,8 @@ reg("DOTKNIJ PUSTKI", cmd_dotknij_pustki, "Obniża temperaturę atomu", category
 reg("OBSERWUJ", cmd_obserwuj, "Uruchamia dynamiczny podgląd atomów (asynchroniczny)", category="system")
 reg("ATOM STATUS", cmd_atom_status, "Wyświetla szczegóły atomu", category="atoms",
     args_schema=[make_arg_schema("id", required=True)])
-reg("EDIT", cmd_edit, "Uruchamia edytor bąbli", category="bubbles")
+reg("BUBBLE_EDIT", cmd_edit, "Uruchamia edytor bąbli", category="bubbles")
+reg("EDIT", cmd_emanation_edit_wrapper, "Uruchamia termodynamiczny edytor liniowy", category="bubbles")
 reg("IMPORT", cmd_import, "Importuje plik lub katalog do bąbla", category="bubbles")
 reg("GALLERY", cmd_gallery, "Pokazuje multimedia w bąblu", category="bubbles")
 reg("EXPORT", cmd_export, "Eksportuje multimedia z bąbla", category="bubbles")
@@ -399,14 +502,32 @@ def completer(text, state):
         tokens = []
     current_token = line[begidx:endidx]
 
-    # Brak tokenów – podpowiadamy pierwsze słowo komendy
+    # Brak tokenów – podpowiadamy pierwsze słowo komendy (lub skrypty Lua)
     if len(tokens) == 0:
-        matches = registry.complete(current_token, state)
-        if matches is not None:
-            return matches
-    # Jeden token – podpowiadamy drugie słowo dla komend dwuczłonowych
+        matches = [cmd for cmd in registry.list_commands() if cmd.lower().startswith(current_token.lower())]
+
+        # Dodaj skrypty Lua z lua_bin do podpowiedzi na pierwszym poziomie
+        if os.path.isdir("lua_bin"):
+            lua_scripts = [f[:-4].upper() for f in os.listdir("lua_bin") if f.endswith(".lua")]
+            for s in lua_scripts:
+                if s.startswith(current_token.upper()) and s not in matches:
+                    matches.append(s)
+
+        matches.sort()
+        if state < len(matches):
+            return matches[state]
+    # Jeden token – podpowiadamy drugie słowo dla komend dwuczłonowych LUB skrypty Lua
     elif len(tokens) == 1:
         first = tokens[0].upper()
+
+        # Podpowiedzi dla LUA
+        if first == "LUA":
+            if os.path.isdir("lua_bin"):
+                lua_files = [f for f in os.listdir("lua_bin") if f.endswith(".lua")]
+                matches = [f for f in lua_files if f.lower().startswith(current_token.lower())]
+                if state < len(matches):
+                    return matches[state]
+
         full_candidates = [cmd for cmd in registry.list_commands() if cmd.startswith(first + " ")]
         second_words = [cmd.split()[1] for cmd in full_candidates]
         matches = [w for w in second_words if w.lower().startswith(current_token.lower())]
@@ -522,6 +643,25 @@ def process_command(line: str) -> str:
 
     if cmd is None:
         return f"{theme.ansi_fg('phi_bright')}[BŁĄD]{theme.RESET} Nieznana komenda: {verb1}"
+        if cmd is None:
+            # Próba wywołania skryptu Lua z lua_bin/
+            lua_script = verb1.lower()
+            if not lua_script.endswith(".lua"):
+                lua_script += ".lua"
+
+            lua_path = os.path.join("lua_bin", lua_script)
+            if LUA_AVAILABLE and os.path.isfile(lua_path):
+                try:
+                    # Przekazujemy resztę argumentów do skryptu Lua
+                    result = LUA_EXECUTOR.run_file(lua_path, args=args)
+                    if result: print(result)
+                except Exception as e:
+                    print(f"{theme.ansi_fg('phi_bright')}[BŁĄD LUA]{theme.RESET} {e}")
+            else:
+                print(f"{theme.ansi_fg('phi_bright')}[BŁĄD]{theme.RESET} Nieznana komenda: {verb1}")
+
+            print_hud()
+            continue
 
     # Walidacja argumentów
     ok, err_msg = cmd.validate_args(args)

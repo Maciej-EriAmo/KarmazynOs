@@ -135,8 +135,12 @@ def export(karmazyn_os, path: str, shared_secret: Optional[bytes] = None,
             bbl["decay_rate"]        = bubble.decay_rate
 
         fpath = os.path.join(bdir, bid + BBL_EXT)
-        with open(fpath, 'w', encoding='utf-8') as f:
+        fpath_tmp = fpath + ".plasma"
+        with open(fpath_tmp, 'w', encoding='utf-8') as f:
             json.dump(bbl, f, indent=2, ensure_ascii=False)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(fpath_tmp, fpath)
         exported_bubbles.append(bid)
 
     # ── Hologramy ─────────────────────────────────────────────────────────────
@@ -153,8 +157,12 @@ def export(karmazyn_os, path: str, shared_secret: Optional[bytes] = None,
             "metadata":       h.metadata,
         }
         fpath = os.path.join(hdir, hid + HGM_EXT)
-        with open(fpath, 'w', encoding='utf-8') as f:
+        fpath_tmp = fpath + ".plasma"
+        with open(fpath_tmp, 'w', encoding='utf-8') as f:
             json.dump(hgm, f, indent=2, ensure_ascii=False)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(fpath_tmp, fpath)
         exported_holograms.append(hid)
 
     # ── Wektory Φ ─────────────────────────────────────────────────────────────
@@ -184,8 +192,13 @@ def export(karmazyn_os, path: str, shared_secret: Optional[bytes] = None,
         "integrity_sha256":   integrity,
         "bubble_idx":         dict(ko.bubbles._idx),
     }
-    with open(os.path.join(path, "manifest.json"), 'w', encoding='utf-8') as f:
+    manifest_path = os.path.join(path, "manifest.json")
+    manifest_tmp = manifest_path + ".plasma"
+    with open(manifest_tmp, 'w', encoding='utf-8') as f:
         json.dump(manifest, f, indent=2, ensure_ascii=False)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(manifest_tmp, manifest_path)
 
     print(f"[BubbleFS] Eksport → {path}")
     print(f"  bąble={len(exported_bubbles)}  hologramy={len(exported_holograms)}"
@@ -460,8 +473,12 @@ def export_single_bubble(karmazyn_os, label: str, path: str,
         bbl["decay_rate"]        = b.decay_rate
 
     fpath = os.path.join(path, b.id + BBL_EXT)
-    with open(fpath, 'w', encoding='utf-8') as f:
+    fpath_tmp = fpath + ".plasma"
+    with open(fpath_tmp, 'w', encoding='utf-8') as f:
         json.dump(bbl, f, indent=2, ensure_ascii=False)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(fpath_tmp, fpath)
 
     print(f"[BubbleFS] Eksport bąbla '{label}' → {fpath}")
     return fpath
