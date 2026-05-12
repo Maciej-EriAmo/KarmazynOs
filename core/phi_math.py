@@ -83,3 +83,26 @@ class PhiPhysics:
     @staticmethod
     def converges(v, attractor, eps=0.05):
         return np.linalg.norm(v - attractor) < eps
+
+    @staticmethod
+    def predict_vector_convergence(phi_in, phi_bubble, iterations=5):
+        """
+        Symuluje ewolucję wektora phi_in w polu przyciągania atraktora phi_bubble.
+        Zwraca True, jeśli zbiega (koherencja po iteracjach >= STABILITY_THRESHOLD), w przeciwnym razie False.
+        """
+        v = np.copy(phi_in)
+        attractor = np.copy(phi_bubble)
+        alpha = 0.3
+
+        # Odtwarzamy krok po kroku ruch wektora
+        for i in range(iterations):
+            # Przyciąganie przez bąbel
+            v = v + alpha * (attractor - v)
+
+            # Wektory mogą rosnąć/maleć, więc normalizujemy
+            norm = np.linalg.norm(v)
+            if norm > 0:
+                v = v / norm
+
+        final_coherence = PhiPhysics.harmonic_coherence(v, attractor)
+        return final_coherence >= PhiPhysics.STABILITY_THRESHOLD

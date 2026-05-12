@@ -172,9 +172,12 @@ class Runtime:
     
     # --- Persystencja (uproszczona) ---
     def save_all(self, path: str = ".bubbles"):
+        import os
         os.makedirs(path, exist_ok=True)
         for bubble in self.bubbles.values():
-            with open(os.path.join(path, f"{bubble.name}.bubble"), "w", encoding="utf-8") as f:
+            filepath = os.path.join(path, f"{bubble.name}.bubble")
+            filepath_atom = filepath + ".atom"
+            with open(filepath_atom, "w", encoding="utf-8") as f:
                 json.dump({
                     "id": bubble.id,
                     "name": bubble.name,
@@ -182,6 +185,16 @@ class Runtime:
                     "manifest": bubble.manifest,
                     "created_at": bubble.created_at
                 }, f, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+
+            # Operacja zamiany bezpieczna dla Windows
+            for attempt in range(5):
+                try:
+                    os.replace(filepath_atom, filepath)
+                    break
+                except PermissionError:
+                    time.sleep(0.1)
     
     def load_all(self, path: str = ".bubbles"):
         self.bubbles.clear()
