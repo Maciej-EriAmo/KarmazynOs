@@ -349,12 +349,33 @@ class KarmazynIntegration:
         if not bubble:
             # Jeśli bąbel wynikowy nie istnieje, tworzymy go w locie
             self.create_bubble(bubble_id, f"Grupa Wynikowa: {bubble_id}")
+            bubble = self.get_bubble(bubble_id)
 
         atom = runtime.get_atom(atom_id)
         if atom:
+            # GEOMETRYCZNA PREDYKCJA BRAMY (FIZYKA Φ)
+            from core.phi_math import PhiPhysics
+            import numpy as np
+
+            # Wyliczamy wektor phi atomu
+            atom_S = getattr(atom, 'S', None)
+            if atom_S is None or isinstance(atom_S, str):
+                atom_phi = PhiPhysics.normalize_to_phi_space(getattr(atom, 'S', ''))
+            else:
+                atom_phi = PhiPhysics.normalize_to_phi_space(atom_S)
+
+            # Pobieramy/obliczamy atraktor dla bąbla
+            bubble_name = bubble.get('name', '') if isinstance(bubble, dict) else getattr(bubble, 'name', '')
+            bubble_phi = PhiPhysics.normalize_to_phi_space(bubble_name)
+
+            if not PhiPhysics.predict_vector_convergence(atom_phi, bubble_phi):
+                print("diverged")
+                runtime.delete_atom(atom_id)
+                return None
+
             final_id = target_name if target_name else atom.id
             # Zachowujemy ID atomu (istotne dla narzędzi BIN) oraz metadane S i E
-            res = self.add_atom_to_bubble(bubble_id, atom.E, S=atom.S, E=atom.E, atom_id=final_id)
+            res = self.add_atom_to_bubble(bubble_id, getattr(atom, 'E', ''), S=getattr(atom, 'S', ''), E=getattr(atom, 'E', ''), atom_id=final_id)
             if self.kernel and (self.bubblefs_available or self.soul_available):
                 self.save_all()
             return res
