@@ -16,8 +16,8 @@ class LevelEmbedder:
 
     def _word_to_vec(self, word: str) -> np.ndarray:
         h = abs(hash(word)) % (2**31)
-        rng = np.random.RandomState(h)
-        vec = rng.randn(self.dim)
+        rng = np.random.default_rng(h)
+        vec = rng.standard_normal(self.dim)
         return vec / np.linalg.norm(vec)
 
     def _hrr_embed(self, words: list[str]) -> np.ndarray:
@@ -40,16 +40,16 @@ class LevelEmbedder:
 
     def generate_mission(self, words: list[str], system_temp: float = 0.8) -> dict:
         vec = self._hrr_embed(words) if self.mode == "hrr" else self._light_embed(words)
-        rng = np.random.RandomState(int(np.sum(vec)*1e5) % 2**31)
+        rng = np.random.default_rng(int(np.sum(vec)*1e5) % 2**31)
         # Generujemy 3–5 relikwii
         symbols = ["Δ", "Ω", "Ψ", "Σ", "Φ", "Θ", "Λ"]
-        num_relikwii = 3 + int(rng.randint(0, 3))
+        num_relikwii = 3 + int(rng.integers(0, 3))
         relikwie = []
         for i in range(num_relikwii):
             widoczny = rng.choice([True, False], p=[0.7, 0.3])
-            s = f"{symbols[rng.randint(0, len(symbols))]}-{rng.randint(1, 9)}"
+            s = f"{symbols[rng.integers(0, len(symbols))]}-{rng.integers(1, 9)}"
             e = rng.choice(["Brama", "Klucz", "Cień", "Prawda", "Pustka"])
-            t_start = int(40 + rng.randint(0, 60))
+            t_start = int(40 + rng.integers(0, 60))
             relikwie.append({
                 "id": f"rel_{i}",
                 "S": s,
