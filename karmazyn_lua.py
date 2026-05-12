@@ -73,6 +73,8 @@ class LuaExecutor:
         karm.generate_from_idea = self._lua_generate_from_idea
         karm.clone_atom = self._lua_clone_atom
         karm.get_similarity = self._lua_get_similarity
+        karm.get_bubble = self._lua_get_bubble
+        karm.create_bubble = self._lua_create_bubble
         karm.get_resources = self._lua_get_resources
         karm.get_epoch = self._lua_get_epoch
         karm.list_agents = self._lua_list_agents
@@ -222,6 +224,30 @@ class LuaExecutor:
         with self.lock:
             atom = self.rt.get_atom(atom_id)
             return atom.state if atom else "TOMB"
+
+    def _lua_get_bubble(self, name):
+        with self.lock:
+            bubble = self.rt.get_bubble(name)
+            if bubble:
+                return self._wrap_bubble(bubble)
+            return None
+
+    def _lua_create_bubble(self, name, bubble_type="document"):
+        with self.lock:
+            bubble = self.rt.create_bubble(name, bubble_type)
+            return self._wrap_bubble(bubble)
+
+    def _wrap_bubble(self, bubble):
+        bt = self.lua.eval("{}")
+        bt.id = bubble.id
+        bt.name = bubble.name
+        bt.get_atoms = lambda: self.lua.table(*[self._wrap_atom(a) for a in bubble.atoms])
+        bt.add_atom = lambda atom: bubble.add_atom(atom)
+        bt.remove_atom = lambda atom_id: bubble.remove_atom(atom_id)
+        def content(prism="CORE"):
+            return bubble.assemble_content(prism) if hasattr(bubble, 'assemble_content') else ""
+        bt.content = content
+        return bt
 
     def _lua_step(self, n=1):
         with self.lock:
