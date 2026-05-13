@@ -17,7 +17,7 @@ import hashlib
 import numpy as np
 
 # Parametry – dopasowane do wymiaru z KarmazynOS (domyślnie dim=64)
-N = 64          # wymiar wektora
+N = 15          # wymiar wektora
 Q = 256         # moduł (mały, dla demonstracji)
 
 def kdf(seed_bytes: bytes, salt: str) -> np.ndarray:
