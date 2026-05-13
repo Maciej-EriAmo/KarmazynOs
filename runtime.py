@@ -94,7 +94,7 @@ class EventBus:
 # PHI SPACE
 # =====================================================================
 
-_PHI_DIM = 64
+_PHI_DIM = 15
 
 
 class PhiSpace:
@@ -103,26 +103,27 @@ class PhiSpace:
         self.epoch = 0
         self._sem: Dict[str, np.ndarray] = {}
         self._rc: Dict[str, int] = {}
+        from core.phi_math import PhiPhysics
+        self.space = PhiPhysics.get_space()
 
     def embed(self, text: str) -> np.ndarray:
+        # Use simple string replace to avoid re template escape issues in python re.sub
         tokens = [w for w in re.split(r"\W+", text.lower()) if len(w) > 1]
         if not tokens:
             tokens = [text[:8] if text else "empty"]
-        vec = np.zeros(self.dim, dtype=np.float32)
+        vec = np.zeros(self.space.n, dtype=np.float32)
         for tok in set(tokens):
             seed = int(hashlib.md5(tok.encode()).hexdigest(), 16) % (2 ** 32)
-            v = np.random.default_rng(seed).standard_normal(self.dim).astype(np.float32)
+            v = np.random.default_rng(seed).standard_normal(self.space.n).astype(np.float32)
             vec += v
-        norm = np.linalg.norm(vec)
-        return vec / norm if norm > 1e-9 else vec
+        return self.space.normalize(vec)
 
     def register(self, label: str, text: str):
         self._sem[label] = self.embed(text)
         self._rc[label] = 0
 
     def add_vector(self, label: str, vec: np.ndarray):
-        norm = np.linalg.norm(vec)
-        self._sem[label] = vec / norm if norm > 1e-9 else vec.copy()
+        self._sem[label] = self.space.normalize(vec)
         self._rc[label] = 0
 
     def search(self, query: str, candidates: List[str], k: int = 5) -> List[Tuple[str, float]]:
@@ -132,7 +133,8 @@ class PhiSpace:
             v = self._sem.get(lbl)
             if v is None:
                 continue
-            sim = float(np.dot(q, v) / (np.linalg.norm(q) * np.linalg.norm(v) + 1e-9))
+            # Używamy nowej metryki, metryka zwraca 0 dla identycznych, więc musimy to odwrócić na similarity
+            sim = 1.0 - (self.space.metric(q, v) / 2.0) # Normalizujemy do [0, 1]
             scores.append((lbl, sim))
         scores.sort(key=lambda x: x[1], reverse=True)
         for lbl, _ in scores[:k]:
@@ -151,18 +153,31 @@ class PhiSpace:
 # BUBBLE / HOLOGRAM / AGENT
 # =====================================================================
 
-class Bubble:
+from karmazyn_core import Hologram as CoreHologram, Bubble as CoreBubble, BubbleMode
+
+class Bubble(CoreBubble):
     def __init__(self, label: str, content: str, immortal: bool = False):
+        from core.phi_math import PhiPhysics
         self.label = label
         self.content = content
         self.immortal = immortal
         self.density = 1.0
 
+        space = PhiPhysics.get_space()
+        # Utwórz prowizoryczny hologram dla phi1
+        vecs = [PhiPhysics.normalize_to_phi_space(content)]
+        phi1 = CoreHologram(space, vecs)
+        phi2_vector = PhiPhysics.normalize_to_phi_space(label)
+
+        super().__init__(space=space, phi1=phi1, phi2_vector=phi2_vector, theta=3.0, mode=BubbleMode.WORKSPACE)
+
     def get_core_vector(self):
+        # Maintain compatibility
+        from core.phi_math import PhiPhysics
         return PhiPhysics.normalize_to_phi_space(self.content)
 
     def absorb(self, atom):
-        self.content = f"{self.content} {atom._S_raw} {atom.E}".strip()
+        self.content = f"{self.content} {atom._S_raw if hasattr(atom, '_S_raw') else atom.S} {atom.E}".strip()
 
     def liveliness(self, runtime) -> float:
         atom = runtime.get_atom(self.label)
@@ -171,7 +186,7 @@ class Bubble:
         return max(0.0, min(1.0, atom.T / atom.T_max))
 
 
-class Hologram:
+class Hologram(CoreHologram):
     def __init__(self, hid: str, topic: str, proto: np.ndarray,
                  generators: List[np.ndarray], weights: List[float],
                  atom_labels: List[str], epoch: int):
@@ -182,6 +197,14 @@ class Hologram:
         self.weights = weights
         self.atom_labels = atom_labels
         self.epoch_created = epoch
+
+        from core.phi_math import PhiPhysics
+        space = PhiPhysics.get_space()
+
+        # Inicjalizacja CoreHologram
+        # Jeżeli brakuje nam trajektorii z doświadczeń, użyjmy prota i generatorów
+        vecs = [proto] + generators if generators else [proto]
+        super().__init__(space, vecs)
 
     def liveliness(self, current_epoch: int) -> float:
         return math.exp(-0.001 * max(0, current_epoch - self.epoch_created))
@@ -393,26 +416,26 @@ class SanctuaryRuntime:
         return label
 
     def consolidate_to_bubble(self, atom, bubble):
-        core = bubble.get_core_vector()
+        # Nowy model: używamy rezonansu zamiast list/warunków statycznych
+        # Rezonans: jedyna operacja komunikacji między bytami.
+        from core.phi_math import PhiPhysics
+        tau = 0.75 # próg rezonansu
 
-        result = PhiPhysics.snell_refraction(
-            atom.S,
-            core,
-            bubble.density
-        )
-
-        if not result["penetrates"]:
+        # Jeśli rezonują ze sobą w nowej geometrii S^14
+        if bubble.resonates_with(atom, tau):
+            bubble.absorb(atom)
+            # Aktualizacja logiki predykcyjnej WORKSPACE
+            bubble.update_psi([atom])
             return {
-                "status": "reflected",
-                "atom": atom.id,
-                "reason": "phase_mismatch",
-                "coherence": result["coherence"]
+                "status": "absorbed",
+                "atom": atom.id
             }
 
-        bubble.absorb(atom)
         return {
-            "status": "absorbed",
-            "atom": atom.id
+            "status": "reflected",
+            "atom": atom.id,
+            "reason": "phase_mismatch",
+            "coherence": float(np.dot(PhiPhysics._space.normalize(atom.S), PhiPhysics._space.normalize(bubble.get_core_vector())))
         }
 
     def consolidate(self, label: str, metadata: dict = None) -> str:
