@@ -19,35 +19,32 @@ import numpy as np
 # ATOM
 # =====================================================================
 
-class Atom:
+from karmazyn_core import Atom as CoreAtom
+from core.phi_math import PhiPhysics
+
+class Atom(CoreAtom):
     """
-    Atom termodynamiczny KarmazynOS.
+    Atom termodynamiczny KarmazynOS dziedziczący po karmazyn_core.Atom.
 
-    Atrybuty publiczne (czytane przez runtime i shell):
-        id      — unikalny identyfikator (str)
-        S       — sygnatura semantyczna (str, tekst)
-        E       — emanacja / kontekst (str, tekst)
-        T       — energia termodynamiczna 0..100 (float)
-        T_max   — maksymalna energia (float, domyślnie 100.0)
-        state   — HOT / WARM / COLD / TOMB (str)
-        decay   — współczynnik zaniku λ (float, domyślnie 0.01)
-        decay_rate — współczynnik wzrostu T z każdym tickiem (float, domyślnie 0.0)
-        age     — liczba kroków od stworzenia (int)
-        session — numer sesji (int)
-
-    Wewnętrzne:
-        _vec    — wektor numpy 64D (sygnatura w przestrzeni Φ)
-        splamiony — bool (flaga korupcji)
+    Zarządza trajektorią w przestrzeni S^14 i posiada ewolucję termodynamiczną.
     """
-
-    __slots__ = (
-        "id", "S", "E", "T", "T_max", "state",
-        "decay", "decay_rate", "age", "session", "_vec", "splamiony",
-    )
+    # Nie używamy __slots__ ze względu na dziedziczenie,
+    # chyba że w CoreAtom też zastosujemy __slots__, ale łatwiej to pominąć w Pythonie.
 
     def __init__(self, id: str, S: str, E: str, T: float,
                  T_max: float = 100.0, decay: float = 0.01, decay_rate: float = 0.0,
                  session: int = 0, vec: np.ndarray = None):
+
+        space = PhiPhysics.get_space()
+
+        # Jeśli podano vec, używamy go jako wektora semantycznego, inaczej rzutujemy S.
+        if vec is not None:
+            initial_vector = vec
+        else:
+            initial_vector = PhiPhysics.normalize_to_phi_space(S)
+
+        super().__init__(space=space, initial_vector=initial_vector, entropy_threshold=2.0, max_trace=100)
+
         self.id        = id
         self.S         = S
         self.E         = E
@@ -58,19 +55,24 @@ class Atom:
         self.age       = 0
         self.session   = session
         self.splamiony = False
-        self._vec      = vec if vec is not None else np.zeros(64, dtype=np.float32)
+        # Zachowujemy _vec jako alias na current_pos (używamy aktualnej pozycji na sferze)
+        self._vec      = self.current_pos
         self.state     = _classify(self.T)
 
     def __getitem__(self, key):
         if key == 'label': return self.id
-        if key == 'S': return self._vec
+        if key == 'S': return self.current_pos
         if key == 'T': return self.T
         if key == 'session': return self.session
         raise KeyError(key)
 
     def __setitem__(self, key, value):
         if key == 'T': self.T = float(value)
-        elif key == 'S': self._vec = value
+        elif key == 'S':
+             # Aktualizacja wektora semantycznego
+             delta = value - self.current_pos
+             self.move(delta)
+             self._vec = self.current_pos
         else: raise KeyError(f"Cannot set {key} via dict interface")
 
     def get(self, key, default=None):
@@ -130,7 +132,7 @@ class HSSKarmazynMatrix:
     Eksportuje interfejs kompatybilny z SanctuaryRuntime v1.x i shell.py.
     """
 
-    def __init__(self, dim: int = 64, n_sessions: int = 1, lambd: float = 0.01, seed: int = 42, **kwargs):
+    def __init__(self, dim: int = 15, n_sessions: int = 1, lambd: float = 0.01, seed: int = 42, **kwargs):
         """
         n_sessions oraz kwargs są ignorowane – zapewniają kompatybilność z KarmazynOS.
         """

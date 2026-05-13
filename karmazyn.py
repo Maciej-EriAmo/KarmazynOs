@@ -213,7 +213,7 @@ class IDFCounter:
 
 
 class PhiSpace:
-    def __init__(self, dim=64, n_sessions=1, seed=42):
+    def __init__(self, dim=15, n_sessions=1, seed=42):
         self._mx = HSSKarmazynMatrix(dim=dim, n_sessions=n_sessions, lambd=LAMBDA_DECAY, seed=seed)
         self.dim = dim; self._sid = 0; self._tvac = self._measure_tvac()
         self._p2s = os.urandom(32)
@@ -325,7 +325,7 @@ class KarmazynOS:
     # [nowe] Stała etykieta bąbla tożsamości – nie zmienia się nigdy
     _P2S_BUBBLE_LABEL = "__phi_identity_p2s__"
 
-    def __init__(self, dim=64, n_sessions=1, seed=42, auto_cleanup_interval=50):
+    def __init__(self, dim=15, n_sessions=1, seed=42, auto_cleanup_interval=50):
         self.phi = PhiSpace(dim, n_sessions, seed)
         self.daemon = HSSDaemon()
         phi2_vec = np.frombuffer(self.phi.phi2_bytes() * 4, dtype=np.float32)[:N]
@@ -573,7 +573,7 @@ class KarmazynOS:
     def write(self, content: str, auto_consolidate=0):
         raw = content.encode(); label = self.phi.add(raw)
         bits8 = np.unpackbits(np.frombuffer(hashlib.sha256(raw).digest()[:8], dtype=np.uint8))
-        vec = np.zeros(N, dtype=np.int64); vec[:64] = bits8.astype(np.int64)
+        vec = np.zeros(N, dtype=np.int64); vec[:15] = bits8[:15].astype(np.int64)
         inode = f"karmazyn://phi/{label}"; self.daemon.phi_write(inode, vec)
         self._amap[label] = inode; self._fp[label] = hashlib.sha256(raw).digest()
         self._raw[label] = raw; self._ac[label] = auto_consolidate
