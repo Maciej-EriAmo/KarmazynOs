@@ -45,6 +45,7 @@ _STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 
 _ko = KarmazynOS()
 _lock = threading.Lock()
+_stdout_lock = threading.Lock() # Lock dla synchronizacji przechwytywania stdout
 _exec_log: list = []          # historia exec() w środowisku KarmazynOS
 _media_store: dict = {}       # label → {type, data, mime}
 
@@ -149,18 +150,35 @@ def api_exec(code: str) -> dict:
         return karmazyn_exec(code)
 
 def api_shell(cmdline: str) -> dict:
-    """Uruchamia komendę systemową — fallback do OS."""
-    try:
-        import shlex
-        parts = shlex.split(cmdline)
-        if parts[0] == "cd":
-            target = parts[1] if len(parts) > 1 else os.path.expanduser("~")
-            os.chdir(target)
-            return {"ok": True, "output": os.getcwd(), "error": ""}
-        r = subprocess.run(parts, capture_output=True, text=True, timeout=30)
-        return {"ok": r.returncode == 0, "output": r.stdout, "error": r.stderr}
-    except Exception as e:
-        return {"ok": False, "output": "", "error": str(e)}
+    """Uruchamia komendę w bezpiecznym shellu KarmazynOS."""
+    import concurrent.futures
+
+    def run_cmd():
+        try:
+            from shell import process_command
+            from contextlib import redirect_stdout, redirect_stderr
+            import io
+
+            out_f = io.StringIO()
+            err_f = io.StringIO()
+            # Używamy globalnego _stdout_lock zdefiniowanego na poziomie modułu
+            with _stdout_lock:
+                with redirect_stdout(out_f), redirect_stderr(err_f):
+                    res = process_command(cmdline)
+                    if res:
+                        print(res)
+            return {"ok": True, "output": out_f.getvalue(), "error": err_f.getvalue()}
+        except Exception as e:
+            return {"ok": False, "output": "", "error": str(e)}
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(run_cmd)
+        try:
+            return future.result(timeout=30)
+        except concurrent.futures.TimeoutError:
+            return {"ok": False, "output": "", "error": "Command timed out (30s)"}
+        except Exception as e:
+            return {"ok": False, "output": "", "error": str(e)}
 
 def api_save(path: str = "./karmazyn_data") -> dict:
     with _lock:
