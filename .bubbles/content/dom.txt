@@ -1,0 +1,3 @@
+# Babl 'dom' [Surowy tekst]
+# Ctrl+S: zapisz  F5: uruchom  Ctrl+Q: wyjdz
+test szyfrowania teraz
