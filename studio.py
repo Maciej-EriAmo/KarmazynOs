@@ -25,7 +25,7 @@ from urllib.parse import urlparse, parse_qs
 import io
 
 try:
-    from karmazyn import KarmazynOS, VERSION as KARM_VERSION
+    from karmazyn import KarmazynOS
 except ImportError:
     print("Błąd: nie znaleziono karmazyn.py")
     sys.exit(1)
