@@ -420,7 +420,7 @@ class KarmazynComm:
         print(f"  Kontakty: {s['contacts']}  |  Wiadomości: {s['messages_total']}")
         print(f"  Nieprzeczytane: {s['unread']}  |  Kolejka: {s['queue_size']}")
         print(f"  Atomy Φ: {s['atoms_phi']}  |  Bąble: {s['bubbles']}")
-        print(f"  Temperatura Φ: {s['temperature']:.3f}  |  T_vacuum: {s['t_vacuum']:.4f}")
+        print(f"  Temperatura Φ: {s['temperature']:.3f}  |  T_vacuum: {s['t_vacuum()']:.4f}")
 
 
 # ─── Shell komunikacyjny ──────────────────────────────────────────────────────

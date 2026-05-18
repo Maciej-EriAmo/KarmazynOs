@@ -1,16 +1,13 @@
 """
-runtime.py — SanctuaryRuntime v1.4 (Kontrakt Systemowy)
+runtime.py — SanctuaryRuntime v1.5 (wspólna PhiSpace)
 ========================================================
 KarmazynOS — Maciej Mazur, Warsaw 2026
 
-Jedyne źródło prawdy. Każda operacja przechodzi przez runtime i emituje zdarzenie.
-
-Zmiany v1.4:
-  - HSSDaemon przeniesiony z bedit.py do runtime jako usługa mikrojądra.
-    self.hss       — instancja HSSDaemon lub None
-    self._hss_available — bool
-
-Wymaga HSSKarmazynMatrix v2.0 (hss_karmazyn_matrix.py).
+Zmiany v1.5:
+  - usunięto lokalną klasę PhiSpace (używamy phi_space.py)
+  - self.phi = PhiSpace(dim=..., matrix=self.matrix) – współdzielona macierz
+  - status_summary() zwraca t_vacuum() z phi_space
+  - step() nie wykonuje podwójnego kroku termodynamicznego
 """
 
 import hashlib
@@ -26,17 +23,20 @@ from hss_karmazyn_matrix import HSSKarmazynMatrix
 from karmazyn_ui import audio, gfx
 from core.phi_math import PhiPhysics
 
+# Wspólna przestrzeń semantyczna (jedna dla całego systemu)
+from phi_space import PhiSpace
+
 # =====================================================================
 # ADAPTER ATOMÓW
 # =====================================================================
 class Atom:
     def __init__(self, id_str, S_raw, E, T, decay_rate=0.0):
-        self.id    = id_str
-        self._S_raw = S_raw
-        self.S      = PhiPhysics.normalize_to_phi_space(S_raw)
-        self.E      = E
-        self.T      = T
-        self.decay  = decay_rate
+        self.id      = id_str
+        self._S_raw  = S_raw
+        self.S       = PhiPhysics.normalize_to_phi_space(S_raw)
+        self.E       = E
+        self.T       = T
+        self.decay   = decay_rate
 
 # =====================================================================
 # MAPOWANIE STANÓW
@@ -87,64 +87,6 @@ class EventBus:
 
 
 # =====================================================================
-# PHI SPACE
-# =====================================================================
-
-_PHI_DIM = 15
-
-
-class PhiSpace:
-    def __init__(self, dim: int = _PHI_DIM):
-        self.dim   = dim
-        self.epoch = 0
-        self._sem: Dict[str, np.ndarray] = {}
-        self._rc:  Dict[str, int]        = {}
-        from core.phi_math import PhiPhysics
-        self.space = PhiPhysics.get_space()
-
-    def embed(self, text: str) -> np.ndarray:
-        tokens = [w for w in re.split(r"\W+", text.lower()) if len(w) > 1]
-        if not tokens:
-            tokens = [text[:8] if text else "empty"]
-        vec = np.zeros(self.space.n, dtype=np.float32)
-        for tok in set(tokens):
-            seed = int(hashlib.md5(tok.encode()).hexdigest(), 16) % (2 ** 32)
-            v    = np.random.default_rng(seed).standard_normal(self.space.n).astype(np.float32)
-            vec += v
-        return self.space.normalize(vec)
-
-    def register(self, label: str, text: str):
-        self._sem[label] = self.embed(text)
-        self._rc[label]  = 0
-
-    def add_vector(self, label: str, vec: np.ndarray):
-        self._sem[label] = self.space.normalize(vec)
-        self._rc[label]  = 0
-
-    def search(self, query: str, candidates: List[str],
-               k: int = 5) -> List[Tuple[str, float]]:
-        q      = self.embed(query)
-        scores = []
-        for lbl in candidates:
-            v = self._sem.get(lbl)
-            if v is None:
-                continue
-            sim = 1.0 - (self.space.metric(q, v) / 2.0)
-            scores.append((lbl, sim))
-        scores.sort(key=lambda x: x[1], reverse=True)
-        for lbl, _ in scores[:k]:
-            self._rc[lbl] = self._rc.get(lbl, 0) + 1
-        return scores[:k]
-
-    def get(self, label: str) -> Optional[np.ndarray]:
-        return self._sem.get(label)
-
-    def remove(self, label: str):
-        self._sem.pop(label, None)
-        self._rc.pop(label, None)
-
-
-# =====================================================================
 # BUBBLE / HOLOGRAM / AGENT
 # =====================================================================
 
@@ -189,12 +131,12 @@ class Hologram(CoreHologram):
     def __init__(self, hid: str, topic: str, proto: np.ndarray,
                  generators: List[np.ndarray], weights: List[float],
                  atom_labels: List[str], epoch: int):
-        self.id           = hid
-        self.topic        = topic
-        self.proto        = proto
-        self.generators   = generators
-        self.weights      = weights
-        self.atom_labels  = atom_labels
+        self.id            = hid
+        self.topic         = topic
+        self.proto         = proto
+        self.generators    = generators
+        self.weights       = weights
+        self.atom_labels   = atom_labels
         self.epoch_created = epoch
 
         from core.phi_math import PhiPhysics
@@ -218,17 +160,12 @@ class Agent:
 
 
 # =====================================================================
-# SANCTUARY RUNTIME v1.4
+# SANCTUARY RUNTIME v1.5 (wspólna PhiSpace)
 # =====================================================================
 
+_PHI_DIM = 15
+
 class SanctuaryRuntime:
-    """
-    Termodynamiczny runtime KarmazynOS — jedyne źródło prawdy.
-
-    v1.4: HSSDaemon podniesiony z bedit.py do mikrojądra runtime.
-          Dostępny jako self.hss (lub None jeśli brak hss_demo.py).
-    """
-
     def __init__(self):
         self.matrix       = HSSKarmazynMatrix(dim=_PHI_DIM)
         self.events       = EventBus()
@@ -239,8 +176,6 @@ class SanctuaryRuntime:
         self.resources: Dict[str, int] = {"żywica": 10}
 
         # ── HSS mikrojądro ────────────────────────────────────────────
-        # HSSDaemon jest usługą jądra, nie aplikacji.
-        # bedit.py i shell.py pobierają referencję przez RUNTIME.hss.
         try:
             from hss_demo import HSSDaemon
             self.hss = HSSDaemon()
@@ -254,16 +189,14 @@ class SanctuaryRuntime:
         self.events.on("vacuum_decay",   lambda a: self.audio_engine.vacuum_decay())
         self.events.on("atom_stabilized",lambda a: self.audio_engine.mandala_harmony())
         self.events.on("atom_corrupted", lambda a: self.audio_engine.corruption())
-
-        # Hard Save Broadcast
         self.events.on("vacuum_decay",   lambda a: self.events.emit("trigger_hard_save"))
 
-        # Semantyczne warstwy (.karm)
-        self.phi         = PhiSpace(dim=_PHI_DIM)
+        # ── Wspólna przestrzeń semantyczna ───────────────────────────
+        self.phi = PhiSpace(dim=_PHI_DIM, matrix=self.matrix)
+
         self._bubbles:   Dict[str, Bubble]   = {}
         self._holograms: Dict[str, Hologram] = {}
         self._agents:    Dict[int, Agent]    = {}
-        self._name_to_id: Dict[str, str]     = {}
 
     # ================================================================
     # API v1.1 — kompatybilność z shell.py i grą
@@ -348,24 +281,24 @@ class SanctuaryRuntime:
 
     def status_summary(self) -> Dict[str, int]:
         return {
-            "HOT":  self.count_atoms("HOT"),
-            "WARM": self.count_atoms("WARM"),
-            "COLD": self.count_atoms("COLD"),
-            "TOMB": self.count_atoms("TOMB"),
+            "HOT":      self.count_atoms("HOT"),
+            "WARM":     self.count_atoms("WARM"),
+            "COLD":     self.count_atoms("COLD"),
+            "TOMB":     self.count_atoms("TOMB"),
+            "t_vacuum()": f"{self.phi.t_vacuum:.4f}",
         }
 
     # ── termodynamika ─────────────────────────────────────────────────
-
-    def step(self, n: int = 1) -> dict:
+    def step(self, n=1):
         for _ in range(n):
-            for atom, event_type in self.matrix.step():
-                self.events.emit(event_type, atom)
-                if event_type == "vacuum_decay":
+            for atom, event in self.matrix.step():
+                self.events.emit(event, atom)
+                if event == "vacuum_decay":
                     self.phi.remove(atom.id)
                     self._bubbles.pop(atom.id, None)
-            self.phi.epoch += 1
+        # Tylko czyścimy semantykę, NIE wykonujemy dodatkowego kroku macierzy
+            self.phi.step(skip_matrix_step=True)
         return {**self.status_summary(), "epoch": self.phi.epoch}
-
     def start_loop(self, interval: float = 0.2):
         if self._running:
             return
@@ -390,11 +323,9 @@ class SanctuaryRuntime:
         return self._loop_thread is not None and self._loop_thread.is_alive()
 
     def start_system_loop(self, interval: float = 0.2):
-        """Alias dla kompatybilności z hss_demo.py / sanktuarium."""
         self.start_loop(interval)
 
     # ── misja ─────────────────────────────────────────────────────────
-
     def start_mission(self, mission: dict):
         self.current_mission       = mission
         self.resources["żywica"]   = int(mission.get("startowa_zywica", 10))
@@ -425,7 +356,6 @@ class SanctuaryRuntime:
         atom     = self.matrix.create_atom(label, S, E, T_scaled,
                                            decay_rate=decay_rate)
         self.phi.register(label, f"{S} {E}")
-        self._name_to_id[name] = label
         self.events.emit("atom_created", atom)
         return label
 
@@ -614,8 +544,6 @@ class SanctuaryRuntime:
         }}
 
     def atom_id_for(self, name: str) -> Optional[str]:
-        if name in self._name_to_id:
-            return self._name_to_id[name]
         if self.matrix.has_atom(name):
             return name
         return None

@@ -202,7 +202,7 @@ class SystemRegistry:
         if self._runtime:
             try:
                 epoch = self._runtime.phi.epoch
-                tvac  = self._runtime.phi.t_vacuum()
+                tvac  = self._runtime.phi.t_vacuum   # property, nie metoda
                 s     = self._runtime.status_summary()
                 rate  = self.epoch_rate()
 

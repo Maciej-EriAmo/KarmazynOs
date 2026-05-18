@@ -5,7 +5,7 @@ import os, sys, time, threading, readline, shlex
 from typing import Optional
 
 # Registry jako pierwszy import - rejestruje czas startu natychmiast
-from sys_registry import REGISTRY, ServiceStatus
+from sys_registry import REGISTRY, ServiceStatus # type: ignore
 
 from runtime import SanctuaryRuntime, SystemState
 REGISTRY.register("runtime", ServiceStatus.OK, version="SanctuaryRuntime v1.4")
@@ -15,7 +15,7 @@ from karmazyn_ui import theme, gfx
 from karmazyn_ui.editor import EmanationEditor
 
 import bubble_commands as _bc
-from bubble_commands import CTX as BUBBLE_CTX, cmd_edit, cmd_import, cmd_gallery, cmd_export
+from bubble_commands import CTX as BUBBLE_CTX, cmd_bubble, cmd_edit, cmd_import, cmd_gallery, cmd_export, cmd_view
 from bedit import KarmazynIntegration as BubbleRuntime, KARMAZYN_LOADED, BUBBLEFS_LOADED, SOUL_LOADED
 
 try:
@@ -114,9 +114,18 @@ def print_hud():
         hud += " [RUNTIME DEAD]"
 
     if BUBBLE_CTX.current_bubble_name:
-        atoms = (BUBBLES.get_active_atoms(BUBBLE_CTX.current_bubble_id)
-                 if BUBBLE_CTX.current_bubble_id else [])
-        hud += f"  {BUBBLE_CTX.current_bubble_name}({len(atoms)})"
+        # Bug fix: CTX.current_bubble_id = label runtime (nie hash bedit).
+        # Pytamy RUNTIME._bubbles o rezonujące atomy zamiast BUBBLES.get_active_atoms().
+        label = BUBBLE_CTX.current_label
+        b = RUNTIME._bubbles.get(label) if label else None
+        if b is not None:
+            try:
+                rez_count = sum(1 for a in RUNTIME.list_atoms() if b.resonates_with(a, 0.5))
+            except Exception:
+                rez_count = 0
+        else:
+            rez_count = 0
+        hud += f"  {BUBBLE_CTX.current_bubble_name}({rez_count})"
     print(hud)
 
 # --- Komendy ---
@@ -418,6 +427,7 @@ reg("DOTKNIJ PUSTKI", cmd_dotknij_pustki,        "Obniza temperature",          
     args_schema=[make_arg_schema("id",True)])
 reg("ATOM STATUS",    cmd_atom_status,           "Szczegoly atomu",                      category="atoms",
     args_schema=[make_arg_schema("id",True)])
+reg("BUBBLE",         cmd_bubble,                "Zarzadzanie Bablami [LS|NEW|STATUS|TICK|RESONATE|DECAY|COPY|PASTE]", category="bubbles")
 reg("BUBBLE_EDIT",    cmd_edit,                  "Edytor babli",                         category="bubbles")
 reg("EDIT",           cmd_emanation_edit_wrapper,"Edytor liniowy emanacji",              category="bubbles")
 reg("IMPORT",         cmd_import,                "Importuje plik do babla",              category="bubbles")

@@ -284,7 +284,7 @@ def save_soul(karmazyn_os, path: str = "./karmazyn_data") -> bool:
             "karmazyn_version": getattr(ko, "VERSION", "?"),
             "epoch":            ko.phi.epoch,
             "temperature":      ko.phi.temperature(),
-            "t_vacuum":         ko.phi.t_vacuum(),
+            "t_vacuum()":         ko.phi.t_vacuum,
             "pid":              ko._pid,
             "dim":              ko.phi.dim,
             "bubble_idx":       dict(ko.bubbles._idx),

@@ -174,7 +174,7 @@ def export(karmazyn_os, path: str, shared_secret: Optional[bytes] = None,
         "karmazyn_version":   getattr(ko, 'VERSION', '?'),
         "epoch":              ko.phi.epoch,
         "dim":                ko.phi.dim,
-        "t_vacuum()":           ko.phi.t_vacuum(),
+        "t_vacuum":           ko.phi.t_vacuum(),
         "temperature":        ko.phi.temperature(),
         "n_bubbles":          len(exported_bubbles),
         "n_holograms":        len(exported_holograms),
@@ -412,7 +412,7 @@ def inspect(path: str) -> dict:
     print(f"  wersja:     {m.get('bubblefs_version')} / karmazyn {m.get('karmazyn_version')}")
     print(f"  epoka:      {m.get('epoch')}  dim={m.get('dim')}")
     print(f"  bąble:      {len(bubble_files)}  hologramy={len(hologram_files)}")
-    print(f"  szyfrowane: {m.get('encrypted')}  T_vacuum={m.get('t_vacuum()', '?'):.4f}")
+    print(f"  szyfrowane: {m.get('encrypted')}  T_vacuum={m.get('t_vacuum', '?'):.4f}")
     return m
 
 
