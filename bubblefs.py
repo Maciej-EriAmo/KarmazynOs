@@ -24,6 +24,7 @@ Szyfrowanie przy eksporcie:
   - jeśli shared_secret=None → eksport plaintextów (tryb debug/lokalny)
 """
 
+import io
 import os
 import json
 import base64
@@ -32,9 +33,77 @@ import hmac as _hmac
 import numpy as np
 from typing import Optional, Dict, Any
 
-BUBBLEFS_VERSION = "1.0.0"
+BUBBLEFS_VERSION = "2.0.0"
 BBL_EXT  = ".bbl"
 HGM_EXT  = ".hgm"
+
+# --- Szyfrowanie AES-256-GCM ---
+# Kazdy .bbl i .hgm jest binarnym zaszyfrowanym blobem.
+# Format: magic(4) + salt(16) + nonce(12) + ciphertext+tag
+# Klucz: HMAC(HMAC(master, "bbl-v2:"+id), salt) - forward secrecy per zapis
+
+_BBL_MAGIC = b"BBL1"
+_HGM_MAGIC = b"HGM1"
+_NPZ_MAGIC = b"NPZ1"
+
+try:
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM as _AESGCM
+    _CRYPTO_OK = True
+except ImportError:
+    _AESGCM    = None
+    _CRYPTO_OK = False
+
+
+def _bbl_key(master_key: bytes, record_id: str) -> bytes:
+    """Unikalny klucz AES-256: HMAC-SHA256(master, b"bbl-v2:" + id)."""
+    return _hmac.new(master_key, b"bbl-v2:" + record_id.encode(), hashlib.sha256).digest()
+
+
+def _aes_encrypt(data: bytes, master_key: bytes, record_id: str, magic: bytes) -> bytes:
+    """Zaszyfruj dane. Zwraca: magic(4) + salt(16) + nonce(12) + ct+tag."""
+    if not _CRYPTO_OK:
+        import warnings
+        warnings.warn("bubblefs: cryptography niedostepna, plik niezaszyfrowany.", RuntimeWarning)
+        return magic + b"\x00" * 28 + data
+    salt    = os.urandom(16)
+    nonce   = os.urandom(12)
+    key     = _bbl_key(master_key, record_id)
+    derived = _hmac.new(key, salt, hashlib.sha256).digest()
+    aad     = magic + record_id.encode()
+    ct      = _AESGCM(derived).encrypt(nonce, data, aad)
+    return magic + salt + nonce + ct
+
+
+def _aes_decrypt(blob: bytes, master_key: bytes, record_id: str, magic: bytes) -> bytes:
+    """Odszyfruj blob. Rzuca ValueError przy zlym kluczu."""
+    if len(blob) < 4 + 16 + 12 + 16:
+        raise ValueError(f"Plik za krotki: {len(blob)}B")
+    if blob[:4] != magic:
+        raise ValueError(f"Zly magic: {blob[:4]!r}, oczekiwano {magic!r}")
+    salt  = blob[4:20]
+    nonce = blob[20:32]
+    ct    = blob[32:]
+    if not _CRYPTO_OK or (salt == b"\x00" * 16 and nonce == b"\x00" * 12):
+        return ct
+    key     = _bbl_key(master_key, record_id)
+    derived = _hmac.new(key, salt, hashlib.sha256).digest()
+    aad     = magic + record_id.encode()
+    try:
+        return _AESGCM(derived).decrypt(nonce, ct, aad)
+    except Exception:
+        raise ValueError(f"Odszyfrowanie nieudane dla {record_id!r}.")
+
+
+def _get_master_key(karmazyn_os, shared_secret: Optional[bytes]) -> bytes:
+    """Wybierz master key: shared_secret jesli podany, inaczej phi._p2s."""
+    if shared_secret is not None:
+        return shared_secret
+    p2s = getattr(getattr(karmazyn_os, "phi", None), "_p2s", None)
+    if p2s:
+        return p2s
+    raise ValueError(
+        "Brak klucza: podaj shared_secret lub upewnij sie ze phi._p2s jest zainicjowane."
+    )
 
 
 # ─── helpers ─────────────────────────────────────────────────────────────────
@@ -99,45 +168,41 @@ def export(karmazyn_os, path: str, shared_secret: Optional[bytes] = None,
     exported_holograms = []
 
     # ── Bąble ────────────────────────────────────────────────────────────────
+    # master key: shared_secret lub phi._p2s (nigdy plaintext)
+    master_key = _get_master_key(ko, shared_secret)
+
     for bid, bubble in ko.bubbles._b.items():
         revoked = bid in ko.bubbles._rev
 
-        # odszyfruj oryginalną zawartość
         raw_content = bubble.decrypt_content()
 
-        # re-encrypt kluczem eksportowym (lub zostaw plaintext)
-        if shared_secret is not None and not revoked:
-            exp_key = _export_key(shared_secret, bid)
-            exported_content = _xor_crypt(raw_content, exp_key)
-            content_encrypted = True
-        else:
-            exported_content = raw_content
-            content_encrypted = False
-
         bbl: Dict[str, Any] = {
-            "id":                  bubble.id,
-            "label":               bubble.label,
-            "inode":               bubble.inode,
-            "epoch_born":          bubble.epoch_born,
-            "recall_count":        bubble.recall_count,
-            "consolidated_from":   bubble.consolidated_from,
-            "metadata":            bubble.metadata,
-            "revoked":             revoked,
-            "content_encrypted":   content_encrypted,
-            "content_b64":         _b64(exported_content),
-            "fingerprint_b64":     _b64(bubble.fingerprint),
-            "S_struct":            bubble.S_struct.tolist(),
-            "S_sem":               bubble.S_sem.tolist(),
+            "id":                 bubble.id,
+            "label":              bubble.label,
+            "inode":              bubble.inode,
+            "epoch_born":         bubble.epoch_born,
+            "recall_count":       bubble.recall_count,
+            "consolidated_from":  bubble.consolidated_from,
+            "metadata":           bubble.metadata,
+            "revoked":            revoked,
+            # content jako plaintext base64 -- bezpieczne BO caly .bbl jest zaszyfrowany
+            "content_b64":        _b64(raw_content),
+            "fingerprint_b64":    _b64(bubble.fingerprint),
+            "S_struct":           bubble.S_struct.tolist(),
+            "S_sem":              bubble.S_sem.tolist(),
         }
-        # decay
         if bubble.decay_start_epoch is not None:
             bbl["decay_start_epoch"] = bubble.decay_start_epoch
             bbl["decay_rate"]        = bubble.decay_rate
 
-        fpath = os.path.join(bdir, bid + BBL_EXT)
+        # Serialzuj JSON -> zaszyfruj -> zapisz jako binarny blob
+        bbl_json  = json.dumps(bbl, ensure_ascii=False, default=str).encode("utf-8")
+        bbl_blob  = _aes_encrypt(bbl_json, master_key, bid, _BBL_MAGIC)
+
+        fpath     = os.path.join(bdir, bid + BBL_EXT)
         fpath_tmp = fpath + ".atom"
-        with open(fpath_tmp, 'w', encoding='utf-8') as f:
-            json.dump(bbl, f, indent=2, ensure_ascii=False)
+        with open(fpath_tmp, "wb") as f:
+            f.write(bbl_blob)
             f.flush()
             os.fsync(f.fileno())
 
@@ -164,10 +229,13 @@ def export(karmazyn_os, path: str, shared_secret: Optional[bytes] = None,
             "decay_rate":     h.decay_rate,
             "metadata":       h.metadata,
         }
-        fpath = os.path.join(hdir, hid + HGM_EXT)
+        hgm_json  = json.dumps(hgm, ensure_ascii=False, default=str).encode("utf-8")
+        hgm_blob  = _aes_encrypt(hgm_json, master_key, hid, _HGM_MAGIC)
+
+        fpath     = os.path.join(hdir, hid + HGM_EXT)
         fpath_tmp = fpath + ".atom"
-        with open(fpath_tmp, 'w', encoding='utf-8') as f:
-            json.dump(hgm, f, indent=2, ensure_ascii=False)
+        with open(fpath_tmp, "wb") as f:
+            f.write(hgm_blob)
             f.flush()
             os.fsync(f.fileno())
 
@@ -183,13 +251,19 @@ def export(karmazyn_os, path: str, shared_secret: Optional[bytes] = None,
 
     # ── Wektory Φ ─────────────────────────────────────────────────────────────
     if include_phi_vectors and ko.phi._sem:
-        np.savez(os.path.join(pdir, "sem_vectors.npz"), **ko.phi._sem)
+        buf = io.BytesIO()
+        np.savez(buf, **ko.phi._sem)
+        with open(os.path.join(pdir, "sem_vectors.npz"), "wb") as f:
+            f.write(_aes_encrypt(buf.getvalue(), master_key, "sem_vectors", _NPZ_MAGIC))
 
     if include_phi_vectors and ko.phi._mx.atoms:
-        s_data = {a['label']: a['S'] for a in ko.phi._mx.atoms}
-        t_data = {a['label']: np.array([a['T']]) for a in ko.phi._mx.atoms}
-        np.savez(os.path.join(pdir, "structural.npz"), **s_data)
-        np.savez(os.path.join(pdir, "temperatures.npz"), **t_data)
+        s_data = {a["label"]: a["S"] for a in ko.phi._mx.atoms}
+        t_data = {a["label"]: np.array([a["T"]]) for a in ko.phi._mx.atoms}
+        for fname, npz_d, uid in [("structural.npz", s_data, "structural"), ("temperatures.npz", t_data, "temperatures")]:
+            buf = io.BytesIO()
+            np.savez(buf, **npz_d)
+            with open(os.path.join(pdir, fname), "wb") as f:
+                f.write(_aes_encrypt(buf.getvalue(), master_key, uid, _NPZ_MAGIC))
 
     # ── Manifest ──────────────────────────────────────────────────────────────
     integrity = _manifest_hash(bdir, hdir)
@@ -254,6 +328,8 @@ def import_(karmazyn_os, path: str, shared_secret: Optional[bytes] = None,
     hdir = os.path.join(path, "holograms")
     pdir = os.path.join(path, "phi")
 
+    master_key = _get_master_key(karmazyn_os, shared_secret)
+
     # ── Manifest ──────────────────────────────────────────────────────────────
     with open(os.path.join(path, "manifest.json"), 'r', encoding='utf-8') as f:
         manifest = json.load(f)
@@ -297,81 +373,12 @@ def import_(karmazyn_os, path: str, shared_secret: Optional[bytes] = None,
             if not fname.endswith(BBL_EXT):
                 continue
             fpath = os.path.join(bdir, fname)
-            with open(fpath, 'r', encoding='utf-8') as f:
-                bbl = json.load(f)
-
-            bid     = bbl["id"]
-            label   = bbl["label"]
-            revoked = bbl.get("revoked", False)
-
-            # re-decrypt zawartość
-            raw_content_enc = _ub64(bbl["content_b64"])
-            if bbl.get("content_encrypted") and shared_secret is not None:
-                exp_key = _export_key(shared_secret, bid)
-                raw_content = _xor_crypt(raw_content_enc, exp_key)
+            with open(fpath, "rb") as f:
+                raw_hgm = f.read()
+            if raw_hgm[:4] == _HGM_MAGIC:
+                hgm = json.loads(_aes_decrypt(raw_hgm, master_key, fname.replace(HGM_EXT, ""), _HGM_MAGIC).decode("utf-8"))
             else:
-                raw_content = raw_content_enc
-
-            # wygeneruj nowy klucz dla tej instancji
-            new_key = ko.bubbles._make_key(bid) if not revoked else b""
-
-            S_struct = np.array(bbl["S_struct"], dtype=np.float32)
-            S_sem    = np.array(bbl["S_sem"],    dtype=np.float32)
-            fp       = _ub64(bbl["fingerprint_b64"])
-
-            # re-encrypt nowym kluczem instancji
-            new_encrypted = _xor_crypt(raw_content, new_key) if new_key else raw_content
-
-            if BubbleClass is not None:
-                import dataclasses
-                b = BubbleClass(
-                    id=bid,
-                    label=label,
-                    S_struct=S_struct,
-                    S_sem=S_sem,
-                    fingerprint=fp,
-                    bubble_key=new_key,
-                    encrypted_content=new_encrypted,
-                    inode=bbl.get("inode", f"karmazyn://bubbles/{label}"),
-                    epoch_born=bbl.get("epoch_born", 0),
-                    recall_count=bbl.get("recall_count", 0),
-                    consolidated_from=bbl.get("consolidated_from", ""),
-                    metadata=bbl.get("metadata", {}),
-                )
-                if "decay_start_epoch" in bbl:
-                    b.decay_start_epoch = bbl["decay_start_epoch"]
-                    b.decay_rate        = bbl.get("decay_rate", 0.0)
-            else:
-                # fallback dict-based (gdy brak importu klasy)
-                b = type('Bubble', (), bbl)()
-                b.S_struct          = S_struct
-                b.S_sem             = S_sem
-                b.fingerprint       = fp
-                b.bubble_key        = new_key
-                b.encrypted_content = new_encrypted
-                b.is_alive          = lambda: bool(b.bubble_key)
-                b.decrypt_content   = lambda: _xor_crypt(b.encrypted_content, b.bubble_key)
-
-            ko.bubbles._b[bid]     = b
-            ko.bubbles._idx[label] = bid
-            if revoked:
-                ko.bubbles._rev.add(bid)
-
-            imported_bubbles.append(bid)
-
-    # ── Hologramy ─────────────────────────────────────────────────────────────
-    if os.path.isdir(hdir):
-        try:
-            from karmazyn import Hologram
-        except ImportError:
-            Hologram = None
-
-        for fname in sorted(os.listdir(hdir)):
-            if not fname.endswith(HGM_EXT):
-                continue
-            fpath = os.path.join(hdir, fname)
-            with open(fpath, 'r', encoding='utf-8') as f:
-                hgm = json.load(f)
+                hgm = json.loads(raw_hgm.decode("utf-8"))
 
             hid = hgm["id"]
             if Hologram is not None:
@@ -394,17 +401,25 @@ def import_(karmazyn_os, path: str, shared_secret: Optional[bytes] = None,
             imported_holograms.append(hid)
 
     # ── Wektory Φ ─────────────────────────────────────────────────────────────
+    def _load_npz(fpath, uid):
+        with open(fpath, "rb") as f:
+            raw = f.read()
+        if raw[:4] == _NPZ_MAGIC:
+            raw = _aes_decrypt(raw, master_key, uid, _NPZ_MAGIC)
+        import io
+        return np.load(io.BytesIO(raw), allow_pickle=True)
+
     sem_path = os.path.join(pdir, "sem_vectors.npz")
     if os.path.exists(sem_path):
-        sem_data = np.load(sem_path, allow_pickle=True)
+        sem_data = _load_npz(sem_path, "sem_vectors")
         for k in sem_data.files:
             ko.phi._sem[k] = sem_data[k]
 
     str_path  = os.path.join(pdir, "structural.npz")
     temp_path = os.path.join(pdir, "temperatures.npz")
     if os.path.exists(str_path) and os.path.exists(temp_path):
-        str_data  = np.load(str_path,  allow_pickle=True)
-        temp_data = np.load(temp_path, allow_pickle=True)
+        str_data  = _load_npz(str_path,  "structural")
+        temp_data = _load_npz(temp_path, "temperatures")
         existing_labels = {a['label'] for a in ko.phi._mx.atoms}
         for lbl in str_data.files:
             if lbl not in existing_labels:
@@ -468,13 +483,7 @@ def export_single_bubble(karmazyn_os, label: str, path: str,
     revoked    = b.id in ko.bubbles._rev
     raw_content = b.decrypt_content()
 
-    if shared_secret is not None and not revoked:
-        exp_key           = _export_key(shared_secret, b.id)
-        exported_content  = _xor_crypt(raw_content, exp_key)
-        content_encrypted = True
-    else:
-        exported_content  = raw_content
-        content_encrypted = False
+    master_key = _get_master_key(ko, shared_secret)
 
     bbl = {
         "id":                 b.id,
@@ -485,8 +494,7 @@ def export_single_bubble(karmazyn_os, label: str, path: str,
         "consolidated_from":  b.consolidated_from,
         "metadata":           b.metadata,
         "revoked":            revoked,
-        "content_encrypted":  content_encrypted,
-        "content_b64":        _b64(exported_content),
+        "content_b64":        _b64(raw_content),
         "fingerprint_b64":    _b64(b.fingerprint),
         "S_struct":           b.S_struct.tolist(),
         "S_sem":              b.S_sem.tolist(),
@@ -495,10 +503,11 @@ def export_single_bubble(karmazyn_os, label: str, path: str,
         bbl["decay_start_epoch"] = b.decay_start_epoch
         bbl["decay_rate"]        = b.decay_rate
 
-    fpath = os.path.join(path, b.id + BBL_EXT)
+    bbl_blob  = _aes_encrypt(json.dumps(bbl, ensure_ascii=False, default=str).encode("utf-8"), master_key, b.id, _BBL_MAGIC)
+    fpath     = os.path.join(path, b.id + BBL_EXT)
     fpath_tmp = fpath + ".atom"
-    with open(fpath_tmp, 'w', encoding='utf-8') as f:
-        json.dump(bbl, f, indent=2, ensure_ascii=False)
+    with open(fpath_tmp, "wb") as f:
+        f.write(bbl_blob)
         f.flush()
         os.fsync(f.fileno())
 

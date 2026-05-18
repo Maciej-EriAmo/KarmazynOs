@@ -19,7 +19,7 @@ import numpy as np
 # ATOM
 # =====================================================================
 
-from karmazyn_core import Atom as CoreAtom
+from core.karmazyn_core import Atom as CoreAtom
 from core.phi_math import PhiPhysics
 
 class Atom(CoreAtom):

@@ -23,12 +23,6 @@ from dataclasses import dataclass, field
 from typing import Optional, List, Dict, Tuple
 
 try:
-    import numpy as np
-except ImportError:
-    print("Błąd: brak numpy. Zainstaluj: pip install numpy --break-system-packages")
-    sys.exit(1)
-
-try:
     from karmazyn import KarmazynOS, DELTA_T_BASE
 except ImportError:
     print("Błąd: nie znaleziono karmazyn.py")

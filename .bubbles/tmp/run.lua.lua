@@ -1,3 +1,34 @@
+stosując zmiany
+rozczochrany
+przed umywalką
+
+uśmiech szeroki
+z ust wyrwany
+szum piany
+
+zęby umyte
+by apetytem 
+powitać świt
+
+humorek dobry
+kawy szklaneczka
+płyn ukochany
+
+Boska chwila
+stopy podłoga
+chłodem studzi
+
+zmięta piżama
+chętnie rzucona 
+leży bezwstydna
+
+mięciutkie wargi
+nadmiar skupienia
+splątane westchnienia
+
+dotyk sprężysty
+bez myśli 
+cisza
 """
 bubble_commands.py — Komendy Babli dla shell.py v2.0
 =====================================================
@@ -12,9 +43,6 @@ Komendy dostepne w shell:
   BUBBLE TICK <nazwa>          — wykonaj krok Psi (update_psi)
   BUBBLE DECAY <nazwa>         — oznacz Babl do zaniku
   BUBBLE SAVE                  — zapisz wszystkie Bable do .soul
-  BUBBLE COPY <nazwa>         — kopiuj do schowka
-  BUBBLE PASTE [nazwa]        — wklej ze schowka
-  BUBBLE CLIPBOARD            — podglad schowka
   EDIT <nazwa>                 — otworz/stworz Babl i ustaw kontekst CTX
   IMPORT <tresc>               — dodaj tekst do aktywnego Babla
   VIEW                         — pokaz zawartosc aktywnego Babla
@@ -92,16 +120,13 @@ def cmd_bubble(args) -> str:
     rest = args[1:]
 
     dispatch = {
-        "LS":        _bubble_ls,
-        "NEW":       _bubble_new,
-        "STATUS":    _bubble_status,
-        "RESONATE":  _bubble_resonate,
-        "TICK":      _bubble_tick,
-        "DECAY":     _bubble_decay,
-        "SAVE":      _bubble_save,
-        "COPY":      cmd_copy,
-        "PASTE":     cmd_paste,
-        "CLIPBOARD": cmd_clipboard,
+        "LS":       _bubble_ls,
+        "NEW":      _bubble_new,
+        "STATUS":   _bubble_status,
+        "RESONATE": _bubble_resonate,
+        "TICK":     _bubble_tick,
+        "DECAY":    _bubble_decay,
+        "SAVE":     _bubble_save,
     }
 
     handler = dispatch.get(sub)
@@ -137,6 +162,8 @@ def _bubble_ls(args) -> str:
 
     for label in sorted(bubbles):
         b = bubbles[label]
+        if getattr(b, "transient", False):
+            continue  # bable systemowe (np. __clipboard__) nie na liscie
         mode  = "WS" if b.mode == BubbleMode.WORKSPACE else "LIB"
         psi   = f"{b.psi:.4f}" if not b._psi_stale else "     ?"
         theta = f"{b.theta:.4f}"
@@ -325,6 +352,8 @@ def _bubble_save(args) -> str:
 
     records = []
     for label, b in RUNTIME._bubbles.items():
+        if getattr(b, "transient", False):
+            continue  # transient bubble -- nie zapisywac do .soul
         records.append({
             "type":          "bubble",
             "id":            label,
@@ -466,3 +495,132 @@ def cmd_gallery(args) -> str:
 def cmd_export(args) -> str:
     """EXPORT — zapisz Bable do .soul JSONL."""
     return _bubble_save(args)
+
+
+# --- SCHOWEK (transient bubble __clipboard__) ---
+# __clipboard__ to babl z transient=True, immortal=True:
+#   - zyje tylko w RAM przez czas sesji
+#   - nie zapisuje sie do .soul
+#   - nie zanika przez vacuum decay
+#   - jest niedostepny z zewnatrz (nie ma deskryptora systemu OS)
+
+_CB = "__clipboard__"
+
+
+def _get_clipboard() -> "Bubble":
+    """Zwraca babl schowka, tworzy jesli nie istnieje."""
+    if _CB not in RUNTIME._bubbles:
+        # Odtworz jesli runtime zostal przeladowany bez _init_clipboard
+        from runtime import Bubble
+        RUNTIME._bubbles[_CB] = Bubble(
+            label=_CB, content="",
+            immortal=True, transient=True,
+            phi_secret=RUNTIME.phi._p2s,
+        )
+    return RUNTIME._bubbles[_CB]
+
+
+def cmd_copy(args) -> str:
+    """
+    COPY <label>      -- kopiuje tresc babla do schowka
+    COPY              -- pokazuje zawartosc schowka
+    """
+    err = _require_runtime()
+    if err:
+        return err
+
+    if not args:
+        return cmd_clipboard([])
+
+    label = args[0]
+    b = RUNTIME._bubbles.get(label)
+    if b is None:
+        return f"Babl '{label}' nie istnieje."
+
+    try:
+        content = b.content
+    except PermissionError as e:
+        return f"Blad szyfrowania: {e}"
+
+    if not content:
+        return f"Babl '{label}' jest pusty -- schowek nie zaktualizowany."
+
+    cb = _get_clipboard()
+    cb.content = content
+    preview = content[:60].replace("\n", " ")
+    return f"Skopiowano do schowka z '{label}': '{preview}...'"
+
+
+def cmd_paste(args) -> str:
+    """
+    PASTE <nowa_nazwa>   -- tworzy nowy babl z tresci schowka
+    PASTE                -- wkleja do aktywnego CTX
+    """
+    err = _require_runtime()
+    if err:
+        return err
+
+    cb = _get_clipboard()
+    try:
+        content = cb.content
+    except Exception as e:
+        return f"Blad odczytu schowka: {e}"
+
+    if not content:
+        return "Schowek jest pusty. Uzyj: COPY <label>"
+
+    # Cel: nowy babl lub aktywny CTX
+    if args:
+        target = args[0]
+        if target in RUNTIME._bubbles:
+            target_b = RUNTIME._bubbles[target]
+            try:
+                target_b.content = content
+            except PermissionError as e:
+                return f"Blad szyfrowania: {e}"
+            return f"Wklejono do istniejacego babla '{target}'."
+        # Nowy babl
+        if not RUNTIME.has_atom(target):
+            RUNTIME.write(target, content[:64], "clipboard_paste", 1.0)
+        RUNTIME.consolidate(target)
+        new_b = RUNTIME._bubbles.get(target)
+        if new_b:
+            new_b.content = content
+        return f"Wklejono do nowego babla '{target}'."
+
+    # Brak argumentu: wklej do aktywnego CTX
+    err2 = _require_ctx()
+    if err2:
+        return err2 + "\n  Lub podaj nazwe: PASTE <nazwa>"
+    target_b = RUNTIME._bubbles[CTX.current_label]
+    try:
+        target_b.content = content
+    except PermissionError as e:
+        return f"Blad szyfrowania: {e}"
+    return f"Wklejono do aktywnego babla '{CTX.current_label}'."
+
+
+def cmd_clipboard(args) -> str:
+    """
+    CLIPBOARD   -- podglad zawartosci schowka
+    """
+    err = _require_runtime()
+    if err:
+        return err
+
+    cb = _get_clipboard()
+    try:
+        content = cb.content
+    except Exception as e:
+        return f"Blad odczytu schowka: {e}"
+
+    if not content:
+        return "Schowek pusty."
+
+    lines = content.splitlines()
+    preview_lines = lines[:10]
+    more = len(lines) - 10 if len(lines) > 10 else 0
+    header = f"Schowek ({len(content)} znakow, {len(lines)} linii):"
+    body   = "\n".join(f"  {l}" for l in preview_lines)
+    footer = f"  ... i {more} wiecej linii" if more else ""
+    return "\n".join(filter(None, [header, body, footer]))
