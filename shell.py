@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""KarmazynOS Shell (ksh) v3.3"""
+"""KarmazynOS Shell (ksh) v3.4"""
 
 import os, sys, time, threading, readline, shlex
 from typing import Optional
 
 # Registry jako pierwszy import - rejestruje czas startu natychmiast
-from sys_registry import REGISTRY, ServiceStatus # type: ignore
+from sys_registry import REGISTRY, ServiceStatus  # type: ignore
 
 from runtime import SanctuaryRuntime, SystemState
 REGISTRY.register("runtime", ServiceStatus.OK, version="SanctuaryRuntime v1.4")
@@ -15,8 +15,14 @@ from karmazyn_ui import theme, gfx
 from karmazyn_ui.editor import EmanationEditor
 
 import bubble_commands as _bc
-from bubble_commands import CTX as BUBBLE_CTX, cmd_bubble, cmd_edit, cmd_import, cmd_gallery, cmd_export, cmd_view
-from bedit import KarmazynIntegration as BubbleRuntime, KARMAZYN_LOADED, BUBBLEFS_LOADED, SOUL_LOADED
+from bubble_commands import (
+    CTX as BUBBLE_CTX,
+    cmd_bubble, cmd_edit, cmd_import, cmd_gallery, cmd_export, cmd_view,
+)
+from bedit import (
+    KarmazynIntegration as BubbleRuntime,
+    KARMAZYN_LOADED, BUBBLEFS_LOADED, SOUL_LOADED,
+)
 
 try:
     from karmazyn_lang import KarmazynExecutor, parse_file
@@ -42,13 +48,37 @@ except ImportError as e:
     NOOEDIT_LOADED = False
     REGISTRY.register("nooedit", ServiceStatus.MISSING, message=str(e)[:60])
 
+try:
+    from karmazyn_scheduler import ThermalScheduler, attach_system_rules, cmd_scheduler
+    from karmazyn_net import KarmazynNet, cmd_net
+    SCHEDULER_LOADED = True
+    REGISTRY.register("scheduler", ServiceStatus.OK, version="ThermalScheduler v1.0")
+    REGISTRY.register("net",       ServiceStatus.OK, version="HTTP/FTP/Git/LLM")
+except ImportError as e:
+    SCHEDULER_LOADED = False
+    REGISTRY.register("scheduler", ServiceStatus.MISSING, message=str(e)[:60])
+    REGISTRY.register("net",       ServiceStatus.MISSING, message=str(e)[:60])
+
+try:
+    from karmazyn_radio import KarmazynRadio, cmd_radio
+    from karmazyn_browser import KarmazynBrowser, cmd_browse
+    MEDIA_LOADED = True
+    REGISTRY.register("radio",   ServiceStatus.OK, version="KarmazynRadio v1.0")
+    REGISTRY.register("browser", ServiceStatus.OK, version="KarmazynBrowser v1.0")
+except ImportError as e:
+    MEDIA_LOADED = False
+    REGISTRY.register("radio",   ServiceStatus.MISSING, message=str(e)[:60])
+    REGISTRY.register("browser", ServiceStatus.MISSING, message=str(e)[:60])
+
+
+
 from command_engine import Command, CommandRegistry, make_arg_schema
 
-# --- Inicjalizacja systemu ---
+# ── Inicjalizacja systemu ──────────────────────────────────────────────────────
 RUNTIME = SanctuaryRuntime()
 REGISTRY.set_runtime(RUNTIME)
 
-# HSS - rejestracja statusu z mikrojadra runtime (nie z bedit)
+# HSS z mikrojadra runtime
 if RUNTIME._hss_available:
     REGISTRY.register("hss", ServiceStatus.OK, version="HSSDaemon/ukernel")
 else:
@@ -56,29 +86,30 @@ else:
 
 BUBBLES = BubbleRuntime()
 
-# Wstrzykniecie HSSDaemon z runtime do edytora babli
+# Wstrzyknięcie HSSDaemon z runtime do edytora babli
 BUBBLES.hss_daemon = RUNTIME.hss
 
-# Rejestracja pozostalych uslug z bedit
+# Rejestracja uslug z bedit
 if KARMAZYN_LOADED:
-    REGISTRY.register("karmazyn_kernel", ServiceStatus.OK, version="karmazyn.py")
+    REGISTRY.register("karmazyn_kernel", ServiceStatus.OK,    version="karmazyn.py")
 else:
     REGISTRY.register("karmazyn_kernel", ServiceStatus.MISSING, message="brak karmazyn.py")
 
 if BUBBLEFS_LOADED:
-    REGISTRY.register("bubblefs", ServiceStatus.OK, version="BubbleFS v1.0")
+    REGISTRY.register("bubblefs",  ServiceStatus.OK,    version="BubbleFS v1.0")
 else:
-    REGISTRY.register("bubblefs", ServiceStatus.MISSING, message="brak bubblefs.py")
+    REGISTRY.register("bubblefs",  ServiceStatus.MISSING, message="brak bubblefs.py")
 
 if SOUL_LOADED:
-    REGISTRY.register("soul_store", ServiceStatus.OK, version=".soul JSONL")
+    REGISTRY.register("soul_store", ServiceStatus.OK,    version=".soul JSONL")
 else:
     REGISTRY.register("soul_store", ServiceStatus.MISSING, message="brak soul_store.py")
 
-# Globale bubble_commands
+# Globale bubble_commands — bezposrednie przypisanie, odporne na konflikty importow
 _bc.BUBBLES = BUBBLES
 _bc.RUNTIME = RUNTIME
 
+# Auto-save cichy — odpala sie z watku runtime, nie miesza ze stdout
 def _silent_auto_save():
     BUBBLES.save_all(silent=True)
     REGISTRY.log("DEBUG", "Auto-save", service="bubbles")
@@ -97,10 +128,28 @@ if LUA_AVAILABLE:
 else:
     LUA_EXECUTOR = None
 
+# Scheduler startuje PO runtime — slucha jego eventow
 RUNTIME.start_loop()
 REGISTRY.log("INFO", "Petla runtime uruchomiona", service="runtime")
 
-# --- HUD ---
+if SCHEDULER_LOADED:
+    SCHEDULER = ThermalScheduler(RUNTIME)
+    attach_system_rules(SCHEDULER, RUNTIME)
+    SCHEDULER.start()
+    NET = KarmazynNet(RUNTIME)
+    REGISTRY.log("INFO", "Scheduler i Net aktywne", service="shell")
+else:
+    SCHEDULER = None
+    NET = None
+
+if MEDIA_LOADED:
+    RADIO   = KarmazynRadio(RUNTIME)
+    BROWSER = KarmazynBrowser(RUNTIME)
+else:
+    RADIO   = None
+    BROWSER = None
+
+# ── HUD ───────────────────────────────────────────────────────────────────────
 def print_hud():
     loop_dead = hasattr(RUNTIME, 'is_alive') and not RUNTIME.is_alive()
     if loop_dead:
@@ -113,22 +162,24 @@ def print_hud():
     if loop_dead:
         hud += " [RUNTIME DEAD]"
 
+    # Bug fix: CTX.current_bubble_id = label runtime, nie hash bedit.
+    # Pytamy RUNTIME._bubbles zamiast BUBBLES.get_active_atoms().
     if BUBBLE_CTX.current_bubble_name:
-        # Bug fix: CTX.current_bubble_id = label runtime (nie hash bedit).
-        # Pytamy RUNTIME._bubbles o rezonujące atomy zamiast BUBBLES.get_active_atoms().
         label = BUBBLE_CTX.current_label
         b = RUNTIME._bubbles.get(label) if label else None
         if b is not None:
             try:
-                rez_count = sum(1 for a in RUNTIME.list_atoms() if b.resonates_with(a, 0.5))
+                rez_count = sum(1 for a in RUNTIME.list_atoms()
+                                if b.resonates_with(a, 0.5))
             except Exception:
                 rez_count = 0
         else:
             rez_count = 0
         hud += f"  {BUBBLE_CTX.current_bubble_name}({rez_count})"
+
     print(hud)
 
-# --- Komendy ---
+# ── Komendy ───────────────────────────────────────────────────────────────────
 def cmd_ls(args):
     atoms = RUNTIME.matrix.atoms()
     if atoms:
@@ -139,17 +190,14 @@ def cmd_ls(args):
         return gfx.draw_frame("ATOMY", rows)
     return FS.ls(args[0] if args else None)
 
-def cmd_cd(args):   return FS.cd(args[0] if args else "HOT")
-def cmd_pwd(args):  return FS.pwd()
-
-def cmd_touch(args):
-    return FS.touch(*args) if args else "TOUCH <id> [S] [E] [T]"
-
-def cmd_rm(args):   return FS.rm(args[0]) if args else "RM <id>"
-def cmd_cp(args):   return FS.cp(args[0], args[1]) if len(args) > 1 else "CP <src> <dst>"
-def cmd_mv(args):   return FS.mv(args[0], args[1]) if len(args) > 1 else "MV <id> <warstwa>"
-def cmd_sete(args): return FS.setE(args[0], args[1]) if len(args) > 1 else "SETE <id> <E>"
-def cmd_find(args): return FS.find(" ".join(args)) if args else "FIND <q>"
+def cmd_cd(args):    return FS.cd(args[0] if args else "HOT")
+def cmd_pwd(args):   return FS.pwd()
+def cmd_touch(args): return FS.touch(*args) if args else "TOUCH <id> [S] [E] [T]"
+def cmd_rm(args):    return FS.rm(args[0]) if args else "RM <id>"
+def cmd_cp(args):    return FS.cp(args[0], args[1]) if len(args) > 1 else "CP <src> <dst>"
+def cmd_mv(args):    return FS.mv(args[0], args[1]) if len(args) > 1 else "MV <id> <warstwa>"
+def cmd_sete(args):  return FS.setE(args[0], args[1]) if len(args) > 1 else "SETE <id> <E>"
+def cmd_find(args):  return FS.find(" ".join(args)) if args else "FIND <q>"
 
 def cmd_monitor(args):
     s = RUNTIME.status_summary()
@@ -175,13 +223,23 @@ def cmd_syslog(args):
     except ValueError:
         return "SYSLOG [n | ERROR | WARN | EVENT | clear]"
 
+def cmd_scheduler_cmd(args):
+    if not SCHEDULER_LOADED or SCHEDULER is None:
+        return "Scheduler niedostepny (brak karmazyn_scheduler.py)"
+    return cmd_scheduler(args, SCHEDULER)
+
+def cmd_net_cmd(args):
+    if not SCHEDULER_LOADED or NET is None:
+        return "Net niedostepny (brak karmazyn_net.py)"
+    return cmd_net(args, NET)
+
 def cmd_consolidate(args):
     if not args:
         return "CONSOLIDATE <id> [babel]"
     if len(args) == 1:
         target = args[0]
-        atom_id, bubble_name = (target, BUBBLE_CTX.current_bubble_name) \
-            if RUNTIME.has_atom(target) else (None, target)
+        atom_id, bubble_name = ((target, BUBBLE_CTX.current_bubble_name)
+                                if RUNTIME.has_atom(target) else (None, target))
     else:
         atom_id, bubble_name = args[0], args[1]
     if not bubble_name:
@@ -207,7 +265,7 @@ def cmd_stabilizuj(args):
         RUNTIME.resources["zywica"] -= 1
     try:
         RUNTIME.stabilize_atom(args[0])
-        return f"Stabilizowano {args[0]} (Zywica: {RUNTIME.resources.get('zywica','inf')})"
+        return f"Stabilizowano {args[0]} (Zywica: {RUNTIME.resources.get('zywica', 'inf')})"
     except ValueError as e:
         return str(e)
 
@@ -232,7 +290,8 @@ def cmd_obserwuj(args):
             while _observer_running:
                 rows = []
                 for a in RUNTIME.matrix.atoms():
-                    col = "phi_thermal" if a.T > 70 else ("phi_signal" if a.T > 30 else "phi_decay")
+                    col = ("phi_thermal" if a.T > 70
+                           else "phi_signal" if a.T > 30 else "phi_decay")
                     bar = gfx.progress_bar(a.T, a.T_max, fg=col)
                     rows.append(f"{a.id:10} {bar} {a.T:5.1f} {a.state}")
                 sys.stdout.write("\033[H\033[J")
@@ -250,7 +309,8 @@ def cmd_atom_status(args):
     if not args: return "ATOM STATUS <id>"
     atom = RUNTIME.get_atom(args[0])
     if not atom: return "Atom nie istnieje."
-    col = "phi_thermal" if atom.T > 70 else ("phi_signal" if atom.T > 30 else "phi_decay")
+    col = ("phi_thermal" if atom.T > 70
+           else "phi_signal" if atom.T > 30 else "phi_decay")
     return gfx.draw_frame(f"ATOM {atom.id}", [
         f"S: {atom.S}   E: {atom.E}",
         f"T: {atom.T:.1f}   Stan: {atom.state}   Wiek: {atom.age}",
@@ -275,9 +335,10 @@ def cmd_compile(args):
     if not os.path.isfile(args[0]): return f"BLAD brak pliku: {args[0]}"
     try:
         program = parse_file(args[0])
-        lines = [f"AST: {args[0]}", "="*50]
+        lines = [f"AST: {args[0]}", "=" * 50]
         for i, stmt in enumerate(program.statements, 1):
-            fields = {k: v for k, v in stmt.__dict__.items() if not k.startswith('_')}
+            fields = {k: v for k, v in stmt.__dict__.items()
+                      if not k.startswith('_')}
             lines.append(f"{i}. {type(stmt).__name__}: {fields}")
         return "\n".join(lines)
     except Exception as e:
@@ -292,8 +353,10 @@ def cmd_lua(args):
         return f"BLAD {r}" if isinstance(r, str) and r.startswith("Blad") else f"OK {args[1]}"
     filepath = args[0]
     if not os.path.isfile(filepath):
-        alt = os.path.join("lua_bin", filepath if filepath.endswith(".lua") else filepath+".lua")
-        if os.path.isfile(alt): filepath = alt
+        alt = os.path.join("lua_bin",
+                           filepath if filepath.endswith(".lua") else filepath + ".lua")
+        if os.path.isfile(alt):
+            filepath = alt
     REGISTRY.log("INFO", f"LUA {filepath}", service="lua")
     r = LUA_EXECUTOR.run_file(filepath, args=args[1:])
     return f"BLAD {r}" if isinstance(r, str) and r.startswith("Blad") else f"OK {filepath}"
@@ -310,10 +373,10 @@ def cmd_help(args):
             lines.append(f"  {cat}")
         lines += ["", "HELP <komenda|kategoria>"]
         return "\n".join(lines)
-    topic = args[0].upper()
+    topic     = args[0].upper()
     topic_low = args[0].lower()
     if topic_low in registry.get_categories():
-        cmds = registry.list_commands(category=topic_low)
+        cmds  = registry.list_commands(category=topic_low)
         lines = [f"Kategoria '{topic_low}':"]
         for cname in cmds:
             c = registry.get(cname)
@@ -325,6 +388,11 @@ def cmd_help(args):
 def cmd_exit(args):
     global _observer_running
     _observer_running = False
+    # Zatrzymaj scheduler i zapisz harmonogram przed wyjsciem
+    if SCHEDULER_LOADED and SCHEDULER is not None:
+        SCHEDULER.save()
+        SCHEDULER.stop()
+        REGISTRY.log("INFO", "Scheduler zatrzymany", service="scheduler")
     REGISTRY.log("INFO", f"Shell zamkniety po {REGISTRY.uptime_str()}", service="shell")
     RUNTIME.stop_loop()
     BUBBLES.save_all()
@@ -344,7 +412,8 @@ def cmd_emanation_edit(args, current_bubble, runtime, resolver_func,
     for a in bubble_getter(target_bubble_id):
         a_id = a.get('id') if isinstance(a, dict) else getattr(a, 'id', None)
         if str(a_id) == atom_id:
-            existing_content = a.get('E') if isinstance(a, dict) else getattr(a, 'E', "")
+            existing_content = (a.get('E') if isinstance(a, dict)
+                                else getattr(a, 'E', ""))
             break
     editor = EmanationEditor(target_name=f"{bubble_alias}::{atom_id}",
                              initial_content=existing_content)
@@ -356,32 +425,41 @@ def cmd_emanation_edit(args, current_bubble, runtime, resolver_func,
         if not new_content.strip():
             print("BLAD: Pusta Emanacja.")
             input("Enter aby kontynuowac...")
-            editor = EmanationEditor(target_name=f"{bubble_alias}::{atom_id} [PUSTA]",
-                                     initial_content=new_content)
+            editor = EmanationEditor(
+                target_name=f"{bubble_alias}::{atom_id} [PUSTA]",
+                initial_content=new_content)
             continue
         buffer_id = f"__edit_buffer_{atom_id}_{int(time.time())}"
         try:
             runtime.create_atom(buffer_id, "LUA_SCRIPT", new_content, 100.0)
-            result = bubble_importer(target_bubble_id, buffer_id, runtime, target_name=atom_id)
+            result = bubble_importer(target_bubble_id, buffer_id, runtime,
+                                     target_name=atom_id)
             if isinstance(result, dict) and result.get("status") == "reflected":
                 coh = result.get("coherence", 0.0)
-                REGISTRY.log("WARN", f"Odbicie: {bubble_alias}::{atom_id} coh={coh:.2f}", service="bubbles")
+                REGISTRY.log("WARN",
+                             f"Odbicie: {bubble_alias}::{atom_id} coh={coh:.2f}",
+                             service="bubbles")
                 print(f"ODBICIE coh={coh:.2f}")
                 if input("Operator R? [t/n]: ").strip().lower() != 't':
                     break
-                editor = EmanationEditor(target_name=f"{bubble_alias}::{atom_id} [POPRAWKA]",
-                                         initial_content=new_content)
+                editor = EmanationEditor(
+                    target_name=f"{bubble_alias}::{atom_id} [POPRAWKA]",
+                    initial_content=new_content)
             else:
-                REGISTRY.log("INFO", f"Emanacja: {bubble_alias}::{atom_id}", service="bubbles")
+                REGISTRY.log("INFO",
+                             f"Emanacja: {bubble_alias}::{atom_id}",
+                             service="bubbles")
                 print("Stabilizacja zakonczona.")
                 break
         except Exception as e:
-            REGISTRY.log("ERROR", f"Konsolidacja {buffer_id}: {e}", service="bubbles")
+            REGISTRY.log("ERROR", f"Konsolidacja {buffer_id}: {e}",
+                         service="bubbles")
             print(f"Blad: {e}")
             if input("Ponownie? [t/n]: ").strip().lower() != 't':
                 break
-            editor = EmanationEditor(target_name=f"{bubble_alias}::{atom_id} [BLAD]",
-                                     initial_content=new_content)
+            editor = EmanationEditor(
+                target_name=f"{bubble_alias}::{atom_id} [BLAD]",
+                initial_content=new_content)
         finally:
             try:
                 runtime.delete_atom(buffer_id)
@@ -389,71 +467,95 @@ def cmd_emanation_edit(args, current_bubble, runtime, resolver_func,
                 pass
 
 def cmd_emanation_edit_wrapper(args):
-    return cmd_emanation_edit(args, BUBBLE_CTX.current_bubble_id, RUNTIME,
-                               FS.resolve_alias, BUBBLES.get_active_atoms,
-                               BUBBLES.import_to_bubble)
+    return cmd_emanation_edit(
+        args, BUBBLE_CTX.current_bubble_id, RUNTIME,
+        FS.resolve_alias, BUBBLES.get_active_atoms, BUBBLES.import_to_bubble,
+    )
 
-# --- Rejestracja komend ---
+# ── Rejestracja komend ────────────────────────────────────────────────────────
 registry = CommandRegistry()
 
 def reg(name, handler, help_text="", category="general", args_schema=None):
     registry.register(Command(name, handler, help_text, category, args_schema or []))
 
-reg("LS",             cmd_ls,                    "Listuje atomy",                        category="navigation")
-reg("CD",             cmd_cd,                    "Zmienia warstwe",                      category="navigation")
-reg("PWD",            cmd_pwd,                   "Biezaca warstwa",                      category="navigation")
-reg("TOUCH",          cmd_touch,                 "Tworzy atom",                          category="atoms",
-    args_schema=[make_arg_schema("id",True), make_arg_schema("S",False),
-                 make_arg_schema("E",False), make_arg_schema("T",False,"float")])
-reg("RM",             cmd_rm,                    "Usuwa atom",                           category="atoms",
-    args_schema=[make_arg_schema("id",True)])
-reg("CP",             cmd_cp,                    "Kopiuje atom",                         category="atoms",
-    args_schema=[make_arg_schema("src",True), make_arg_schema("dst",True)])
-reg("MV",             cmd_mv,                    "Przenosi atom",                        category="atoms",
-    args_schema=[make_arg_schema("id",True), make_arg_schema("warstwa",True)])
-reg("SETE",           cmd_sete,                  "Zmienia emanacje",                     category="atoms",
-    args_schema=[make_arg_schema("id",True), make_arg_schema("E",True)])
-reg("FIND",           cmd_find,                  "Szuka w atomach",                      category="atoms",
-    args_schema=[make_arg_schema("q",True)])
-reg("MONITOR",        cmd_monitor,               "Podsumowanie stanow",                  category="system")
-reg("STATUS",         cmd_status,                "Pelny status: uslugi, runtime, czas",  category="system")
-reg("SYSLOG",         cmd_syslog,                "Log systemowy [n|ERROR|WARN|clear]",   category="system")
-reg("OBSERWUJ",       cmd_obserwuj,              "Dynamiczny podglad atomow",            category="system")
-reg("CONSOLIDATE",    cmd_consolidate,           "Atom -> babel",                        category="atoms",
-    args_schema=[make_arg_schema("id",True), make_arg_schema("babel",False)])
-reg("STABILIZUJ",     cmd_stabilizuj,            "Podnosi temperature",                  category="atoms",
-    args_schema=[make_arg_schema("id",True)])
-reg("DOTKNIJ PUSTKI", cmd_dotknij_pustki,        "Obniza temperature",                   category="atoms",
-    args_schema=[make_arg_schema("id",True)])
-reg("ATOM STATUS",    cmd_atom_status,           "Szczegoly atomu",                      category="atoms",
-    args_schema=[make_arg_schema("id",True)])
-reg("BUBBLE",         cmd_bubble,                "Zarzadzanie Bablami [LS|NEW|STATUS|TICK|RESONATE|DECAY|COPY|PASTE]", category="bubbles")
-reg("BUBBLE_EDIT",    cmd_edit,                  "Edytor babli",                         category="bubbles")
-reg("EDIT",           cmd_emanation_edit_wrapper,"Edytor liniowy emanacji",              category="bubbles")
-reg("IMPORT",         cmd_import,                "Importuje plik do babla",              category="bubbles")
-reg("GALLERY",        cmd_gallery,               "Multimedia w bablu",                   category="bubbles")
-reg("EXPORT",         cmd_export,                "Eksportuje z babla",                   category="bubbles")
-reg("NOOEDIT",        cmd_nooedit,               "NooEdit dla Babla",                    category="bubbles",
-    args_schema=[make_arg_schema("label",True)])
-reg("RUN",            cmd_run,                   "Wykonuje plik .karm",                  category="scripting",
-    args_schema=[make_arg_schema("plik",True)])
-reg("COMPILE",        cmd_compile,               "AST pliku .karm",                      category="scripting",
-    args_schema=[make_arg_schema("plik",True)])
-reg("LUA",            cmd_lua,                   "Wykonuje .lua lub babel Lua",          category="scripting")
-reg("HELP",           cmd_help,                  "Pomoc",                                category="system")
-reg("EXIT",           cmd_exit,                  "Konczy shell",                         category="system")
+# Nawigacja
+reg("LS",             cmd_ls,                     "Listuje atomy lub FS",                  category="navigation")
+reg("CD",             cmd_cd,                     "Zmienia warstwe",                       category="navigation")
+reg("PWD",            cmd_pwd,                    "Biezaca warstwa",                       category="navigation")
 
-# --- Autocomplete ---
+# Atomy
+reg("TOUCH",          cmd_touch,                  "Tworzy atom",                           category="atoms",
+    args_schema=[make_arg_schema("id", True), make_arg_schema("S", False),
+                 make_arg_schema("E", False), make_arg_schema("T", False, "float")])
+reg("RM",             cmd_rm,                     "Usuwa atom",                            category="atoms",
+    args_schema=[make_arg_schema("id", True)])
+reg("CP",             cmd_cp,                     "Kopiuje atom",                          category="atoms",
+    args_schema=[make_arg_schema("src", True), make_arg_schema("dst", True)])
+reg("MV",             cmd_mv,                     "Przenosi atom",                         category="atoms",
+    args_schema=[make_arg_schema("id", True), make_arg_schema("warstwa", True)])
+reg("SETE",           cmd_sete,                   "Zmienia emanacje",                      category="atoms",
+    args_schema=[make_arg_schema("id", True), make_arg_schema("E", True)])
+reg("FIND",           cmd_find,                   "Szuka w atomach",                       category="atoms",
+    args_schema=[make_arg_schema("q", True)])
+reg("CONSOLIDATE",    cmd_consolidate,             "Atom -> babel",                         category="atoms",
+    args_schema=[make_arg_schema("id", True), make_arg_schema("babel", False)])
+reg("STABILIZUJ",     cmd_stabilizuj,             "Podnosi temperature",                   category="atoms",
+    args_schema=[make_arg_schema("id", True)])
+reg("DOTKNIJ PUSTKI", cmd_dotknij_pustki,         "Obniza temperature",                    category="atoms",
+    args_schema=[make_arg_schema("id", True)])
+reg("ATOM STATUS",    cmd_atom_status,            "Szczegoly atomu",                       category="atoms",
+    args_schema=[make_arg_schema("id", True)])
+
+# Bąble
+reg("BUBBLE",         cmd_bubble,                 "Zarzadzanie Bablami [LS|NEW|STATUS|TICK|RESONATE|DECAY|COPY|PASTE]",
+                                                                                           category="bubbles")
+reg("BUBBLE_EDIT",    cmd_edit,                   "Edytor babli",                          category="bubbles")
+reg("EDIT",           cmd_emanation_edit_wrapper, "Edytor liniowy emanacji",               category="bubbles")
+reg("IMPORT",         cmd_import,                 "Importuje tekst do babla",              category="bubbles")
+reg("VIEW",           cmd_view,                   "Pokazuje aktywny babel",                category="bubbles")
+reg("GALLERY",        cmd_gallery,               "Stan semantyczny babli",                 category="bubbles")
+reg("EXPORT",         cmd_export,                "Eksportuje do .soul JSONL",              category="bubbles")
+reg("NOOEDIT",        cmd_nooedit,               "NooEdit dla Babla",                      category="bubbles",
+    args_schema=[make_arg_schema("label", True)])
+
+# Skrypty
+reg("RUN",            cmd_run,                    "Wykonuje plik .karm",                   category="scripting",
+    args_schema=[make_arg_schema("plik", True)])
+reg("COMPILE",        cmd_compile,                "AST pliku .karm",                       category="scripting",
+    args_schema=[make_arg_schema("plik", True)])
+reg("LUA",            cmd_lua,                    "Wykonuje .lua lub babel Lua",           category="scripting")
+
+# System
+reg("MONITOR",        cmd_monitor,                "Podsumowanie stanow atomow",             category="system")
+reg("STATUS",         cmd_status,                 "Pelny status: uslugi, runtime, czas",   category="system")
+reg("SYSLOG",         cmd_syslog,                 "Log systemowy [n|ERROR|WARN|clear]",    category="system")
+reg("OBSERWUJ",       cmd_obserwuj,               "Dynamiczny podglad atomow",             category="system")
+reg("SCHEDULER",      cmd_scheduler_cmd,          "Triggery termiczne [LS|LOG|SAVE|ON|OFF|RM]",
+                                                                                           category="system")
+# Siec
+reg("NET",            cmd_net_cmd,                "Siec [FETCH|GIT|LLM|FTP|PUSH|PULL|STATUS]",
+                                                                                           category="network")
+
+# Ogolne
+reg("HELP",           cmd_help,                   "Pomoc",                                 category="system")
+reg("EXIT",           cmd_exit,                   "Konczy shell",                          category="system")
+
+if MEDIA_LOADED:
+    reg("RADIO",  lambda a: cmd_radio(a, RADIO),   "Radio [PLAY|STOP|LS|ADD|FAV|VOL]",  category="media")
+    reg("BROWSE", lambda a: cmd_browse(a, BROWSER),"Przegladarka [<url>|BACK|LINKS|BM]", category="media")
+# ── Autocomplete ──────────────────────────────────────────────────────────────
 def completer(text, state):
-    line = readline.get_line_buffer()
+    line   = readline.get_line_buffer()
     begidx = readline.get_begidx()
     try:
         tokens = shlex.split(line[:begidx])
     except ValueError:
         tokens = []
     cur = line[begidx:readline.get_endidx()]
+
     if len(tokens) == 0:
-        matches = [c for c in registry.list_commands() if c.lower().startswith(cur.lower())]
+        matches = [c for c in registry.list_commands()
+                   if c.lower().startswith(cur.lower())]
         if os.path.isdir("lua_bin"):
             for f in os.listdir("lua_bin"):
                 if f.endswith(".lua"):
@@ -462,21 +564,24 @@ def completer(text, state):
                         matches.append(s)
         matches.sort()
         return matches[state] if state < len(matches) else None
+
     if len(tokens) == 1:
         first = tokens[0].upper()
         if first == "LUA" and os.path.isdir("lua_bin"):
-            m = [f for f in os.listdir("lua_bin") if f.endswith(".lua") and f.lower().startswith(cur.lower())]
+            m = [f for f in os.listdir("lua_bin")
+                 if f.endswith(".lua") and f.lower().startswith(cur.lower())]
             return m[state] if state < len(m) else None
         cands = [c for c in registry.list_commands() if c.startswith(first + " ")]
         words = [c.split()[1] for c in cands]
         m = [w for w in words if w.lower().startswith(cur.lower())]
         return m[state] if state < len(m) else None
+
     return None
 
 readline.set_completer(completer)
 readline.parse_and_bind("tab: complete")
 
-# --- Glowna petla ---
+# ── Glowna petla ──────────────────────────────────────────────────────────────
 def main():
     print(gfx.draw_frame("KARMAZYN OS", REGISTRY.startup_report(), style="phi_core"))
 
@@ -485,8 +590,9 @@ def main():
         total = sum(b['active_atoms'] for b in bubbles)
         print(f"Bable: {len(bubbles)} ({total} atomow)")
 
-    print("  STATUS - uslugi i runtime  |  SYSLOG - log  |  HELP - pomoc\n")
+    print("  STATUS  SYSLOG  SCHEDULER  NET  HELP\n")
 
+    # Auto-discovery konfiguracji
     config_bubble_id = None
     for b in BUBBLES.list_bubbles():
         if b.get('label') == 'sys_config' or 'sys_config' in str(b.get('id', '')):
@@ -501,11 +607,16 @@ def main():
             if s_val == "BIN":
                 cmd_id = a.get('id') if isinstance(a, dict) else a.id
                 target = a.get('E') if isinstance(a, dict) else a.E
+
                 def make_handler(t):
-                    return lambda args: (LUA_EXECUTOR.run_file(t) if t.endswith('.lua')
+                    return lambda args: (LUA_EXECUTOR.run_file(t)
+                                         if t.endswith('.lua')
                                          else LUA_EXECUTOR.run_bubble(t))
-                registry.register(Command(cmd_id.upper(), make_handler(target),
-                                          f"Narzedzie: {target}", "tools"))
+
+                registry.register(Command(
+                    cmd_id.upper(), make_handler(target),
+                    f"Narzedzie: {target}", "tools",
+                ))
                 REGISTRY.log("INFO", f"BIN: {cmd_id} -> {target}", service="shell")
 
     REGISTRY.log("INFO", "Shell gotowy", service="shell")
@@ -532,6 +643,7 @@ def process_command(line: str) -> str:
         return f"Blad skladni: {e}"
     if not parts:
         return ""
+
     verb1 = parts[0].upper()
     if len(parts) > 1:
         verb2 = f"{verb1} {parts[1].upper()}"
@@ -543,8 +655,12 @@ def process_command(line: str) -> str:
     else:
         cmd  = registry.get(verb1)
         args = []
+
     if cmd is None:
-        lua_path = os.path.join("lua_bin", verb1.lower() + (".lua" if not verb1.lower().endswith(".lua") else ""))
+        lua_path = os.path.join(
+            "lua_bin",
+            verb1.lower() + ("" if verb1.lower().endswith(".lua") else ".lua"),
+        )
         if LUA_AVAILABLE and os.path.isfile(lua_path):
             try:
                 r = LUA_EXECUTOR.run_file(lua_path, args=parts[1:])
@@ -554,6 +670,7 @@ def process_command(line: str) -> str:
                 return f"[BLAD LUA] {e}"
         REGISTRY.log("WARN", f"Nieznana: {verb1}", service="shell")
         return f"[BLAD] Nieznana komenda: {verb1}"
+
     ok, err = cmd.validate_args(args)
     if not ok:
         return f"[BLAD] {err}"
