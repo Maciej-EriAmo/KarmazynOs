@@ -1,7 +1,11 @@
 """
-karmazyn_dom.py — DOM → Phi-Space Mapper KarmazynOS v1.1
+karmazyn_dom.py — DOM → Phi-Space Mapper KarmazynOS v1.2
 =========================================================
 KarmazynOS — Maciej Mazur, Warsaw 2026
+
+Zmiany v1.2:
+  - DOM READER: try/except ValueError przy konwersji T_threshold.
+    Poprzednio: DOM READER X crashował shell ValueError.
 
 Zmiany v1.1:
   - __all__ = ['DOMMapper', 'cmd_dom'] — eksplicitny publiczny interfejs
@@ -805,7 +809,10 @@ def cmd_dom(args, browser: Any, mapper: "DOMMapper") -> str:
     if sub == "READER":
         if browser._current is None:
             return "Brak strony."
-        T_thr = float(args[1]) if len(args) > 1 else 60.0
+        try:
+            T_thr = float(args[1]) if len(args) > 1 else 60.0
+        except ValueError:
+            return f"Nieprawidłowa temperatura: '{args[1]}'. Podaj liczbę, np. DOM READER 60"
         atoms = mapper.reader_mode(browser._current.url, T_thr)
         if not atoms:
             return f"Brak atomów z T >= {T_thr}. DOM MAP najpierw."

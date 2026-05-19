@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-karmazyn_browser.py — Tekstowa Przegladarka HTTP KarmazynOS v4.3
+karmazyn_browser.py — Tekstowa Przegladarka HTTP KarmazynOS v4.4
 ================================================================
 KarmazynOS — Maciej Mazur, Warsaw 2026
 
@@ -824,9 +824,17 @@ class KarmazynBrowser:
         return self._load_url(prev, add_to_history=False)
 
     def forward(self) -> Tuple[bool, str]:
-        """BUG FIX v4.3: add_to_history=False (poprzednio True → ping-pong)."""
+        """
+        BUG FIX v4.3: add_to_history=False powstrzymuje ping-pong.
+        BUG FIX v4.4: przed _load_url ręcznie odkładamy _current na _history.
+        Bez tego: A→B, back→A, forward→B, back→? (A wyparowało ze stosu).
+        _load_url z add_to_history=False nie czyści _forward (poprawne),
+        ale też nie odkłada current — musimy to zrobić sami tutaj.
+        """
         if not self._forward:
             return False, 'Brak stron do przodu.'
+        if self._current:
+            self._add_to_history(self._current.url)
         nxt = self._forward.popleft()
         return self._load_url(nxt, add_to_history=False)
 
