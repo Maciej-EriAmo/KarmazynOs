@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""KarmazynOS Shell (ksh) v3.4"""
+"""KarmazynOS Shell (ksh) v3.5"""
 
 import os, sys, time, threading, readline, shlex
 from typing import Optional
 
-# Registry jako pierwszy import - rejestruje czas startu natychmiast
+# Registry jako pierwszy import — rejestruje czas startu natychmiast
 from sys_registry import REGISTRY, ServiceStatus  # type: ignore
 
 from runtime import SanctuaryRuntime, SystemState
@@ -59,37 +59,46 @@ except ImportError as e:
     REGISTRY.register("scheduler", ServiceStatus.MISSING, message=str(e)[:60])
     REGISTRY.register("net",       ServiceStatus.MISSING, message=str(e)[:60])
 
+# Radio + AudioDaemon (karmazyn_audio dołącza automatycznie przez KarmazynRadio)
 try:
     from karmazyn_radio import KarmazynRadio, cmd_radio
-    from karmazyn_browser import KarmazynBrowser, cmd_browse
-    MEDIA_LOADED = True
-    REGISTRY.register("radio",   ServiceStatus.OK, version="KarmazynRadio v1.0")
-    REGISTRY.register("browser", ServiceStatus.OK, version="KarmazynBrowser v1.0")
+    from karmazyn_audio import cmd_audio
+    RADIO_LOADED = True
+    REGISTRY.register("radio", ServiceStatus.OK, version="KarmazynRadio v1.1")
+    REGISTRY.register("audio", ServiceStatus.OK, version="AudioDaemon v1.2 mpv/IPC")
 except ImportError as e:
-    MEDIA_LOADED = False
-    REGISTRY.register("radio",   ServiceStatus.MISSING, message=str(e)[:60])
-    REGISTRY.register("browser", ServiceStatus.MISSING, message=str(e)[:60])
+    RADIO_LOADED = False
+    REGISTRY.register("radio", ServiceStatus.MISSING, message=str(e)[:60])
+    REGISTRY.register("audio", ServiceStatus.MISSING, message=str(e)[:60])
 
-
+# Luneta — tekstowa przeglądarka HTTP z integracją DOMMapper
+try:
+    from karmazyn_browser import KarmazynBrowser as Luneta, cmd_browse as cmd_luneta
+    from karmazyn_dom import cmd_dom, DOMMapper
+    LUNETA_LOADED = True
+    REGISTRY.register("luneta", ServiceStatus.OK, version="Luneta v4.4")
+    REGISTRY.register("dom",    ServiceStatus.OK, version="DOMMapper v1.2")
+except ImportError as e:
+    LUNETA_LOADED = False
+    REGISTRY.register("luneta", ServiceStatus.MISSING, message=str(e)[:60])
+    REGISTRY.register("dom",    ServiceStatus.MISSING, message=str(e)[:60])
 
 from command_engine import Command, CommandRegistry, make_arg_schema
 
 # ── Inicjalizacja systemu ──────────────────────────────────────────────────────
+
 RUNTIME = SanctuaryRuntime()
 REGISTRY.set_runtime(RUNTIME)
 
-# HSS z mikrojadra runtime
+# HSS z mikrojądra runtime
 if RUNTIME._hss_available:
     REGISTRY.register("hss", ServiceStatus.OK, version="HSSDaemon/ukernel")
 else:
     REGISTRY.register("hss", ServiceStatus.MISSING, message="hss_demo.py nie znaleziono")
 
 BUBBLES = BubbleRuntime()
-
-# Wstrzyknięcie HSSDaemon z runtime do edytora babli
 BUBBLES.hss_daemon = RUNTIME.hss
 
-# Rejestracja uslug z bedit
 if KARMAZYN_LOADED:
     REGISTRY.register("karmazyn_kernel", ServiceStatus.OK,    version="karmazyn.py")
 else:
@@ -105,11 +114,11 @@ if SOUL_LOADED:
 else:
     REGISTRY.register("soul_store", ServiceStatus.MISSING, message="brak soul_store.py")
 
-# Globale bubble_commands — bezposrednie przypisanie, odporne na konflikty importow
+# Globale bubble_commands
 _bc.BUBBLES = BUBBLES
 _bc.RUNTIME = RUNTIME
 
-# Auto-save cichy — odpala sie z watku runtime, nie miesza ze stdout
+# Auto-save cichy — emitowany z wątku runtime
 def _silent_auto_save():
     BUBBLES.save_all(silent=True)
     REGISTRY.log("DEBUG", "Auto-save", service="bubbles")
@@ -128,7 +137,7 @@ if LUA_AVAILABLE:
 else:
     LUA_EXECUTOR = None
 
-# Scheduler startuje PO runtime — slucha jego eventow
+# Scheduler startuje PO runtime — słucha jego eventów
 RUNTIME.start_loop()
 REGISTRY.log("INFO", "Petla runtime uruchomiona", service="runtime")
 
@@ -140,16 +149,27 @@ if SCHEDULER_LOADED:
     REGISTRY.log("INFO", "Scheduler i Net aktywne", service="shell")
 else:
     SCHEDULER = None
-    NET = None
+    NET       = None
 
-if MEDIA_LOADED:
-    RADIO   = KarmazynRadio(RUNTIME)
-    BROWSER = KarmazynBrowser(RUNTIME)
+# Radio — AudioDaemon (mpv IPC) dołącza automatycznie w KarmazynRadio.__init__
+if RADIO_LOADED:
+    RADIO = KarmazynRadio(RUNTIME)
+    REGISTRY.log("INFO", f"Radio: player={RADIO._audio._mpv_path or 'brak mpv'}",
+                 service="shell")
 else:
-    RADIO   = None
-    BROWSER = None
+    RADIO = None
+
+# Luneta — DOMMapper dołącza automatycznie w KarmazynBrowser.__init__
+if LUNETA_LOADED:
+    LUNETA_INST = Luneta(RUNTIME)
+    REGISTRY.log("INFO",
+                 f"Luneta: DOMMapper={'aktywny' if LUNETA_INST._has_dom else 'brak'}",
+                 service="shell")
+else:
+    LUNETA_INST = None
 
 # ── HUD ───────────────────────────────────────────────────────────────────────
+
 def print_hud():
     loop_dead = hasattr(RUNTIME, 'is_alive') and not RUNTIME.is_alive()
     if loop_dead:
@@ -159,11 +179,16 @@ def print_hud():
     now = time.strftime("%H:%M:%S")
     hud = (f"{theme.ansi_fg('phi_ghost')}{now}{theme.RESET} "
            f"HOT:{s['HOT']} WARM:{s['WARM']} COLD:{s['COLD']} TOMB:{s['TOMB']}")
+
     if loop_dead:
         hud += " [RUNTIME DEAD]"
 
-    # Bug fix: CTX.current_bubble_id = label runtime, nie hash bedit.
-    # Pytamy RUNTIME._bubbles zamiast BUBBLES.get_active_atoms().
+    # Radio — status odtwarzania w HUD
+    if RADIO_LOADED and RADIO and RADIO.is_playing():
+        now_pl = RADIO.now_playing() or "?"
+        hud += f"  ▶ {now_pl[:18]}"
+
+    # Aktywny bąbel
     if BUBBLE_CTX.current_bubble_name:
         label = BUBBLE_CTX.current_label
         b = RUNTIME._bubbles.get(label) if label else None
@@ -179,7 +204,8 @@ def print_hud():
 
     print(hud)
 
-# ── Komendy ───────────────────────────────────────────────────────────────────
+# ── Komendy systemu ───────────────────────────────────────────────────────────
+
 def cmd_ls(args):
     atoms = RUNTIME.matrix.atoms()
     if atoms:
@@ -232,6 +258,34 @@ def cmd_net_cmd(args):
     if not SCHEDULER_LOADED or NET is None:
         return "Net niedostepny (brak karmazyn_net.py)"
     return cmd_net(args, NET)
+
+# ── Komendy mediów ────────────────────────────────────────────────────────────
+
+def cmd_radio_cmd(args):
+    if not RADIO_LOADED or RADIO is None:
+        return ("Radio niedostepne.\n"
+                "  Termux: pkg install mpv && pip install karmazyn_radio")
+    return cmd_radio(args, RADIO)
+
+def cmd_audio_cmd(args):
+    if not RADIO_LOADED or RADIO is None or RADIO._audio is None:
+        return "AudioDaemon niedostepny (brak karmazyn_audio.py lub mpv)"
+    return cmd_audio(args, RADIO._audio)
+
+def cmd_luneta_cmd(args):
+    if not LUNETA_LOADED or LUNETA_INST is None:
+        return ("Luneta niedostepna (brak karmazyn_browser.py).\n"
+                "  pip install karmazyn_browser")
+    return cmd_luneta(args, LUNETA_INST)
+
+def cmd_dom_cmd(args):
+    if not LUNETA_LOADED or LUNETA_INST is None:
+        return "DOMMapper niedostepny (brak karmazyn_browser.py / karmazyn_dom.py)"
+    if not LUNETA_INST._has_dom or LUNETA_INST.dom_mapper is None:
+        return "DOMMapper niedostepny (brak karmazyn_dom.py w katalogu projektu)"
+    return cmd_dom(args, LUNETA_INST, LUNETA_INST.dom_mapper)
+
+# ── Komendy atomów / bąbli ────────────────────────────────────────────────────
 
 def cmd_consolidate(args):
     if not args:
@@ -317,6 +371,8 @@ def cmd_atom_status(args):
         gfx.progress_bar(atom.T, atom.T_max, fg=col),
     ])
 
+# ── Komendy skryptów ──────────────────────────────────────────────────────────
+
 def cmd_run(args):
     if not KARM_LOADED: return "BLAD karm nie zaladowany"
     if not args: return "RUN <plik.karm>"
@@ -366,6 +422,8 @@ def cmd_nooedit(args):
     REGISTRY.log("INFO", f"NOOEDIT {args[0] if args else '?'}", service="nooedit")
     return _nooedit_cmd(args, runtime=RUNTIME)
 
+# ── Pomoc i wyjście ───────────────────────────────────────────────────────────
+
 def cmd_help(args):
     if not args:
         lines = ["Dostepne kategorie:"]
@@ -388,15 +446,27 @@ def cmd_help(args):
 def cmd_exit(args):
     global _observer_running
     _observer_running = False
-    # Zatrzymaj scheduler i zapisz harmonogram przed wyjsciem
+
+    # Scheduler — zapisz i zatrzymaj
     if SCHEDULER_LOADED and SCHEDULER is not None:
         SCHEDULER.save()
         SCHEDULER.stop()
         REGISTRY.log("INFO", "Scheduler zatrzymany", service="scheduler")
+
+    # Radio — zatrzymaj odtwarzanie i wątki AudioDaemon
+    if RADIO_LOADED and RADIO is not None:
+        if RADIO.is_playing():
+            RADIO.stop()
+        if RADIO._audio is not None:
+            RADIO._audio.shutdown()   # join() wątków meta i watchdog
+            REGISTRY.log("INFO", "AudioDaemon zatrzymany", service="audio")
+
     REGISTRY.log("INFO", f"Shell zamkniety po {REGISTRY.uptime_str()}", service="shell")
     RUNTIME.stop_loop()
     BUBBLES.save_all()
     sys.exit(0)
+
+# ── Edytor emanacji ───────────────────────────────────────────────────────────
 
 def cmd_emanation_edit(args, current_bubble, runtime, resolver_func,
                        bubble_getter, bubble_importer):
@@ -473,77 +543,82 @@ def cmd_emanation_edit_wrapper(args):
     )
 
 # ── Rejestracja komend ────────────────────────────────────────────────────────
+
 registry = CommandRegistry()
 
 def reg(name, handler, help_text="", category="general", args_schema=None):
     registry.register(Command(name, handler, help_text, category, args_schema or []))
 
 # Nawigacja
-reg("LS",             cmd_ls,                     "Listuje atomy lub FS",                  category="navigation")
-reg("CD",             cmd_cd,                     "Zmienia warstwe",                       category="navigation")
-reg("PWD",            cmd_pwd,                    "Biezaca warstwa",                       category="navigation")
+reg("LS",             cmd_ls,           "Listuje atomy lub FS",        category="navigation")
+reg("CD",             cmd_cd,           "Zmienia warstwe",             category="navigation")
+reg("PWD",            cmd_pwd,          "Biezaca warstwa",             category="navigation")
 
 # Atomy
-reg("TOUCH",          cmd_touch,                  "Tworzy atom",                           category="atoms",
-    args_schema=[make_arg_schema("id", True), make_arg_schema("S", False),
-                 make_arg_schema("E", False), make_arg_schema("T", False, "float")])
-reg("RM",             cmd_rm,                     "Usuwa atom",                            category="atoms",
+reg("TOUCH",          cmd_touch,        "Tworzy atom",                 category="atoms",
+    args_schema=[make_arg_schema("id", True),  make_arg_schema("S", False),
+                 make_arg_schema("E", False),  make_arg_schema("T", False, "float")])
+reg("RM",             cmd_rm,           "Usuwa atom",                  category="atoms",
     args_schema=[make_arg_schema("id", True)])
-reg("CP",             cmd_cp,                     "Kopiuje atom",                          category="atoms",
+reg("CP",             cmd_cp,           "Kopiuje atom",                category="atoms",
     args_schema=[make_arg_schema("src", True), make_arg_schema("dst", True)])
-reg("MV",             cmd_mv,                     "Przenosi atom",                         category="atoms",
-    args_schema=[make_arg_schema("id", True), make_arg_schema("warstwa", True)])
-reg("SETE",           cmd_sete,                   "Zmienia emanacje",                      category="atoms",
-    args_schema=[make_arg_schema("id", True), make_arg_schema("E", True)])
-reg("FIND",           cmd_find,                   "Szuka w atomach",                       category="atoms",
+reg("MV",             cmd_mv,           "Przenosi atom",               category="atoms",
+    args_schema=[make_arg_schema("id", True),  make_arg_schema("warstwa", True)])
+reg("SETE",           cmd_sete,         "Zmienia emanacje",            category="atoms",
+    args_schema=[make_arg_schema("id", True),  make_arg_schema("E", True)])
+reg("FIND",           cmd_find,         "Szuka w atomach",             category="atoms",
     args_schema=[make_arg_schema("q", True)])
-reg("CONSOLIDATE",    cmd_consolidate,             "Atom -> babel",                         category="atoms",
-    args_schema=[make_arg_schema("id", True), make_arg_schema("babel", False)])
-reg("STABILIZUJ",     cmd_stabilizuj,             "Podnosi temperature",                   category="atoms",
+reg("CONSOLIDATE",    cmd_consolidate,  "Atom -> babel",               category="atoms",
+    args_schema=[make_arg_schema("id", True),  make_arg_schema("babel", False)])
+reg("STABILIZUJ",     cmd_stabilizuj,   "Podnosi temperature",         category="atoms",
     args_schema=[make_arg_schema("id", True)])
-reg("DOTKNIJ PUSTKI", cmd_dotknij_pustki,         "Obniza temperature",                    category="atoms",
+reg("DOTKNIJ PUSTKI", cmd_dotknij_pustki, "Obniza temperature",        category="atoms",
     args_schema=[make_arg_schema("id", True)])
-reg("ATOM STATUS",    cmd_atom_status,            "Szczegoly atomu",                       category="atoms",
+reg("ATOM STATUS",    cmd_atom_status,  "Szczegoly atomu",             category="atoms",
     args_schema=[make_arg_schema("id", True)])
 
 # Bąble
-reg("BUBBLE",         cmd_bubble,                 "Zarzadzanie Bablami [LS|NEW|STATUS|TICK|RESONATE|DECAY|COPY|PASTE]",
-                                                                                           category="bubbles")
-reg("BUBBLE_EDIT",    cmd_edit,                   "Edytor babli",                          category="bubbles")
-reg("EDIT",           cmd_emanation_edit_wrapper, "Edytor liniowy emanacji",               category="bubbles")
-reg("IMPORT",         cmd_import,                 "Importuje tekst do babla",              category="bubbles")
-reg("VIEW",           cmd_view,                   "Pokazuje aktywny babel",                category="bubbles")
-reg("GALLERY",        cmd_gallery,               "Stan semantyczny babli",                 category="bubbles")
-reg("EXPORT",         cmd_export,                "Eksportuje do .soul JSONL",              category="bubbles")
-reg("NOOEDIT",        cmd_nooedit,               "NooEdit dla Babla",                      category="bubbles",
+reg("BUBBLE",      cmd_bubble,                 "Babble [LS|NEW|STATUS|TICK|RESONATE|DECAY|COPY|PASTE]",
+                                                                        category="bubbles")
+reg("BUBBLE_EDIT", cmd_edit,                   "Edytor babli",         category="bubbles")
+reg("EDIT",        cmd_emanation_edit_wrapper, "Edytor emanacji",      category="bubbles")
+reg("IMPORT",      cmd_import,                 "Importuje tekst",      category="bubbles")
+reg("VIEW",        cmd_view,                   "Pokazuje aktywny babel",category="bubbles")
+reg("GALLERY",     cmd_gallery,                "Stan semantyczny babli",category="bubbles")
+reg("EXPORT",      cmd_export,                 "Eksportuje .soul JSONL",category="bubbles")
+reg("NOOEDIT",     cmd_nooedit,                "NooEdit dla Babla",    category="bubbles",
     args_schema=[make_arg_schema("label", True)])
 
 # Skrypty
-reg("RUN",            cmd_run,                    "Wykonuje plik .karm",                   category="scripting",
+reg("RUN",     cmd_run,     "Wykonuje plik .karm",      category="scripting",
     args_schema=[make_arg_schema("plik", True)])
-reg("COMPILE",        cmd_compile,                "AST pliku .karm",                       category="scripting",
+reg("COMPILE", cmd_compile, "AST pliku .karm",          category="scripting",
     args_schema=[make_arg_schema("plik", True)])
-reg("LUA",            cmd_lua,                    "Wykonuje .lua lub babel Lua",           category="scripting")
+reg("LUA",     cmd_lua,     "Wykonuje .lua lub babel",  category="scripting")
 
 # System
-reg("MONITOR",        cmd_monitor,                "Podsumowanie stanow atomow",             category="system")
-reg("STATUS",         cmd_status,                 "Pelny status: uslugi, runtime, czas",   category="system")
-reg("SYSLOG",         cmd_syslog,                 "Log systemowy [n|ERROR|WARN|clear]",    category="system")
-reg("OBSERWUJ",       cmd_obserwuj,               "Dynamiczny podglad atomow",             category="system")
-reg("SCHEDULER",      cmd_scheduler_cmd,          "Triggery termiczne [LS|LOG|SAVE|ON|OFF|RM]",
-                                                                                           category="system")
-# Siec
-reg("NET",            cmd_net_cmd,                "Siec [FETCH|GIT|LLM|FTP|PUSH|PULL|STATUS]",
-                                                                                           category="network")
+reg("MONITOR",    cmd_monitor,       "Podsumowanie stanow atomow",              category="system")
+reg("STATUS",     cmd_status,        "Pelny status uslug i runtime",            category="system")
+reg("SYSLOG",     cmd_syslog,        "Log systemowy [n|ERROR|WARN|clear]",      category="system")
+reg("OBSERWUJ",   cmd_obserwuj,      "Dynamiczny podglad atomow",               category="system")
+reg("SCHEDULER",  cmd_scheduler_cmd, "Triggery termiczne [LS|LOG|SAVE|ON|OFF|RM]",
+                                                                                category="system")
+reg("HELP",       cmd_help,          "Pomoc",                                   category="system")
+reg("EXIT",       cmd_exit,          "Konczy shell",                            category="system")
 
-# Ogolne
-reg("HELP",           cmd_help,                   "Pomoc",                                 category="system")
-reg("EXIT",           cmd_exit,                   "Konczy shell",                          category="system")
+# Sieć
+reg("NET", cmd_net_cmd, "Siec [FETCH|GIT|LLM|FTP|PUSH|PULL|STATUS]",           category="network")
 
-if MEDIA_LOADED:
-    reg("RADIO",  lambda a: cmd_radio(a, RADIO),   "Radio [PLAY|STOP|LS|ADD|FAV|VOL]",  category="media")
-    reg("BROWSE", lambda a: cmd_browse(a, BROWSER),"Przegladarka [<url>|BACK|LINKS|BM]", category="media")
+# Media
+reg("RADIO",  cmd_radio_cmd,  "Radio [PLAY|STOP|LS|ADD|FAV|VOL|NOW|SEARCH]",   category="media")
+reg("AUDIO",  cmd_audio_cmd,  "AudioDaemon [STATUS|PAUSE|VOL|STOP|INFO|EVENTS]",category="media")
+reg("LUNETA", cmd_luneta_cmd, "Luneta [<url>|BACK|FORWARD|LINKS|FOLLOW|FIND|SCROLL|BM|DOM]",
+                                                                                category="media")
+reg("L",      cmd_luneta_cmd, "Alias: LUNETA",                                  category="media")
+reg("DOM",    cmd_dom_cmd,    "DOMMapper [MAP|OUTLINE|READER|FIND|PHI|STATS]",  category="media")
+
 # ── Autocomplete ──────────────────────────────────────────────────────────────
+
 def completer(text, state):
     line   = readline.get_line_buffer()
     begidx = readline.get_begidx()
@@ -581,16 +656,26 @@ def completer(text, state):
 readline.set_completer(completer)
 readline.parse_and_bind("tab: complete")
 
-# ── Glowna petla ──────────────────────────────────────────────────────────────
+# ── Główna pętla ──────────────────────────────────────────────────────────────
+
 def main():
-    print(gfx.draw_frame("KARMAZYN OS", REGISTRY.startup_report(), style="phi_core"))
+    # Banner startowy
+    banner_lines = REGISTRY.startup_report()
+    if RADIO_LOADED:
+        banner_lines.append(
+            f"Radio:   {RADIO._audio._mpv_path or 'brak mpv — pkg install mpv'}"
+        )
+    if LUNETA_LOADED:
+        dom_status = "aktywny" if LUNETA_INST._has_dom else "brak karmazyn_dom.py"
+        banner_lines.append(f"Luneta:  DOMMapper {dom_status}")
+    print(gfx.draw_frame("KARMAZYN OS", banner_lines, style="phi_core"))
 
     bubbles = BUBBLES.list_bubbles()
     if bubbles:
         total = sum(b['active_atoms'] for b in bubbles)
         print(f"Bable: {len(bubbles)} ({total} atomow)")
 
-    print("  STATUS  SYSLOG  SCHEDULER  NET  HELP\n")
+    print("  STATUS  SYSLOG  SCHEDULER  NET  RADIO  LUNETA  DOM  HELP\n")
 
     # Auto-discovery konfiguracji
     config_bubble_id = None
