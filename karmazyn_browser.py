@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-karmazyn_browser.py — Tekstowa Przegladarka HTTP KarmazynOS v4.4
+karmazyn_browser.py — Tekstowa Przegladarka HTTP KarmazynOS v4.5
 ================================================================
 KarmazynOS — Maciej Mazur, Warsaw 2026
 
@@ -684,6 +684,15 @@ class KarmazynBrowser:
             self.dom_mapper = None
             self._has_dom   = False
 
+        # JSBridge — silnik JS dla stron (opcjonalny)
+        try:
+            from karmazyn_js_web import JSBridge
+            self.js_bridge = JSBridge(runtime)
+            self._has_js   = True
+        except ImportError:
+            self.js_bridge = None
+            self._has_js   = False
+
     # ── Cache LRU ─────────────────────────────────────────────────────────────
 
     def _cache_put(self, url: str, page: ParsedPage):
@@ -790,12 +799,19 @@ class KarmazynBrowser:
         return True, self._render_current()
 
     def _map_dom(self, page: ParsedPage) -> None:
-        """Mapuje stronę do phi-space jeśli DOMMapper dostępny."""
+        """Mapuje stronę do phi-space i dołącza JSBridge."""
         if self._has_dom and self.dom_mapper is not None:
             try:
                 self.dom_mapper.map_page(page)
             except Exception as e:
                 _log_error(f'DOM map: {e}')
+        # JSBridge — buduje LiveDOM i uruchamia skrypty
+        if self._has_js and self.js_bridge is not None:
+            try:
+                self.js_bridge.attach(page)
+                self.js_bridge.run_scripts(page)
+            except Exception as e:
+                _log_error(f'JS bridge: {e}')
 
     def _add_to_history(self, url: str):
         if self._history and self._history[-1] == url:
@@ -877,10 +893,14 @@ class KarmazynBrowser:
         if self._current.truncated:
             header.insert(3, COLORS['red'] + '  [STRONA PRZYCIĘTA – LIMIT 5 MB]'
                           + COLORS['reset'])
-        # Wskaźnik DOM mappera
+        # Wskaźnik phi-space (DOMMapper + JSBridge)
         if self._has_dom and self._current.url in getattr(self.dom_mapper, '_page_atoms', {}):
             n_atoms = len(self.dom_mapper._page_atoms[self._current.url])
-            header.insert(4, COLORS['gray'] + f'  φ: {n_atoms} atomów' + COLORS['reset'])
+            js_info = ""
+            if self._has_js and self.js_bridge and self.js_bridge._active:
+                s = self.js_bridge.status()
+                js_info = f"  JS:{s.get('atoms',0)}at"
+            header.insert(4, COLORS['gray'] + f'  φ: {n_atoms} atomów{js_info}' + COLORS['reset'])
 
         page_lines = lines[self._scroll:self._scroll + PAGE_SIZE]
         remaining  = max(0, total - self._scroll - PAGE_SIZE)
@@ -1027,6 +1047,7 @@ def cmd_browse(args, browser: KarmazynBrowser) -> str:
     BROWSE HISTORY          — historia
     BROWSE SAVE [label]     — zapisz stronę jako atom
     BROWSE DOM [subkomenda] — operacje phi-space na DOM (patrz: DOM ?)
+    BROWSE JS [subkomenda]  — silnik JS [STATUS|THERMAL|TICK|DOM|RUN]
     """
     if not args:
         return browser._render_current() if browser._current else 'BROWSE <url>'
@@ -1128,6 +1149,18 @@ def cmd_browse(args, browser: KarmazynBrowser) -> str:
             return cmd_dom(args[1:], browser, browser.dom_mapper)
         except ImportError:
             return 'Błąd importu karmazyn_dom.'
+
+
+    # ── JS — silnik JavaScript ─────────────────────────────────────────────────
+    if sub == 'JS':
+        if not browser._has_js or browser.js_bridge is None:
+            return ('JSBridge niedostępny (brak karmazyn_js_web.py).\n'
+                    'Wymagane: karmazyn_js_core.py, karmazyn_js_phi.py, karmazyn_js_web.py')
+        try:
+            from karmazyn_js_web import cmd_js_bridge
+            return cmd_js_bridge(args[1:], browser.js_bridge)
+        except ImportError:
+            return 'Błąd importu karmazyn_js_web.'
 
     # Fallback — traktuj jako URL
     _, msg = browser.go(args[0])
