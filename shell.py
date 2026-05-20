@@ -83,6 +83,15 @@ except ImportError as e:
     REGISTRY.register("luneta", ServiceStatus.MISSING, message=str(e)[:60])
     REGISTRY.register("dom",    ServiceStatus.MISSING, message=str(e)[:60])
 
+# Display — SDL2/pygame moduł graficzny (opcjonalny)
+try:
+    from karmazyn_display import KarmazynDisplay
+    DISPLAY_LOADED = True
+    REGISTRY.register("display", ServiceStatus.OK, version="KarmazynDisplay v1.0")
+except ImportError as e:
+    DISPLAY_LOADED = False
+    REGISTRY.register("display", ServiceStatus.MISSING, message=str(e)[:60])
+
 from command_engine import Command, CommandRegistry, make_arg_schema
 
 # ── Inicjalizacja systemu ──────────────────────────────────────────────────────
@@ -167,6 +176,18 @@ if LUNETA_LOADED:
                  service="shell")
 else:
     LUNETA_INST = None
+
+# Display — SDL2 (Dual-Monitor: okno obok terminala)
+if DISPLAY_LOADED:
+    DISPLAY = KarmazynDisplay()
+    _disp_ok = DISPLAY.init()
+    if _disp_ok:
+        DISPLAY.bind_phi(RUNTIME.phi if hasattr(RUNTIME,'phi') else None)
+        REGISTRY.log("INFO", "Display SDL2 aktywny", service="display")
+    else:
+        REGISTRY.log("INFO", "Display: brak X11 — tryb tekstowy", service="display")
+else:
+    DISPLAY = None
 
 # ── HUD ───────────────────────────────────────────────────────────────────────
 
@@ -608,6 +629,23 @@ reg("EXIT",       cmd_exit,          "Konczy shell",                            
 
 # Sieć
 reg("NET", cmd_net_cmd, "Siec [FETCH|GIT|LLM|FTP|PUSH|PULL|STATUS]",           category="network")
+
+# Display
+def cmd_display_cmd(args):
+    if not DISPLAY_LOADED or DISPLAY is None:
+        return "Display niedostepny (brak karmazyn_display.py lub pygame)"
+    sub = args[0].upper() if args else "STATUS"
+    if sub == "STATUS":
+        return f"Display: {'aktywny' if DISPLAY.available else 'brak X11'}"
+    if sub == "BENCH":
+        from karmazyn_display import benchmark
+        r = benchmark(100)
+        return (f"Benchmark: {r['ms_per_frame']:.2f} ms/frame  "
+                f"{r['fps_capacity']:.0f} fps max  "
+                f"{r['ms_per_frame']/16.67*100:.0f}% budzetu")
+    return "DISPLAY STATUS | BENCH"
+
+reg("DISPLAY", cmd_display_cmd, "Display SDL2 [STATUS|BENCH]", category="system")
 
 # Media
 reg("RADIO",  cmd_radio_cmd,  "Radio [PLAY|STOP|LS|ADD|FAV|VOL|NOW|SEARCH]",   category="media")
