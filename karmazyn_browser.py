@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-karmazyn_browser.py — Tekstowa Przegladarka HTTP KarmazynOS v4.5
+karmazyn_browser.py — Tekstowa Przegladarka HTTP Luneta dla KarmazynOS v4.5
 ================================================================
 KarmazynOS — Maciej Mazur, Warsaw 2026
 
 Bazuje na v4.2 (semantic tree, ANSI-aware, tabele, redirect, gzip).
 Nowe w v4.3:
   - Integracja DOMMapper: każda strona automatycznie mapowana do phi-space
-  - Subkomendy DOM w cmd_browse (DOM MAP/OUTLINE/READER/FIND/PHI/STATS)
+  - Subkomendy DOM w cmd_luneta (DOM MAP/OUTLINE/READER/FIND/PHI/STATS)
   - fix: forward() używa add_to_history=False (był ping-pong z back())
   - fix: _update_atom_temp używa "WARM"/"COLD" zamiast "stygnie"
   - fix: ANSIState.apply() wywołane przy łamaniu linii (kontynuacja stylu)
@@ -210,7 +210,7 @@ except ImportError:
 
     def http_get(url, headers=None, timeout=15.0):
         hdrs = {
-            'User-Agent':      'KarmazynBrowser/4.3',
+            'User-Agent':      'Luneta/4.3',
             'Accept-Encoding': 'gzip, deflate',
             **(headers or {}),
         }
@@ -657,7 +657,7 @@ def _log_error(msg: str) -> None:
 
 # ── Główna klasa przeglądarki ─────────────────────────────────────────────────
 
-class KarmazynBrowser:
+class LunetaBrowser:
     T_FRESH  = 80.0
     T_CACHED = 45.0
     T_STALE  = 20.0
@@ -761,7 +761,7 @@ class KarmazynBrowser:
                         return True, self._render_current()
 
             resp = http_get(current_url,
-                            headers={'User-Agent': 'KarmazynBrowser/4.3'})
+                            headers={'User-Agent': 'Luneta/4.3'})
             if resp.status in (301, 302, 303, 307, 308):
                 location = (resp.headers.get('Location')
                             or resp.headers.get('location'))
@@ -907,7 +907,7 @@ class KarmazynBrowser:
         footer     = COLORS['gray'] + '─' * self.width + COLORS['reset'] + '\n'
         footer    += f'[{self._scroll + 1}-{min(self._scroll + PAGE_SIZE, total)}/{total}]'
         if remaining:
-            footer += f'  BROWSE SCROLL 1 aby kontynuować ({remaining} linii)'
+            footer += f'  LUNETA SCROLL 1 aby kontynuować ({remaining} linii)'
         return '\n'.join(header + page_lines + [footer])
 
     def scroll(self, pages: int = 1) -> str:
@@ -1030,27 +1030,27 @@ class KarmazynBrowser:
 
 # ── Komenda shella ────────────────────────────────────────────────────────────
 
-def cmd_browse(args, browser: KarmazynBrowser) -> str:
+def cmd_luneta(args, browser: LunetaBrowser) -> str:
     """
-    BROWSE <url>            — otwórz stronę
-    BROWSE BACK             — wstecz
-    BROWSE FORWARD / FWD   — naprzód
-    BROWSE RELOAD           — odśwież
-    BROWSE LINKS            — lista linków
-    BROWSE FOLLOW <n>       — podążaj za linkiem nr n
-    BROWSE FIND <tekst>     — szukaj na stronie (tekst)
-    BROWSE SCROLL [n]       — przewiń o n stron (domyślnie 1)
-    BROWSE SOURCE [n]       — źródło HTML (pierwsze n linii)
-    BROWSE BM               — dodaj zakładkę
-    BROWSE BOOKMARKS        — lista zakładek
-    BROWSE GOTO <n>         — idź do zakładki nr n
-    BROWSE HISTORY          — historia
-    BROWSE SAVE [label]     — zapisz stronę jako atom
-    BROWSE DOM [subkomenda] — operacje phi-space na DOM (patrz: DOM ?)
-    BROWSE JS [subkomenda]  — silnik JS [STATUS|THERMAL|TICK|DOM|RUN]
+    LUNETA <url>            — otwórz stronę
+    LUNETA BACK             — wstecz
+    LUNETA FORWARD / FWD   — naprzód
+    LUNETA RELOAD           — odśwież
+    LUNETA LINKS            — lista linków
+    LUNETA FOLLOW <n>       — podążaj za linkiem nr n
+    LUNETA FIND <tekst>     — szukaj na stronie (tekst)
+    LUNETA SCROLL [n]       — przewiń o n stron (domyślnie 1)
+    LUNETA SOURCE [n]       — źródło HTML (pierwsze n linii)
+    LUNETA BM               — dodaj zakładkę
+    LUNETA BOOKMARKS        — lista zakładek
+    LUNETA GOTO <n>         — idź do zakładki nr n
+    LUNETA HISTORY          — historia
+    LUNETA SAVE [label]     — zapisz stronę jako atom
+    LUNETA DOM [subkomenda] — operacje phi-space na DOM (patrz: DOM ?)
+    LUNETA JS [subkomenda]  — silnik JS [STATUS|THERMAL|TICK|DOM|RUN]
     """
     if not args:
-        return browser._render_current() if browser._current else 'BROWSE <url>'
+        return browser._render_current() if browser._current else 'LUNETA <url>'
 
     sub = args[0].upper()
 
@@ -1082,7 +1082,7 @@ def cmd_browse(args, browser: KarmazynBrowser) -> str:
 
     if sub == 'FOLLOW':
         if len(args) < 2:
-            return 'BROWSE FOLLOW <numer>'
+            return 'LUNETA FOLLOW <numer>'
         try:
             _, msg = browser.follow_link(int(args[1]))
             return msg
@@ -1091,7 +1091,7 @@ def cmd_browse(args, browser: KarmazynBrowser) -> str:
 
     if sub == 'FIND':
         if len(args) < 2:
-            return 'BROWSE FIND <tekst>'
+            return 'LUNETA FIND <tekst>'
         return browser.find(' '.join(args[1:]))
 
     if sub == 'SCROLL':
@@ -1110,7 +1110,7 @@ def cmd_browse(args, browser: KarmazynBrowser) -> str:
 
     if sub == 'GOTO':
         if len(args) < 2:
-            return 'BROWSE GOTO <numer>'
+            return 'LUNETA GOTO <numer>'
         try:
             _, msg = browser.go_bookmark(int(args[1]))
             return msg
