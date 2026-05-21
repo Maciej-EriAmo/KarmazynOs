@@ -524,6 +524,8 @@ class ImmediateRenderer:
         self._t0         = time.monotonic()
         self._tick_n     = 0
         self._close_rect: List = []   # [pygame.Rect] — pozycja przycisku ×
+        self._tick_fn:   Optional[Callable] = None  # fizyka: phi.tick()
+        self._last_phys  = 0.0        # ostatni czas wywołania tick_fn
 
     def _make_ctx(self, rect: "pygame.Rect") -> DrawCtx:
         return DrawCtx(self.screen, self.font, rect)
@@ -541,6 +543,14 @@ class ImmediateRenderer:
 
     def render_frame(self, t: float) -> None:
         """Pełny redraw — deterministyczna funkcja t i stanu."""
+        # Fizyka: tick co sekundę (niezależnie od frame rate)
+        if self._tick_fn and t - self._last_phys >= 1.0:
+            self._last_phys = t
+            try:
+                self._tick_fn()
+            except Exception:
+                pass
+
         s = self.screen
         s.fill(C_BG)
 
@@ -736,11 +746,14 @@ class KarmazynDisplay:
 
     def bind_phi(self, phi_space: Any) -> None:
         """
-        Podpina live PhiSpace — phi-map pokazuje realne atomy.
+        Podpina live PhiSpace — phi-map pokazuje realne atomy,
+        tick_fn odpala phi.tick() co sekundę z render loop.
         Bezpieczne: można wywołać przed i po init().
         """
         if self._renderer:
             self._renderer.phi_ref = phi_space
+            if phi_space is not None and hasattr(phi_space, 'tick'):
+                self._renderer._tick_fn = phi_space.tick
 
     def set_demo_atoms(self, atoms: List[Dict]) -> None:
         """Ustaw listę dict dla trybu demo (bez PhiSpace)."""

@@ -725,10 +725,10 @@ class KarmazynBrowser:
                     atom.state = 'HOT' if temp >= 70 else 'WARM' if temp >= 30 else 'COLD'
             else:
                 self.runtime.create_atom(label, url[:64], url, temp)
-                # Ustaw state też po create (runtime może nie ustawiać wg T)
+                # state aktualizowany przez Atom.__init__ → state_for_T(T)
                 atom = self.runtime.get_atom(label)
                 if atom:
-                    atom.state = 'HOT' if temp >= 70 else 'WARM' if temp >= 30 else 'COLD'
+                    atom.heat(0)  # wymusza _update_state() bez zmiany T
         except Exception as e:
             _log_error(f'Atom update: {e}')
 

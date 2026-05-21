@@ -209,10 +209,16 @@ class PhiSpace:
         return a
 
     def get_atom(self, id: str) -> Optional[Atom]:
+        """Pobierz atom i ogrzej (dostęp użytkownika)."""
         a = self.matrix.get(id)
         if a:
             a.touch()
         return a
+
+    def peek_atom(self, id: str) -> Optional[Atom]:
+        """Pobierz atom BEZ ogrzewania — do użytku wewnętrznego
+        (render, scheduler, audyt). Nie zmienia T."""
+        return self.matrix.get(id)
 
     def delete_atom(self, id: str) -> bool:
         a = self.matrix.get(id)

@@ -92,6 +92,15 @@ except ImportError as e:
     DISPLAY_LOADED = False
     REGISTRY.register("display", ServiceStatus.MISSING, message=str(e)[:60])
 
+# LOGO — interpreter LOGO z grafiką żółwia
+try:
+    from karmazyn_logo import LogoShell as _LogoShell, cmd_logo as _cmd_logo_fn
+    LOGO_LOADED = True
+    REGISTRY.register("logo", ServiceStatus.OK, version="KarmazynLOGO v4.0")
+except ImportError as e:
+    LOGO_LOADED = False
+    REGISTRY.register("logo", ServiceStatus.MISSING, message=str(e)[:60])
+
 from command_engine import Command, CommandRegistry, make_arg_schema
 
 # ── Inicjalizacja systemu ──────────────────────────────────────────────────────
@@ -188,6 +197,15 @@ if DISPLAY_LOADED:
         REGISTRY.log("INFO", "Display: brak X11 — tryb tekstowy", service="display")
 else:
     DISPLAY = None
+
+# LOGO — LogoShell z display jeśli dostępny
+if LOGO_LOADED:
+    LOGO = _LogoShell(display=DISPLAY if DISPLAY_LOADED else None)
+    REGISTRY.log("INFO",
+                 f"LOGO: display={'aktywny' if DISPLAY and DISPLAY.available else 'tekstowy'}",
+                 service="logo")
+else:
+    LOGO = None
 
 # ── HUD ───────────────────────────────────────────────────────────────────────
 
@@ -482,6 +500,10 @@ def cmd_exit(args):
             RADIO._audio.shutdown()   # join() wątków meta i watchdog
             REGISTRY.log("INFO", "AudioDaemon zatrzymany", service="audio")
 
+    if DISPLAY_LOADED and DISPLAY is not None and DISPLAY.available:
+        if DISPLAY.renderer and DISPLAY.renderer.term_state:
+            DISPLAY.renderer.term_state.shutdown()
+
     REGISTRY.log("INFO", f"Shell zamkniety po {REGISTRY.uptime_str()}", service="shell")
     RUNTIME.stop_loop()
     BUBBLES.save_all()
@@ -645,7 +667,18 @@ def cmd_display_cmd(args):
                 f"{r['ms_per_frame']/16.67*100:.0f}% budzetu")
     return "DISPLAY STATUS | BENCH"
 
+def cmd_logo_cmd(args):
+    if not LOGO_LOADED or LOGO is None:
+        return "LOGO niedostepny (brak karmazyn_logo.py)"
+    return LOGO.cmd(args)
+
 reg("DISPLAY", cmd_display_cmd, "Display SDL2 [STATUS|BENCH]", category="system")
+
+# Media — LOGO
+reg("LOGO",  cmd_logo_cmd,
+    "LOGO [RUN <kod>|FILE <plik>|RESET|SAVE|LOAD|SHOW|PHI]",
+    category="media")
+reg("LG",    cmd_logo_cmd, "Alias: LOGO",   category="media")
 
 # Media
 reg("RADIO",  cmd_radio_cmd,  "Radio [PLAY|STOP|LS|ADD|FAV|VOL|NOW|SEARCH]",   category="media")
@@ -696,6 +729,63 @@ readline.parse_and_bind("tab: complete")
 
 # ── Główna pętla ──────────────────────────────────────────────────────────────
 
+def shell_worker(term):
+    """Shell w watku SDL. I/O przez TerminalState, logika przez process_command()."""
+    C_RESULT = (200, 200, 200)
+    C_STATUS = (70, 70, 100)
+    C_ERROR  = (200, 60, 60)
+    C_ACCENT = (180, 60, 60)
+
+    def out(text, color=C_RESULT):
+        if not text:
+            return
+        for line in str(text).split("\n"):
+            term.append(line, color)
+
+    def hud():
+        try:
+            s = RUNTIME.status_summary()
+            term.append(
+                f"phi HOT:{s['HOT']} WARM:{s['WARM']} COLD:{s['COLD']}",
+                C_STATUS)
+        except Exception:
+            pass
+
+    out("KarmazynOS -- tryb graficzny", C_ACCENT)
+    try:
+        bubbles = BUBBLES.list_bubbles()
+        if bubbles:
+            total = sum(b.get("active_atoms", 0) for b in bubbles)
+            out(f"Bable: {len(bubbles)} ({total} atomow)", C_STATUS)
+    except Exception:
+        pass
+    out("STATUS  SYSLOG  LOGO  LUNETA  RADIO  HELP  EXIT", C_STATUS)
+
+    while not term._shutdown:
+        line = term.get_input_blocking()
+        if not line:
+            break
+        line = line.strip()
+        if not line:
+            continue
+        if line.lower() in ("exit", "quit"):
+            term.shutdown()
+            try:
+                import pygame
+                pygame.event.post(pygame.event.Event(pygame.QUIT))
+            except Exception:
+                pass
+            break
+        try:
+            result = process_command(line)
+            out(result)
+        except SystemExit:
+            break
+        except Exception as e:
+            out(f"[BLAD] {e}", C_ERROR)
+        hud()
+
+
 def main():
     # Banner startowy
     banner_lines = REGISTRY.startup_report()
@@ -706,6 +796,9 @@ def main():
     if LUNETA_LOADED:
         dom_status = "aktywny" if LUNETA_INST._has_dom else "brak karmazyn_dom.py"
         banner_lines.append(f"Luneta:  DOMMapper {dom_status}")
+    if LOGO_LOADED and LOGO is not None:
+        logo_mode = "SDL pikselowy" if DISPLAY and DISPLAY.available else "tekstowy (ASCII)"
+        banner_lines.append(f"LOGO:    {logo_mode}  — LOGO RUN <kod>")
     print(gfx.draw_frame("KARMAZYN OS", banner_lines, style="phi_core"))
 
     bubbles = BUBBLES.list_bubbles()
@@ -743,6 +836,14 @@ def main():
                 REGISTRY.log("INFO", f"BIN: {cmd_id} -> {target}", service="shell")
 
     REGISTRY.log("INFO", "Shell gotowy", service="shell")
+
+    if DISPLAY_LOADED and DISPLAY is not None and DISPLAY.available:
+        print("\n[KarmazynOS] Tryb graficzny SDL -- zamknij okno lub Ctrl+Q")
+        DISPLAY.renderer.run(
+            shell_main=shell_worker,
+            on_quit=lambda: cmd_exit([]),
+        )
+        return
 
     while True:
         try:

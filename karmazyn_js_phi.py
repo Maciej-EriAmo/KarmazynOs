@@ -38,64 +38,30 @@ from karmazyn_js_core import (
 
 # ─── PhiAtom ─────────────────────────────────────────────────────────────────
 
-class PhiAtom:
+# PhiAtom = Atom z karmazyn_atom (unified model)
+from karmazyn_atom import Atom as _BaseAtom, T_INIT, T_TOMB, DECAY_DEFAULT
+
+class PhiAtom(_BaseAtom):
     """
-    Wartość JS jako atom phi-space.
-
-    T (temperatura) = częstotliwość dostępu.
-    Gorący atom = używany często = trzymaj w RAM.
-    Zimny atom = zapomniany = kandydat GC.
-
-    To jest JIT profiling za darmo — silnik wie które zmienne
-    są hot path bez osobnego profilera.
+    Atom JS w phi-space. Rozszerza karmazyn_atom.Atom
+    o atrybut value (wartość Python) i interfejs kompatybilny
+    z poprzednią implementacją.
     """
-
-    T_INIT  = 50.0    # temperatura startowa (WARM)
-    T_MAX   = 100.0
-    T_HEAT  = 15.0    # przyrost przy dostępie
-    T_DECAY = 0.92    # mnożnik przy tick
-    T_TOMB  = 2.0     # próg GC
-
-    __slots__ = ("value", "name", "T", "state", "_reads", "_writes", "_born")
+    __slots__ = ("value",)
 
     def __init__(self, value: Any, name: str = ""):
-        self.value   = value
-        self.name    = name
-        self.T       = self.T_INIT
-        self.state   = "WARM"
-        self._reads  = 0
-        self._writes = 0
-        self._born   = time.monotonic()
+        super().__init__(id=name or "__anon__", S="js:var",
+                         E=repr(value)[:64], T=T_INIT)
+        self.value = value
 
     def touch_read(self) -> None:
-        self._reads += 1
-        self.T = min(self.T_MAX, self.T + self.T_HEAT)
-        self._sync_state()
+        self.touch(weight=1.0)
 
     def touch_write(self) -> None:
-        self._writes += 1
-        self.T = min(self.T_MAX, self.T + self.T_HEAT * 0.5)
-        self._sync_state()
+        super().touch_write()
 
     def decay(self) -> None:
-        self.T *= self.T_DECAY
-        self._sync_state()
-
-    def _sync_state(self) -> None:
-        if   self.T >= 70: self.state = "HOT"
-        elif self.T >= 30: self.state = "WARM"
-        elif self.T >= self.T_TOMB: self.state = "COLD"
-        else: self.state = "TOMB"
-
-    def is_dead(self) -> bool:
-        return self.T < self.T_TOMB
-
-    def age(self) -> float:
-        return time.monotonic() - self._born
-
-    def __repr__(self) -> str:
-        return (f"PhiAtom({self.name!r}={self.value!r}, "
-                f"T={self.T:.1f}, {self.state})")
+        super().decay(DECAY_DEFAULT)
 
 
 # ─── PhiScope ─────────────────────────────────────────────────────────────────
