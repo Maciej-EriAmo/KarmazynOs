@@ -1,0 +1,95 @@
+{
+  "_comment": "KarmazynOS — rejestr programów v1.0",
+  "_doc": "Każdy wpis to program ładowany dynamicznie przez shell.py. Nie modyfikuj shell.py — dodaj wpis tutaj.",
+  "version": "1.0",
+  "programs": [
+
+    {
+      "_comment": "--- Sieć ---",
+      "name": "NET",
+      "module": "karmazyn_net",
+      "type": "function",
+      "handler": "cmd_net_cmd",
+      "description": "NET [FETCH <url>|GIT <repo>|LLM <prompt>|STATUS]",
+      "category": "network",
+      "version": "v1.0"
+    },
+
+    {
+      "_comment": "--- Przeglądarka ---",
+      "name": "LUNETA",
+      "aliases": ["L"],
+      "module": "karmazyn_browser",
+      "type": "object",
+      "class": "KarmazynBrowser",
+      "method": "cmd",
+      "kwargs": {"runtime": "$RUNTIME"},
+      "description": "LUNETA [URL|BACK|FORWARD|HISTORY|FIND <q>|SAVE|LOAD]",
+      "category": "media",
+      "version": "v4.5"
+    },
+
+    {
+      "_comment": "--- DOM ---",
+      "name": "DOM",
+      "module": "karmazyn_dom",
+      "type": "function",
+      "handler": "cmd_dom",
+      "description": "DOM [MAP|READ|SEARCH <q>|ATOMS|EXPORT]",
+      "category": "media",
+      "version": "v1.2"
+    },
+
+    {
+      "_comment": "--- LOGO ---",
+      "name": "LOGO",
+      "aliases": ["LG"],
+      "module": "karmazyn_logo",
+      "type": "object",
+      "class": "LogoShell",
+      "method": "cmd",
+      "kwargs": {"display": "$DISPLAY"},
+      "description": "LOGO [RUN <kod>|FILE <plik>|RESET|SAVE|LOAD|SHOW|PHI]",
+      "category": "media",
+      "version": "v4.0"
+    },
+
+    {
+      "_comment": "--- Radio ---",
+      "name": "RADIO",
+      "module": "karmazyn_radio",
+      "type": "object",
+      "class": "KarmazynRadio",
+      "method": "cmd",
+      "kwargs": {"runtime": "$RUNTIME"},
+      "description": "RADIO [PLAY <url>|STOP|NEXT|PREV|LIST|ADD|STATUS]",
+      "category": "media",
+      "version": "v1.1"
+    },
+
+    {
+      "_comment": "--- Audio ---",
+      "name": "AUDIO",
+      "module": "karmazyn_audio",
+      "type": "object",
+      "class": "AudioDaemon",
+      "method": "cmd",
+      "kwargs": {},
+      "description": "AUDIO [PLAY <plik>|STOP|PAUSE|STATUS|QUEUE]",
+      "category": "media",
+      "version": "v1.2"
+    },
+
+    {
+      "_comment": "--- Display ---",
+      "name": "DISPLAY",
+      "module": "karmazyn_display",
+      "type": "function",
+      "handler": "cmd_display",
+      "description": "DISPLAY [STATUS|BENCH|BIND <phi>]",
+      "category": "system",
+      "version": "v1.0"
+    }
+
+  ]
+}

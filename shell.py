@@ -207,6 +207,9 @@ if LOGO_LOADED:
 else:
     LOGO = None
 
+# Dynamiczne programy z karmazyn_programs.json
+load_programs()
+
 # ── HUD ───────────────────────────────────────────────────────────────────────
 
 def print_hud():
@@ -649,8 +652,6 @@ reg("SCHEDULER",  cmd_scheduler_cmd, "Triggery termiczne [LS|LOG|SAVE|ON|OFF|RM]
 reg("HELP",       cmd_help,          "Pomoc",                                   category="system")
 reg("EXIT",       cmd_exit,          "Konczy shell",                            category="system")
 
-# Sieć
-reg("NET", cmd_net_cmd, "Siec [FETCH|GIT|LLM|FTP|PUSH|PULL|STATUS]",           category="network")
 
 # Display
 def cmd_display_cmd(args):
@@ -667,28 +668,6 @@ def cmd_display_cmd(args):
                 f"{r['ms_per_frame']/16.67*100:.0f}% budzetu")
     return "DISPLAY STATUS | BENCH"
 
-def cmd_logo_cmd(args):
-    if not LOGO_LOADED or LOGO is None:
-        return "LOGO niedostepny (brak karmazyn_logo.py)"
-    return LOGO.cmd(args)
-
-reg("DISPLAY", cmd_display_cmd, "Display SDL2 [STATUS|BENCH]", category="system")
-
-# Media — LOGO
-reg("LOGO",  cmd_logo_cmd,
-    "LOGO [RUN <kod>|FILE <plik>|RESET|SAVE|LOAD|SHOW|PHI]",
-    category="media")
-reg("LG",    cmd_logo_cmd, "Alias: LOGO",   category="media")
-
-# Media
-reg("RADIO",  cmd_radio_cmd,  "Radio [PLAY|STOP|LS|ADD|FAV|VOL|NOW|SEARCH]",   category="media")
-reg("AUDIO",  cmd_audio_cmd,  "AudioDaemon [STATUS|PAUSE|VOL|STOP|INFO|EVENTS]",category="media")
-reg("LUNETA", cmd_luneta_cmd, "Luneta [<url>|BACK|FORWARD|LINKS|FOLLOW|FIND|SCROLL|BM|DOM]",
-                                                                                category="media")
-reg("L",      cmd_luneta_cmd, "Alias: LUNETA",                                  category="media")
-reg("DOM",    cmd_dom_cmd,    "DOMMapper [MAP|OUTLINE|READER|FIND|PHI|STATS]",  category="media")
-
-# ── Autocomplete ──────────────────────────────────────────────────────────────
 
 def completer(text, state):
     line   = readline.get_line_buffer()
@@ -728,6 +707,143 @@ readline.set_completer(completer)
 readline.parse_and_bind("tab: complete")
 
 # ── Główna pętla ──────────────────────────────────────────────────────────────
+
+
+
+# ─── Loader programów z karmazyn_programs.json ────────────────────────────────
+
+def load_programs(config_path: str = "karmazyn_programs.json") -> int:
+    """
+    Ładuje programy z pliku JSON i rejestruje w shellu.
+    Zwraca liczbę załadowanych programów.
+
+    Format wpisu:
+      type=function  → module.handler(args)
+      type=object    → module.Class(**kwargs).method(args)
+
+    Konteksty ($ZMIENNA) rozwiązywane do obiektów shella:
+      $RUNTIME  → RUNTIME
+      $DISPLAY  → DISPLAY (lub None)
+      $BUBBLES  → BUBBLES
+    """
+    import json, importlib, os
+
+    # Szukaj pliku względem shell.py lub bieżącego katalogu
+    if not os.path.isabs(config_path):
+        _here = os.path.dirname(os.path.abspath(
+            globals().get("__file__", config_path)))
+        _candidate = os.path.join(_here, config_path)
+        if os.path.exists(_candidate):
+            config_path = _candidate
+
+    if not os.path.exists(config_path):
+        REGISTRY.log("WARN", f"Brak {config_path}", service="loader")
+        return 0
+
+    try:
+        with open(config_path, encoding="utf-8") as f:
+            config = json.load(f)
+    except Exception as e:
+        REGISTRY.log("ERR", f"Błąd odczytu programs.json: {e}", service="loader")
+        return 0
+
+    # Kontekst wstrzykiwany do programów
+    ctx = {
+        "$RUNTIME": RUNTIME,
+        "$DISPLAY": DISPLAY if DISPLAY_LOADED and DISPLAY is not None else None,
+        "$BUBBLES": BUBBLES,
+    }
+
+    def resolve(v):
+        """Zamień $ZMIENNA na obiekt z kontekstu."""
+        return ctx.get(v, v) if isinstance(v, str) and v.startswith("$") else v
+
+    loaded = 0
+    for prog in config.get("programs", []):
+        # Ignoruj wpisy komentarzowe
+        if "_comment" in prog and len(prog) == 1:
+            continue
+
+        name    = prog.get("name")
+        module  = prog.get("module")
+        p_type  = prog.get("type", "function")
+        desc    = prog.get("description", name)
+        cat     = prog.get("category", "system")
+        ver     = prog.get("version", "")
+        aliases = prog.get("aliases", [])
+
+        if not name or not module:
+            continue
+
+        try:
+            mod = importlib.import_module(module)
+
+            if p_type == "object":
+                cls_name = prog["class"]
+                method   = prog.get("method", "cmd")
+                kwargs   = {k: resolve(v) for k, v in prog.get("kwargs", {}).items()}
+                instance = getattr(mod, cls_name)(**kwargs)
+                handler  = getattr(instance, method)
+
+            else:  # function
+                fn_name = prog.get("handler")
+                raw_fn  = getattr(mod, fn_name)
+                # Wstrzyknij kontekst jako kwargs jeśli funkcja go przyjmuje
+                ctx_keys = prog.get("context_kwargs", {})
+                if ctx_keys:
+                    resolved = {k: resolve(v) for k, v in ctx_keys.items()}
+                    handler = lambda args, _fn=raw_fn, _kw=resolved: _fn(args, **_kw)
+                else:
+                    handler = raw_fn
+
+            # Atom w phi-space — program jako termodynamiczny byt
+            atom_id = f"program.{name.lower()}"
+            if hasattr(RUNTIME, "phi"):
+                prog_atom = RUNTIME.phi.create_atom(
+                    atom_id,
+                    S="program",
+                    E=desc,
+                    T=50.0,
+                )
+            else:
+                prog_atom = None
+
+            # Wrapper: touch() przy każdym wywołaniu
+            def _make_handler(h, a):
+                def _wrapped(args):
+                    if a is not None:
+                        a.touch()
+                    return h(args)
+                return _wrapped
+
+            wrapped = _make_handler(handler, prog_atom)
+
+            reg(name, wrapped, desc, category=cat)
+            for alias in aliases:
+                reg(alias, wrapped, f"Alias: {name}", category=cat)
+
+            REGISTRY.register(name.lower(), ServiceStatus.OK, version=ver)
+            loaded += 1
+
+        except ImportError as e:
+            REGISTRY.register(name.lower(), ServiceStatus.MISSING,
+                              message=str(e)[:60])
+            # Atom niedostępnego programu — T=1 → TOMB przy pierwszym tick
+            if name and hasattr(RUNTIME, "phi"):
+                RUNTIME.phi.create_atom(
+                    f"program.{name.lower()}",
+                    S="program.missing",
+                    E=str(e)[:64],
+                    T=1.0,
+                )
+        except Exception as e:
+            REGISTRY.log("WARN",
+                         f"Program {name}: {type(e).__name__}: {e}",
+                         service="loader")
+
+    REGISTRY.log("INFO", f"Załadowano {loaded} programów z {config_path}",
+                 service="loader")
+    return loaded
 
 def shell_worker(term):
     """Shell w watku SDL. I/O przez TerminalState, logika przez process_command()."""

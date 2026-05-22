@@ -32,12 +32,11 @@ Brakujący krok (poza tym modułem):
 """
 
 import re
-import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from karmazyn_js_phi import KarmazynJSPhi, cmd_js
 from karmazyn_live_dom import LiveDOM, LiveNode, bind_live_dom
-from karmazyn_live_dom import NODE_BLOCK, NODE_TEXT
+from karmazyn_live_dom import NODE_TEXT
 
 # NodeType z browser — opcjonalne
 try:
@@ -243,12 +242,54 @@ class JSBridge:
                     results["skipped"] += 1
                     results["errors"].append(err)
             else:
-                results["external"] += 1  # TODO: fetch + run
+                # Fetch i uruchom zewnętrzny skrypt
+                ok, err = self._run_external(content)
+                if ok:
+                    results["external"] += 1
+                    self._scripts_run += 1
+                else:
+                    results["skipped"] += 1
+                    results["errors"].append(f"external:{content}: {err}")
 
         if self._doc:
             self._doc.flush()
 
         return results
+
+    def _run_external(self, url: str) -> Tuple[bool, str]:
+        """Pobiera i uruchamia zewnętrzny skrypt JS.
+        Używa karmazyn_net jeśli dostępny, fallback przez urllib.
+        Wynik cache'owany w phi-space jako atom (T=50, stygnie gdy nieużywany).
+        """
+        # Cache: sprawdź czy mamy już ten skrypt w phi-space
+        cache_id = f"js_script:{url}"
+        if self._vm and hasattr(self._vm, "_runtime") and self._vm._runtime:
+            cached = self._vm._runtime.peek_atom(cache_id)
+            if cached and not cached.is_dead():
+                cached.touch()
+                return self._run_inline(cached.E)
+
+        # Fetch
+        code = None
+        try:
+            import urllib.request
+            with urllib.request.urlopen(url, timeout=5) as resp:
+                code = resp.read().decode("utf-8", errors="replace")
+        except Exception as e:
+            return False, f"fetch failed: {e}"
+
+        if not code or not code.strip():
+            return False, "empty response"
+
+        # Zapisz w phi-space (cache)
+        if self._vm and hasattr(self._vm, "_runtime") and self._vm._runtime:
+            try:
+                self._vm._runtime.create_atom(
+                    cache_id, S="js:external", E=code[:8192], T=50.0)
+            except Exception:
+                pass
+
+        return self._run_inline(code)
 
     def _run_inline(self, source: str) -> Tuple[bool, str]:
         """Uruchamia skrypt inline przez karmazyn_js_parser."""
@@ -512,7 +553,9 @@ def cmd_js_bridge(args: list, bridge: JSBridge) -> str:
         # Przyjmuje Python-style AST jako string eval (niebezpieczne w produkcji)
         expr_str = " ".join(args[1:])
         try:
-            ast_prog = eval(expr_str)  # noqa — tylko debug
+            # SECURITY: eval usunięty — używaj karmazyn_js_parser.parse()
+            from karmazyn_js_parser import KarmazynParser as _P
+            ast_prog = _P().parse(expr_str)
             ok, result = bridge.run_ast(ast_prog if isinstance(ast_prog, list)
                                         else [("expr", ast_prog)])
             return f"{'OK' if ok else 'ERR'}: {result}"

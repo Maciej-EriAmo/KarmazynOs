@@ -36,7 +36,6 @@ import os
 import queue
 import threading
 import time
-from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 # ─── Graceful degradation bez pygame ─────────────────────────────────────────
@@ -86,6 +85,8 @@ class TerminalState:
         self._lock:      threading.Lock   = threading.Lock()
         self._key_queue: queue.Queue      = queue.Queue()
         self._shutdown:  bool             = False   # sygnał zamknięcia
+        self._history:  List[str]        = []      # historia komend
+        self._hist_idx: int              = 0       # pozycja w historii
 
     def shutdown(self) -> None:
         """Sygnalizuje workerowi żeby zakończył get_input_blocking()."""
@@ -126,11 +127,23 @@ class TerminalState:
         if event.key == pygame.K_RETURN:
             line            = self.input_buf
             self.input_buf  = ""
+            if line.strip():
+                self._history.append(line)
+                self._hist_idx = len(self._history)
             self._key_queue.put(line)
         elif event.key == pygame.K_BACKSPACE:
             self.input_buf = self.input_buf[:-1]
         elif event.key == pygame.K_UP:
-            pass   # TODO: historia — Faza 3
+            if self._history and self._hist_idx > 0:
+                self._hist_idx -= 1
+                self.input_buf = self._history[self._hist_idx]
+        elif event.key == pygame.K_DOWN:
+            if self._history and self._hist_idx < len(self._history) - 1:
+                self._hist_idx += 1
+                self.input_buf = self._history[self._hist_idx]
+            else:
+                self._hist_idx = len(self._history)
+                self.input_buf = ""
         elif event.unicode and event.unicode.isprintable():
             self.input_buf += event.unicode
 
@@ -847,6 +860,28 @@ def benchmark(frames: int = 300) -> Dict[str, float]:
 
 
 # ─── Punkt wejścia ────────────────────────────────────────────────────────────
+
+
+
+def cmd_display(args: List[str],
+                display: Optional["KarmazynDisplay"] = None) -> str:
+    """Komenda DISPLAY dla shell — bez globalnych zależności."""
+    if display is None or not display.available:
+        return "Display niedostepny (brak pygame lub X11)"
+    sub = args[0].upper() if args else "STATUS"
+    if sub == "STATUS":
+        r = display._renderer
+        phi_n = len(r.phi_ref.matrix.atoms()) if r and r.phi_ref else 0
+        return (f"Display: aktywny  "
+                f"atoms:{phi_n}  "
+                f"tick_fn:{'OK' if r and r._tick_fn else 'brak'}")
+    if sub == "BENCH":
+        r = benchmark(100)
+        used = r['ms_per_frame'] / 16.67 * 100
+        return (f"Benchmark: {r['ms_per_frame']:.2f} ms/frame  "
+                f"{r['fps_capacity']:.0f} fps max  "
+                f"{used:.0f}% budzetu 60fps")
+    return "DISPLAY STATUS | BENCH"
 
 if __name__ == "__main__":
     print("=== karmazyn_display.py benchmark ===")

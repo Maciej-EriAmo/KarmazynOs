@@ -243,8 +243,20 @@ class KarmazynJSCore:
 
         if op == "call":
             _, fn_e, arg_es = expr
-            fn   = self.eval(fn_e, scope)
             args = [self.eval(a, scope) for a in arg_es]
+
+            # Zachowaj this dla wywołań obj.method()
+            if isinstance(fn_e, tuple) and fn_e[0] == "prop":
+                # ("prop", obj_expr, key) — obj.method(...)
+                this_obj = self.eval(fn_e[1], scope)
+                key      = fn_e[2]
+                if isinstance(this_obj, dict):
+                    fn = this_obj.get(key)
+                else:
+                    fn = getattr(this_obj, key, None)
+                return self._call(fn, args, this=this_obj)
+
+            fn = self.eval(fn_e, scope)
             return self._call(fn, args)
 
         if op == "fn":
@@ -323,6 +335,14 @@ class KarmazynJSCore:
             val = self.eval(val_e, scope)
             if isinstance(obj, dict):
                 obj[key] = val
+            elif hasattr(obj, key) or hasattr(type(obj), key):
+                # LiveNode, obiekty zewnętrzne — setattr zamiast cichego pominięcia
+                try:
+                    setattr(obj, key, val)
+                except AttributeError:
+                    pass
+            elif hasattr(obj, '__setitem__'):
+                obj[key] = val
             return val
 
         if op == "setidx":
@@ -336,6 +356,8 @@ class KarmazynJSCore:
                 while len(obj) <= idx: obj.append(None)
                 obj[idx] = val
             elif isinstance(obj, dict):
+                obj[idx] = val
+            elif hasattr(obj, '__setitem__'):
                 obj[idx] = val
             return val
 
@@ -385,6 +407,32 @@ class KarmazynJSCore:
             # uproszczone await — synchroniczne wykonanie
             return self.eval(expr[1], scope)
 
+        if op == "assign":
+            # ("assign", target, val_expr)
+            # Wyrażenia przypisania: x = y = 5, foo(a++)
+            _, target, val_e = expr
+            val = self.eval(val_e, scope)
+            # Wykonaj przypisanie przez scope.assign (nie exec_stmt)
+            if isinstance(target, str):
+                scope.assign(target, val)
+            elif isinstance(target, tuple) and target[0] == "setprop":
+                obj = self.eval(target[1], scope)
+                key = target[2]
+                if isinstance(obj, dict): obj[key] = val
+                elif hasattr(obj, key) or hasattr(type(obj), key):
+                    try: setattr(obj, key, val)
+                    except AttributeError: pass
+            elif isinstance(target, tuple) and target[0] == "var":
+                scope.assign(target[1], val)
+            return val   # assign jako wyrażenie zwraca wartość
+
+        if op == "seq":
+            # ("seq", expr1, expr2, ...) — sekwencja wyrażeń, zwraca ostatnie
+            result = None
+            for sub in expr[1:]:
+                result = self.eval(sub, scope)
+            return result
+
         raise SyntaxError(f"Nieznane wyrażenie: {op!r}")
 
     def _reduce(self, fn: Any, arr: list, init: Any) -> Any:
@@ -398,8 +446,11 @@ class KarmazynJSCore:
 
     # ── Wywołanie funkcji ─────────────────────────────────────────────────────
 
-    def _call(self, fn: Any, args: List[Any]) -> Any:
-        """Wywołuje Function, callable lub metodę obiektu."""
+    def _call(self, fn: Any, args: List[Any],
+               this: Any = None) -> Any:
+        """Wywołuje Function, callable lub metodę obiektu.
+        this — kontekst obiektu dla wywołań obj.method() (Bug 4 fix).
+        """
         # Rozpakowywanie spread
         expanded = []
         for a in args:
@@ -415,6 +466,9 @@ class KarmazynJSCore:
                 local.set(p, a)
             for p in fn.params[len(args):]:
                 local.set(p, None)
+            # Wstrzyknij this do scope jeśli podany
+            if this is not None:
+                local.set("this", this)
             try:
                 return self.exec(fn.body, local)
             except _Return as r:
@@ -467,7 +521,13 @@ class KarmazynJSCore:
                         and inner[0] == "setprop"):
                     obj = self.eval(inner[1], scope)
                     val = self.eval(inner[3], scope)
-                    if isinstance(obj, dict): obj[inner[2]] = val
+                    if isinstance(obj, dict):
+                        obj[inner[2]] = val
+                    elif hasattr(obj, inner[2]) or hasattr(type(obj), inner[2]):
+                        try:    setattr(obj, inner[2], val)
+                        except AttributeError: pass
+                    elif hasattr(obj, '__setitem__'):
+                        obj[inner[2]] = val
                 elif (isinstance(inner, tuple) and len(inner) >= 4
                         and inner[0] == "setidx"):
                     obj = self.eval(inner[1], scope)
@@ -477,7 +537,10 @@ class KarmazynJSCore:
                         if isinstance(idx, float): idx = int(idx)
                         while len(obj) <= idx: obj.append(None)
                         obj[idx] = val
-                    elif isinstance(obj, dict): obj[idx] = val
+                    elif isinstance(obj, dict):
+                        obj[idx] = val
+                    elif hasattr(obj, '__setitem__'):
+                        obj[idx] = val
                 else:
                     result = self.eval(inner, scope)
 
