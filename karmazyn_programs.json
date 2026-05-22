@@ -1,7 +1,7 @@
 {
   "_comment": "KarmazynOS — rejestr programów v1.0",
   "_doc": "Każdy wpis to program ładowany dynamicznie przez shell.py. Nie modyfikuj shell.py — dodaj wpis tutaj.",
-  "version": "1.0",
+  "version": "1.1",
   "programs": [
 
     {
@@ -89,7 +89,18 @@
       "description": "DISPLAY [STATUS|BENCH|BIND <phi>]",
       "category": "system",
       "version": "v1.0"
-    }
+    },
+
+    {
+  "name": "THERMAL",
+  "module": "thermal_invaders",
+  "type": "function",
+  "handler": "cmd_thermal",
+  "context_kwargs": {"display": "$DISPLAY", "runtime": "$RUNTIME"},
+  "description": "Thermal Invaders — termodynamiczna wersja Space Invaders. Sterowanie: strzałki, spacja, ESC.",
+  "category": "games",
+  "version": "v2.3"
+   }
 
   ]
 }

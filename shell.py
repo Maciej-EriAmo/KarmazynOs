@@ -186,7 +186,7 @@ if LUNETA_LOADED:
 else:
     LUNETA_INST = None
 
-# Display — SDL2 (Dual-Monitor: okno obok terminala)
+# Display — SDL2/pygame moduł graficzny (opcjonalny)
 if DISPLAY_LOADED:
     DISPLAY = KarmazynDisplay()
     _disp_ok = DISPLAY.init()
@@ -857,12 +857,35 @@ def load_programs(config_path: str = "karmazyn_programs.json") -> int:
                  service="loader")
     return loaded
 
+
 def shell_worker(term):
     """Shell w watku SDL. I/O przez TerminalState, logika przez process_command()."""
     C_RESULT = (200, 200, 200)
     C_STATUS = (70, 70, 100)
     C_ERROR  = (200, 60, 60)
     C_ACCENT = (180, 60, 60)
+
+    # Hook do TAB completion w trybie SDL2
+    def custom_completer(current_input: str) -> str:
+        words = current_input.lstrip().split()
+        if not words: 
+            return current_input
+        
+        # Proste uzupełnianie komend i plików w lua_bin po 1. słowie
+        if len(words) == 1:
+            matches = [c for c in registry.list_commands() if c.lower().startswith(words[0].lower())]
+            if os.path.isdir("lua_bin"):
+                for f in os.listdir("lua_bin"):
+                    if f.endswith(".lua"):
+                        s = f[:-4].upper()
+                        if s.startswith(words[0].upper()) and s not in matches:
+                            matches.append(s)
+            if matches:
+                matches.sort()
+                return matches[0] + " "
+        return current_input
+
+    term.completer = custom_completer
 
     def out(text, color=C_RESULT):
         if not text:
@@ -890,12 +913,24 @@ def shell_worker(term):
     out("STATUS  SYSLOG  LOGO  LUNETA  RADIO  HELP  EXIT", C_STATUS)
 
     while not term._shutdown:
+        # Płynny, dynamiczny prompt czytający stan systemu
+        bubble = BUBBLE_CTX.current_bubble_name
+        term.prompt = f"({bubble}) ksh> " if bubble else "ksh> "
+
         line = term.get_input_blocking()
         if not line:
             break
+            
         line = line.strip()
-        if not line:
+        
+        # Zgodnie z natywnym zachowaniem CLI, wciśnięty ENTER 
+        # wpisuje wykonaną komendę do historii terminala w linii nad nim
+        if line:
+            out(f"{term.prompt}{line}", C_ACCENT)
+        else:
+            out(f"{term.prompt}", C_ACCENT)
             continue
+            
         if line.lower() in ("exit", "quit"):
             term.shutdown()
             try:

@@ -85,8 +85,9 @@ class TerminalState:
         self._lock:      threading.Lock   = threading.Lock()
         self._key_queue: queue.Queue      = queue.Queue()
         self._shutdown:  bool             = False   # sygnał zamknięcia
-        self._history:  List[str]        = []      # historia komend
-        self._hist_idx: int              = 0       # pozycja w historii
+        self._history:   List[str]        = []      # historia komend
+        self._hist_idx:  int              = 0       # pozycja w historii
+        self.completer:  Optional[Callable] = None  # Hook uzupełniania TAB
 
     def shutdown(self) -> None:
         """Sygnalizuje workerowi żeby zakończył get_input_blocking()."""
@@ -107,10 +108,8 @@ class TerminalState:
     def get_input_blocking(self) -> str:
         """
         Blokuje worker thread aż do Enter lub sygnału shutdown.
-        Timeout 100ms — worker nie blokuje się na wieczność
-        gdy SDL zamknie okno. Zwraca '' przy shutdown.
+        Timeout 100ms — worker nie blokuje się na wieczność.
         """
-        self.append(self.prompt, C_ACCENT)
         while not self._shutdown:
             try:
                 return self._key_queue.get(timeout=0.1)
@@ -146,6 +145,11 @@ class TerminalState:
             else:
                 self._hist_idx = len(self._history)
                 self.input_buf = ""
+        elif event.key == pygame.K_TAB:
+            if self.completer and self.input_buf:
+                suggestion = self.completer(self.input_buf)
+                if suggestion:
+                    self.input_buf = suggestion
         elif event.unicode and event.unicode.isprintable():
             self.input_buf += event.unicode
 
@@ -313,8 +317,7 @@ def draw_terminal(ctx: DrawCtx,
                   state: TerminalState,
                   t: float) -> None:
     """
-    Terminal — czysta funkcja (ctx, state, t) → None.
-    t = czas od startu dla kursora migającego.
+    Terminal — klasyczny strumień shellowy z pływającym tekstem.
     """
     r = ctx.rect
     ctx.clear()
@@ -329,10 +332,10 @@ def draw_terminal(ctx: DrawCtx,
         ctx.text(text, color, x=r.x + 6, y=y)
         y += line_h
 
-    # Input z migającym kursorem
+    # Linia wejścia - zawsze pod spodem, przesuwa się w dół z logami
     cursor  = "|" if int(t * 2) % 2 == 0 else " "
     inp_txt = state.prompt + input_buf + cursor
-    ctx.text(inp_txt, (255, 220, 100), x=r.x + 6, y=y)  # żółty prompt — czytelny
+    ctx.text(inp_txt, (255, 220, 100), x=r.x + 6, y=y)
 
 
 def draw_logo(ctx: DrawCtx, state: LogoState) -> None:
