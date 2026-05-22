@@ -1068,18 +1068,26 @@ def cmd_browse(args, browser: KarmazynBrowser) -> str:
 
     sub = args[0].upper()
 
-    # Aliasy UX (upload v4.5)
-    if sub == 'B': sub = 'BACK'
-    if sub == 'F': sub = 'FOLLOW'
-    if sub == 'S': sub = 'SCROLL'
-    if sub == 'R': sub = 'RELOAD'
+    # Aliasy UX — vi-style + skróty
+    if sub in ('B', 'H'):   sub = 'BACK'
+    if sub == 'F':          sub = 'FOLLOW'
+    if sub in ('S', 'J'):   sub = 'SCROLL'
+    if sub == 'K':          return browser.scroll(-1)
+    if sub in ('R',):       sub = 'RELOAD'
+    if sub == 'L':          sub = 'LINKS'
+    if sub in ('O', 'U'):   sub = 'URL'
+
+    # Numer bez komendy → FOLLOW N  (np. "3" → podążaj za linkiem 3)
+    if args[0].isdigit():
+        return cmd_browse(['FOLLOW', args[0]], browser)
 
     # Bezpośredni URL (nie subkomenda)
     if sub.startswith('HTTP') or (
         '.' in args[0] and sub not in {
             'BACK', 'FORWARD', 'FWD', 'RELOAD', 'LINKS', 'FOLLOW',
             'FIND', 'SCROLL', 'SOURCE', 'BM', 'BOOKMARKS', 'GOTO',
-            'HISTORY', 'SAVE', 'DOM',
+            'HISTORY', 'SAVE', 'DOM', 'URL', 'O', 'U',
+            'J', 'K', 'H', 'L', 'R', 'B', 'F', 'S',
         }
     ):
         _, msg = browser.go(args[0])
@@ -1190,6 +1198,10 @@ def cmd_browse(args, browser: KarmazynBrowser) -> str:
             return cmd_js_bridge(args[1:], browser.js_bridge)
         except ImportError:
             return 'Błąd importu karmazyn_js_web.'
+
+    if sub == 'URL':
+        url = browser._current.url if browser._current else ''
+        return "URL: " + url + "\n(wpisz LUNETA <adres> aby otworzyc)"
 
     # Fallback — traktuj jako URL
     _, msg = browser.go(args[0])

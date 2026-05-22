@@ -207,8 +207,6 @@ if LOGO_LOADED:
 else:
     LOGO = None
 
-# Dynamiczne programy z karmazyn_programs.json
-load_programs()
 
 # ── HUD ───────────────────────────────────────────────────────────────────────
 
@@ -728,13 +726,25 @@ def load_programs(config_path: str = "karmazyn_programs.json") -> int:
     """
     import json, importlib, os
 
-    # Szukaj pliku względem shell.py lub bieżącego katalogu
+    # Szukaj pliku w kolejności: obok shell.py → bieżący katalog → sys.path
     if not os.path.isabs(config_path):
-        _here = os.path.dirname(os.path.abspath(
-            globals().get("__file__", config_path)))
-        _candidate = os.path.join(_here, config_path)
-        if os.path.exists(_candidate):
-            config_path = _candidate
+        candidates = []
+        # 1. Obok shell.py (najczęstszy przypadek)
+        try:
+            _shell_dir = os.path.dirname(os.path.abspath(__file__))
+            candidates.append(os.path.join(_shell_dir, config_path))
+        except NameError:
+            pass
+        # 2. Bieżący katalog roboczy
+        candidates.append(os.path.join(os.getcwd(), config_path))
+        # 3. Katalog pierwszego elementu sys.path
+        if sys.path and sys.path[0]:
+            candidates.append(os.path.join(sys.path[0], config_path))
+
+        for _c in candidates:
+            if os.path.exists(_c):
+                config_path = _c
+                break
 
     if not os.path.exists(config_path):
         REGISTRY.log("WARN", f"Brak {config_path}", service="loader")
@@ -756,7 +766,9 @@ def load_programs(config_path: str = "karmazyn_programs.json") -> int:
 
     def resolve(v):
         """Zamień $ZMIENNA na obiekt z kontekstu."""
-        return ctx.get(v, v) if isinstance(v, str) and v.startswith("$") else v
+        if isinstance(v, str) and v.startswith("$"):
+            return ctx.get(v)   # None jeśli brak — bezpieczne
+        return v
 
     loaded = 0
     for prog in config.get("programs", []):
@@ -797,16 +809,15 @@ def load_programs(config_path: str = "karmazyn_programs.json") -> int:
                     handler = raw_fn
 
             # Atom w phi-space — program jako termodynamiczny byt
-            atom_id = f"program.{name.lower()}"
-            if hasattr(RUNTIME, "phi"):
-                prog_atom = RUNTIME.phi.create_atom(
-                    atom_id,
-                    S="program",
-                    E=desc,
-                    T=50.0,
-                )
-            else:
-                prog_atom = None
+            atom_id   = f"program.{name.lower()}"
+            prog_atom = None
+            _phi = getattr(RUNTIME, "phi", None) or getattr(RUNTIME, "matrix", None)
+            if _phi and hasattr(_phi, "create_atom"):
+                try:
+                    prog_atom = _phi.create_atom(
+                        atom_id, S="program", E=desc, T=50.0)
+                except Exception:
+                    pass
 
             # Wrapper: touch() przy każdym wywołaniu
             def _make_handler(h, a):
@@ -829,13 +840,14 @@ def load_programs(config_path: str = "karmazyn_programs.json") -> int:
             REGISTRY.register(name.lower(), ServiceStatus.MISSING,
                               message=str(e)[:60])
             # Atom niedostępnego programu — T=1 → TOMB przy pierwszym tick
-            if name and hasattr(RUNTIME, "phi"):
-                RUNTIME.phi.create_atom(
-                    f"program.{name.lower()}",
-                    S="program.missing",
-                    E=str(e)[:64],
-                    T=1.0,
-                )
+            _phi = getattr(RUNTIME, "phi", None) or getattr(RUNTIME, "matrix", None)
+            if name and _phi and hasattr(_phi, "create_atom"):
+                try:
+                    _phi.create_atom(
+                        f"program.{name.lower()}",
+                        S="program.missing", E=str(e)[:64], T=1.0)
+                except Exception:
+                    pass
         except Exception as e:
             REGISTRY.log("WARN",
                          f"Program {name}: {type(e).__name__}: {e}",
@@ -952,6 +964,9 @@ def main():
                 REGISTRY.log("INFO", f"BIN: {cmd_id} -> {target}", service="shell")
 
     REGISTRY.log("INFO", "Shell gotowy", service="shell")
+
+    # Dynamiczne programy z karmazyn_programs.json
+    load_programs()
 
     if DISPLAY_LOADED and DISPLAY is not None and DISPLAY.available:
         print("\n[KarmazynOS] Tryb graficzny SDL -- zamknij okno lub Ctrl+Q")

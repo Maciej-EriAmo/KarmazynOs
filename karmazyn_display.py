@@ -49,13 +49,13 @@ except ImportError:
 
 # ─── Stałe layoutu ───────────────────────────────────────────────────────────
 
-W, H       = 1280, 800
+W, H       = 1440, 900
 FPS        = 60
-FONT_SIZE  = 16
+FONT_SIZE  = 20
 
 # Kolory — jeden zestaw dla całego systemu
 C_BG     = (12,  12,  20)
-C_FG     = (200, 200, 200)
+C_FG     = (255, 255, 255)
 C_ACCENT = (180, 60,  60)   # karmazynowy — akcenty, prompt, obramowania
 C_HOT    = (255, 80,  40)   # czerwony — T >= 70
 C_WARM   = (60,  160, 255)  # niebieski — T 30-70
@@ -133,6 +133,8 @@ class TerminalState:
             self._key_queue.put(line)
         elif event.key == pygame.K_BACKSPACE:
             self.input_buf = self.input_buf[:-1]
+        elif event.key == pygame.K_DELETE:
+            self.input_buf = ''  # Ctrl+Del czyści cały bufor
         elif event.key == pygame.K_UP:
             if self._history and self._hist_idx > 0:
                 self._hist_idx -= 1
@@ -330,7 +332,7 @@ def draw_terminal(ctx: DrawCtx,
     # Input z migającym kursorem
     cursor  = "|" if int(t * 2) % 2 == 0 else " "
     inp_txt = state.prompt + input_buf + cursor
-    ctx.text(inp_txt, C_ACCENT, x=r.x + 6, y=y)
+    ctx.text(inp_txt, (255, 220, 100), x=r.x + 6, y=y)  # żółty prompt — czytelny
 
 
 def draw_logo(ctx: DrawCtx, state: LogoState) -> None:
@@ -408,8 +410,8 @@ def draw_phi_map(ctx: DrawCtx,
 
     cols    = max(1, (r.w - 12) // 115)
     cell_w  = (r.w - 12) // cols
-    cell_h  = 30
-    top     = r.y + 22
+    cell_h  = 22   # kompaktowy przy 28% wysokości
+    top     = r.y + 20
 
     for idx, atom in enumerate(visible):
         col_i = idx % cols
@@ -455,7 +457,7 @@ def draw_hud(surface: "pygame.Surface",
     """
     _cr_ref = close_rect
 
-    r = pygame.Rect(0, 0, W, 22)
+    r = pygame.Rect(0, 0, W, 26)
     surface.fill((8, 8, 16), r)
 
     uptime = f"{t:.0f}s"
@@ -471,7 +473,7 @@ def draw_hud(surface: "pygame.Surface",
         (f"COLD:{cold} ",  C_COLD),
         (f"tick:{tick}  ", C_FG),
         (f"up:{uptime}",   (100, 100, 100)),
-        (f"  ESC/Ctrl+Q = zamknij", (70, 70, 70)),
+        (f"  F1=zamknij-panel  F2=phi-map  ESC=wyjście", (70, 70, 70)),
     ]
     x = 4
     for text, color in parts:
@@ -492,11 +494,11 @@ def draw_hud(surface: "pygame.Surface",
                         _new_cr.y + 2))
 
     # Linia oddzielająca HUD od paneli
-    pygame.draw.line(surface, C_ACCENT, (0, 21), (W, 21), 1)
+    pygame.draw.line(surface, C_ACCENT, (0, 25), (W, 25), 1)
 
 
 def draw_dividers(surface: "pygame.Surface") -> None:
-    """Pionowe i poziome linie podziału layoutu."""
+    """Linia podziału — tylko pionowa, tylko gdy split."""""
     pygame.draw.line(surface, C_ACCENT,
                      (W//2, 22), (W//2, H), 1)
     pygame.draw.line(surface, (40, 20, 20),
@@ -519,7 +521,7 @@ class ImmediateRenderer:
       _highlight  — id atomu do podświetlenia (kliknięcie)
     """
 
-    HUD_H = 22   # piksele HUD na górze
+    HUD_H = 26   # piksele HUD na górze
 
     def __init__(self,
                  screen:     "pygame.Surface",
@@ -533,12 +535,23 @@ class ImmediateRenderer:
         self.phi_ref    = None   # PhiSpace — podpinany przez bind_phi()
         self._phi_atoms: List[Dict] = []
         self._highlight: Optional[str] = None
+        self.browser_ref = None   # KarmazynBrowser — podpinany przez bind_browser()
         self._clock      = pygame.time.Clock()
         self._t0         = time.monotonic()
         self._tick_n     = 0
         self._close_rect: List = []   # [pygame.Rect] — pozycja przycisku ×
         self._tick_fn:   Optional[Callable] = None  # fizyka: phi.tick()
         self._last_phys  = 0.0        # ostatni czas wywołania tick_fn
+
+        # ── Workspace — dynamiczne panele ────────────────────────────────────
+        # Programy rejestrują się gdy aktywne, zwalniają gdy nieaktywne.
+        # layout: "solo"  — terminal full-screen
+        #         "split" — lewy program + prawy terminal
+        #         "trio"  — lewy program + prawy: phi-map+terminal
+        self._layout:      str              = "solo"
+        self._left_draw:   Optional[Callable] = None   # fn(ctx) → None
+        self._left_label:  str              = ""
+        self._show_phi:    bool             = False     # F2 toggle
 
     def _make_ctx(self, rect: "pygame.Rect") -> DrawCtx:
         return DrawCtx(self.screen, self.font, rect)
@@ -548,6 +561,60 @@ class ImmediateRenderer:
         if self.phi_ref is not None:
             return self.phi_ref.matrix.atoms()
         return self._phi_atoms
+
+    # ── Workspace API ─────────────────────────────────────────────────────────
+
+    def claim_left(self, draw_fn: Callable, label: str = "") -> None:
+        """Program zajmuje lewy panel.
+        draw_fn(ctx: DrawCtx) → None  — wywoływane każdą klatkę.
+        """
+        self._left_draw  = draw_fn
+        self._left_label = label
+        self._layout     = "split"
+
+    def release_left(self) -> None:
+        """Program zwalnia lewy panel — terminal wraca do full-screen."""
+        self._left_draw  = None
+        self._left_label = ""
+        self._layout     = "solo"
+
+    def toggle_phi(self) -> bool:
+        """Przełącz widoczność phi-map (F2). Zwraca nowy stan."""
+        self._show_phi = not self._show_phi
+        return self._show_phi
+
+    def _try_click_link(self, pos: Tuple[int,int]) -> None:
+        """Klik w terminalu — wykryj [N] i podążaj za linkiem N."""
+        if not self.browser_ref or not self.browser_ref._current:
+            return
+        # Oblicz rect terminala w aktualnym layout
+        available_h = H - self.HUD_H
+        phi_h  = int(available_h * 0.25) if self._show_phi else 0
+        right_x = W//2 if self._layout == "split" else 0
+        right_w = W - right_x
+        term_y  = self.HUD_H + phi_h
+        term_h  = available_h - phi_h
+        term_r  = pygame.Rect(right_x, term_y, right_w, term_h)
+        if not term_r.collidepoint(pos):
+            return
+        # Która linia? Oblicz indeks klikniętej linii
+        line_h  = self.font.get_height() + 2
+        rel_y   = pos[1] - term_y
+        line_idx = rel_y // line_h
+        # Pobierz tekst linii
+        lines, _ = self.term_state.snapshot()
+        visible_start = max(0, len(lines) - (term_h // line_h) - 1)
+        abs_idx = visible_start + line_idx
+        if abs_idx >= len(lines):
+            return
+        line_text, _ = lines[abs_idx]
+        # Szukaj [N] w linii
+        import re
+        m = re.search(r'\[(\d+)\]', line_text)
+        if m:
+            n = int(m.group(1))
+            _, msg = self.browser_ref.follow_link(n)
+            self.term_state.append(msg)
 
     def _phi_stats(self) -> Dict[str, int]:
         if self.phi_ref is not None:
@@ -572,33 +639,54 @@ class ImmediateRenderer:
         # Flush segmentów LOGO z worker queue → canvas (main thread only)
         self.logo_state.flush_segments()
 
-        # Lewy panel — LOGO canvas (cała wysokość)
-        draw_logo(
-            self._make_ctx(pygame.Rect(
-                0, hud_offset, W//2, H - hud_offset)),
-            self.logo_state,
-        )
+        available_h = H - hud_offset
 
-        # Prawy górny — phi-map
-        draw_phi_map(
-            self._make_ctx(pygame.Rect(
-                W//2, hud_offset, W//2, (H - hud_offset)//2)),
-            self._get_atoms(),
-            self._highlight,
-        )
+        # ── Workspace layout ─────────────────────────────────────────────────
+        if self._layout == "split" and self._left_draw:
+            # Program zajął lewy panel
+            left_w  = W // 2
+            right_x = left_w
+            right_w = W - left_w
 
-        # Prawy dolny — terminal
+            # Lewy panel — program (LOGO, edytor, itp.)
+            left_ctx = self._make_ctx(
+                pygame.Rect(0, hud_offset, left_w, available_h))
+            self._left_draw(left_ctx)
+
+        else:
+            # "solo" — terminal full-screen (brak lewego panelu)
+            right_x = 0
+            right_w = W
+
+        # Prawy obszar: phi-map (opcjonalny) + terminal
+        if self._show_phi and self._get_atoms():
+            phi_h  = int(available_h * 0.25)
+            term_y = hud_offset + phi_h
+            term_h = available_h - phi_h
+            draw_phi_map(
+                self._make_ctx(pygame.Rect(
+                    right_x, hud_offset, right_w, phi_h)),
+                self._get_atoms(), self._highlight,
+            )
+        else:
+            term_y = hud_offset
+            term_h = available_h
+
         draw_terminal(
-            self._make_ctx(pygame.Rect(
-                W//2, hud_offset + (H - hud_offset)//2,
-                W//2, (H - hud_offset)//2)),
-            self.term_state,
-            t,
+            self._make_ctx(pygame.Rect(right_x, term_y, right_w, term_h)),
+            self.term_state, t,
         )
+
+        # Linia pionowa tylko gdy split
+        if self._layout == "split":
+            pygame.draw.line(s, C_ACCENT,
+                             (W//2, hud_offset), (W//2, H), 1)
 
         # HUD + dividers
         draw_hud(s, self.font, self._phi_stats(), t, self._close_rect)
-        draw_dividers(s)
+        # Linia środkowa tylko gdy split
+        if self._layout == 'split':
+            draw_dividers(s)
         pygame.display.flip()
 
     def _handle_event(self, event: "pygame.event.Event") -> bool:
@@ -612,6 +700,14 @@ class ImmediateRenderer:
             ctrl = event.mod & pygame.KMOD_CTRL
             if ctrl and event.key == pygame.K_q:
                 return False
+            # F1 — zwolnij lewy panel (terminal full-screen)
+            if event.key == pygame.K_F1:
+                self.release_left()
+                return True
+            # F2 — przełącz phi-map
+            if event.key == pygame.K_F2:
+                self.toggle_phi()
+                return True
             self.term_state.push_key(event)
         if event.type == pygame.MOUSEBUTTONDOWN:
             # Kliknięcie przycisku × w HUD → quit
@@ -621,10 +717,15 @@ class ImmediateRenderer:
         return True
 
     def _handle_click(self, pos: Tuple[int,int]) -> None:
-        """Kliknięcie na atom → highlight + info w terminalu."""
+        """Kliknięcie: atom w phi-map lub link w terminalu."""
         mx, my = pos
-        phi_r  = pygame.Rect(W//2, self.HUD_H,
-                             W//2, (H - self.HUD_H)//2)
+        if not self._show_phi:
+            return   # phi-map niewidoczna — nic do kliknięcia
+        available_h = H - self.HUD_H
+        phi_h   = int(available_h * 0.25)
+        right_x = W//2 if self._layout == "split" else 0
+        phi_r   = pygame.Rect(right_x, self.HUD_H,
+                              W - right_x, phi_h)
         if not phi_r.collidepoint(mx, my):
             return
 
@@ -772,6 +873,11 @@ class KarmazynDisplay:
         """Ustaw listę dict dla trybu demo (bez PhiSpace)."""
         if self._renderer:
             self._renderer._phi_atoms = atoms
+
+    def bind_browser(self, browser: Any) -> None:
+        """Podpina przeglądarkę — klik myszą w terminalu śledzi linki."""
+        if self._renderer:
+            self._renderer.browser_ref = browser
 
     def run(self,
             shell_main: Optional[Callable] = None,

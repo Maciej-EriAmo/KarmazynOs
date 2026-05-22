@@ -28,7 +28,7 @@ import sys
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
-from karmazyn_atom import Atom, T_INIT
+from karmazyn_atom import Atom
 from karmazyn_phi  import PhiSpace
 
 # ─── Stałe ───────────────────────────────────────────────────────────────────
@@ -815,6 +815,28 @@ class LogoShell:
         # Podepnij phi-space LOGO do display (phi-map pokazuje atomy LOGO)
         if display is not None and hasattr(display, 'bind_phi'):
             display.bind_phi(self.env.phi)
+        # NIE zajmuj lewego panelu przy init — tylko gdy użytkownik uruchomi RUN
+
+    def _claim_workspace(self) -> None:
+        """Zajmij lewy panel dla kanwy LOGO."""
+        d = self._display
+        if d and d.available and d.renderer:
+            # Zdefiniuj draw_fn czytający z logo_state (immediate mode)
+            from karmazyn_display import draw_logo, DrawCtx
+            import pygame
+
+            def _draw_logo_panel(ctx: DrawCtx) -> None:
+                # flush segmentów w main thread
+                d.logo_state.flush_segments()
+                draw_logo(ctx, d.logo_state)
+
+            d.renderer.claim_left(_draw_logo_panel, "LOGO")
+
+    def _release_workspace(self) -> None:
+        """Zwolnij lewy panel — terminal wraca do full-screen."""
+        d = self._display
+        if d and d.available and d.renderer:
+            d.renderer.release_left()
 
     def cmd(self, args: List[str]) -> str:
         if not args:
@@ -824,6 +846,7 @@ class LogoShell:
         if sub == "RUN":
             code = ' '.join(args[1:])
             try:
+                self._claim_workspace()
                 self.interp.run(code)
                 if self._display and self._display.available:
                     return "OK — rysunek w oknie graficznym"
@@ -845,6 +868,7 @@ class LogoShell:
 
         if sub == "RESET":
             self.interp.reset()
+            self._release_workspace()
             return "Reset."
 
         if sub == "SAVE":
