@@ -123,14 +123,14 @@ LOGO = None
 
 # ── NooEdit ───────────────────────────────────────────────────────────────────
 try:
-    from Nooedit import cmd_nooedit as _nooedit_cmd, NooContext
+    from NooEdit import cmd_nooedit as _nooedit_cmd, NooContext
     NOOEDIT_LOADED = True
-    REGISTRY.register("nooedit", ServiceStatus.OK, "NooEdit SDL v5.2")
+    REGISTRY.register("nooedit", ServiceStatus.OK, version="NooEdit SDL v5.2")
 except (ImportError, ModuleNotFoundError) as e:
     NOOEDIT_LOADED    = False
     _nooedit_cmd      = None
-    REGISTRY.log("WARN", "nooedit", f"NooEdit niedostepny: {e}")
-    REGISTRY.register("nooedit", ServiceStatus.MISSING, str(e)[:80])
+    REGISTRY.log("WARN", f"NooEdit niedostepny: {e}", service="nooedit")
+    REGISTRY.register("nooedit", ServiceStatus.MISSING, message=str(e)[:80])
 
 # ── AstraEdit ─────────────────────────────────────────────────────────────────
 try:
@@ -144,7 +144,7 @@ except ImportError as e:
 # ── Scheduler + Net ───────────────────────────────────────────────────────────
 try:
     from karmazyn_scheduler import ThermalScheduler, cmd_scheduler
-    from karmazyn_net import KarmazynNet, cmd_net_cmd as _ext_cmd_net
+    from karmazyn_net import KarmazynNet, cmd_net_cmd
     SCHEDULER_LOADED = True
     REGISTRY.register("scheduler", ServiceStatus.OK, version="ThermalScheduler v1.0")
     REGISTRY.register("net",       ServiceStatus.OK, version="KarmazynNet v1.0")
@@ -155,10 +155,6 @@ except ImportError as e:
 
 SCHEDULER = None
 NET       = None
-
-# ── Zabezpieczenia braku Karmin i Lua ─────────────────────────────────────────
-KARM_LOADED = False
-KARM = None
 
 # ── Radio + Audio ─────────────────────────────────────────────────────────────
 try:
@@ -205,6 +201,8 @@ def reg(name: str, handler,
                       description[:60] if description else category)
 
 
+
+
 def _draw_frame(title: str, lines: list) -> str:
     """Prosta ramka ASCII — zamiennik gfx.draw_frame."""
     sep  = "─" * 50
@@ -217,6 +215,7 @@ def _progress_bar(val: float, max_val: float = 100.0) -> str:
     pct    = max(0.0, min(1.0, float(val) / max(1.0, float(max_val))))
     filled = int(pct * 20)
     return "[" + "█" * filled + "░" * (20 - filled) + f"] {val:5.1f}"
+
 
 
 def cmd_ls(args):
@@ -319,12 +318,9 @@ def cmd_rm(args):
     if not args: return "RM <id>"
     ok = RUNTIME.matrix.delete(args[0])
     return f"OK: usunięto {args[0]}" if ok else f"Brak: {args[0]}"
-
-# Odwołania do brakującego FS wycięte na rzecz pustej odpowiedz:
-def cmd_cp(args):    return "Komenda niedostepna (brak FS)"
-def cmd_mv(args):    return "Komenda niedostepna (brak FS)"
-def cmd_sete(args):  return "Komenda niedostepna (brak FS)"
-
+def cmd_cp(args):    return FS.cp(args[0], args[1]) if len(args) > 1 else "CP <src> <dst>"
+def cmd_mv(args):    return FS.mv(args[0], args[1]) if len(args) > 1 else "MV <id> <warstwa>"
+def cmd_sete(args):  return FS.setE(args[0], args[1]) if len(args) > 1 else "SETE <id> <E>"
 def cmd_find(args):
     if not args: return "FIND <query>"
     q = " ".join(args).lower()
@@ -365,7 +361,7 @@ def cmd_scheduler_cmd(args):
 def cmd_net_cmd(args):
     if not SCHEDULER_LOADED or NET is None:
         return "Net niedostepny (brak karmazyn_net.py)"
-    return _ext_cmd_net(args, NET)
+    return cmd_net(args, NET)
 
 # ── Komendy mediów ────────────────────────────────────────────────────────────
 
@@ -400,8 +396,7 @@ def cmd_consolidate(args):
         return "CONSOLIDATE <id> [babel]"
     if len(args) == 1:
         target = args[0]
-        current_b_name = getattr(RUNTIME, "current_bubble_name", "default")
-        atom_id, bubble_name = ((target, current_b_name)
+        atom_id, bubble_name = ((target, BUBBLE_CTX.current_bubble_name)
                                 if RUNTIME.has_atom(target) else (None, target))
     else:
         atom_id, bubble_name = args[0], args[1]
@@ -422,14 +417,13 @@ def cmd_consolidate(args):
 
 def cmd_stabilizuj(args):
     if not args: return "STABILIZUJ <id>"
-    if getattr(RUNTIME, "current_mission", None) and getattr(RUNTIME, "resources", {}).get("zywica", 0) <= 0:
+    if RUNTIME.current_mission and RUNTIME.resources.get("zywica", 0) <= 0:
         return "Brak Zywicy!"
-    if getattr(RUNTIME, "current_mission", None):
+    if RUNTIME.current_mission:
         RUNTIME.resources["zywica"] -= 1
     try:
         RUNTIME.stabilize_atom(args[0])
-        res = getattr(RUNTIME, "resources", {}).get('zywica', 'inf')
-        return f"Stabilizowano {args[0]} (Zywica: {res})"
+        return f"Stabilizowano {args[0]} (Zywica: {RUNTIME.resources.get('zywica', 'inf')})"
     except ValueError as e:
         return str(e)
 
@@ -477,7 +471,7 @@ def cmd_atom_status(args):
            else "phi_signal" if atom.T > 30 else "phi_decay")
     return _draw_frame(f"ATOM {atom.id}", [
         f"S: {atom.S}   E: {atom.E}",
-        f"T: {atom.T:.1f}   Stan: {atom.state}   Wiek: {getattr(atom, 'age', '?')}",
+        f"T: {atom.T:.1f}   Stan: {atom.state}   Wiek: {atom.age}",
         _progress_bar(atom.T, atom.T_max),
     ])
 
@@ -500,13 +494,18 @@ def cmd_compile(args):
     if not args: return "COMPILE <plik.karm>"
     if not os.path.isfile(args[0]): return f"BLAD brak pliku: {args[0]}"
     try:
-        # Zależność od karmazyn_karm, który jest u Ciebie obecnie pomijany
-        return "Brak parsera karmin."
+        program = parse_file(args[0])
+        lines = [f"AST: {args[0]}", "=" * 50]
+        for i, stmt in enumerate(program.statements, 1):
+            fields = {k: v for k, v in stmt.__dict__.items()
+                      if not k.startswith('_')}
+            lines.append(f"{i}. {type(stmt).__name__}: {fields}")
+        return "\n".join(lines)
     except Exception as e:
         return f"BLAD {e}"
 
 def cmd_lua(args):
-    if LUA_EXECUTOR is None:
+    if not LUA_AVAILABLE or LUA_EXECUTOR is None:
         return "BLAD: lua niedostepny (brak LuaExecutor)"
     if not args: return "LUA <plik.lua> | LUA BUBBLE <babel>"
     if args[0].upper() == "BUBBLE":
@@ -565,7 +564,7 @@ def cmd_exit(args):
         if DISPLAY.renderer and DISPLAY.renderer.term_state:
             DISPLAY.renderer.term_state.shutdown()
 
-    REGISTRY.log("INFO", "shell", "Shell zamkniety")
+    REGISTRY.log("INFO", "shell", f"Shell zamkniety po {REGISTRY.uptime_str()}")
     # Zatrzymaj phi-space (PhiSpace nie ma stop_loop — wystarczy sys.exit)
     if hasattr(RUNTIME, "stop_loop"):
         RUNTIME.stop_loop()
@@ -574,7 +573,10 @@ def cmd_exit(args):
 # ── Edytor emanacji ───────────────────────────────────────────────────────────
 
 def cmd_emanation_edit_wrapper(args):
-    return "cmd_emanation_edit niedostepne."
+    return cmd_emanation_edit(
+        args, BUBBLE_CTX.current_bubble_id, RUNTIME,
+        None, None, None,  # FS nieaktywny
+    )
 
 # ── Rejestracja komend ────────────────────────────────────────────────────────
 
@@ -590,6 +592,13 @@ def cmd_export(args, **kw): return 'cmd_export: komenda niedostepna'
 def cmd_gallery(args, **kw): return 'cmd_gallery: komenda niedostepna'
 def cmd_import(args, **kw): return 'cmd_import: komenda niedostepna'
 def cmd_view(args, **kw): return 'cmd_view: komenda niedostepna'
+
+# Pliki
+reg("CAT",   cmd_cat,   "Wyswietl plik",               category="files")
+reg("MKDIR", cmd_mkdir, "Stworz katalog",               category="files")
+reg("ECHO",  cmd_echo,  "Wypisz tekst",                 category="files")
+reg("HEAD",  cmd_head,  "Pierwsze N linii pliku",        category="files")
+reg("WC",    cmd_wc,    "Policz linie/slowa/bajty",      category="files")
 
 # Nawigacja
 reg("LS",             cmd_ls,           "Listuje atomy lub FS",        category="navigation")
@@ -871,7 +880,7 @@ if RADIO_LOADED:
 if SCHEDULER_LOADED:
     def cmd_net_wrap(args):
         """NET [GET <url>|STATUS]"""
-        return cmd_net_cmd(args, NET) if NET else "Net niedostepny"
+        return cmd_net_cmd(args) if NET else "Net niedostepny"
     reg("NET",     cmd_net_wrap,    "Siec i HTTP",            category="programs")
 
 if ASTRAEDIT_LOADED:
@@ -886,13 +895,12 @@ if ASTRAEDIT_LOADED:
 def cmd_nooedit_wrap(args):
     """NOOEDIT <label> [--py|--lua|--md|--karm]"""
     if not NOOEDIT_LOADED:
-        return ('BLAD: Nooedit.py nie zaladowany.\n'
-                'Upewnij sie ze Nooedit.py jest w katalogu i'
+        return ('BLAD: NooEdit.py nie zaladowany.\n'
+                'Upewnij sie ze NooEdit.py jest w katalogu i'
                 ' ze wszystkie zaleznosci sa dostepne.')
     term = (DISPLAY.renderer.term_state
             if DISPLAY and DISPLAY.available and DISPLAY.renderer else None)
-    # POPRAWKA 1: Podajemy bezpośrednio DISPLAY do Nooedit
-    return _nooedit_cmd(args, runtime=RUNTIME, term_state=term, display=DISPLAY)
+    return _nooedit_cmd(args, runtime=RUNTIME, term_state=term)
 
 reg("NOOEDIT", cmd_nooedit_wrap, "Edytor babli (SDL)",    category="programs")
 reg("EDIT",    cmd_nooedit_wrap, "Alias: NOOEDIT",        category="programs")
@@ -918,6 +926,23 @@ def cmd_display_wrap(args):
     return "DISPLAY STATUS | BENCH | F1 | F2"
 
 reg("DISPLAY", cmd_display_wrap, "Kontrola okna SDL",    category="system")
+
+# ── Handshake ─────────────────────────────────────────────────────────────────
+try:
+    from karmazyn_handshake import cmd_handshake as _cmd_handshake
+
+    def cmd_handshake_wrap(args):
+        """HANDSHAKE SERVE [port] | HANDSHAKE <host> [port] | HANDSHAKE SERVE_BG [port]"""
+        term = (DISPLAY.renderer.term_state
+                if DISPLAY and DISPLAY.available and DISPLAY.renderer else None)
+        return _cmd_handshake(args, runtime=RUNTIME, term_state=term)
+
+    reg("HANDSHAKE", cmd_handshake_wrap,
+        "Symetryczny uscisk z innym weglem KarmazynOS",
+        category="network")
+    REGISTRY.register("handshake", ServiceStatus.OK, version="KarmazynHandshake v1.0")
+except ImportError as e:
+    REGISTRY.register("handshake", ServiceStatus.MISSING, message=str(e)[:60])
 
 
 # ── KernelContext — kontener stanu systemu ────────────────────────────────────
@@ -1043,8 +1068,8 @@ def shell_worker(term):
     except Exception:
         pass
     # Pokaż dostępne komendy dynamicznie
-        cmd_list = "  ".join(sorted(_COMMANDS.keys())[:12])
-        out(f"Komendy: {cmd_list}...", C_STATUS)
+    cmd_list = "  ".join(sorted(_COMMANDS.keys())[:12])
+    out(f"Komendy: {cmd_list}...", C_STATUS)
 
     while not term._shutdown:
         try:
@@ -1192,16 +1217,15 @@ def main():
                                          if t.endswith('.lua')
                                          else LUA_EXECUTOR.run_bubble(t))
 
-                try:
-                    reg(cmd_id.upper(), make_handler(target), f"Narzedzie: {target}", category="tools")
-                    REGISTRY.log("INFO", "shell", f"BIN: {cmd_id} -> {target}")
-                except Exception:
-                    pass
+                registry.register(Command(
+                    cmd_id.upper(), make_handler(target),
+                    f"Narzedzie: {target}", "tools",
+                ))
+                REGISTRY.log("INFO", "shell", f"BIN: {cmd_id} -> {target}")
 
     REGISTRY.log("INFO", "shell", "Shell gotowy")
 
-    # Dynamiczne programy z karmazyn_programs.json
-    load_programs()
+    # load_programs() wywołane wcześniej — drugie wywołanie usunięte
 
     if DISPLAY_LOADED and DISPLAY is not None and DISPLAY.available:
         print("\n[KarmazynOS] Tryb graficzny SDL -- zamknij okno lub Ctrl+Q")
@@ -1213,7 +1237,7 @@ def main():
 
     while True:
         try:
-            line = input("ksh> ").strip()
+            line = input(f"{""}ksh>{""} ").strip()
         except (EOFError, KeyboardInterrupt):
             print("\nZamykanie...")
             cmd_exit([])
@@ -1223,6 +1247,7 @@ def main():
         result = process_command(line)
         if result:
             print(result)
+        print_hud()
 
 
 def process_command(line: str) -> str:
