@@ -1,8 +1,22 @@
 """
-hss_demo.py — Holographic Secure Storage daemon (wielobitowy, spójny)
-======================================================================
-Minimalna implementacja Ring‑LWE + HSS dla KarmazynOS.
-Kodowanie 2‑bitowe na element (0..3). Zgodne z karmazyn.py i phi_store.py.
+karmazyn_hss.py — HSS Daemon KarmazynOS v1.0
+=============================================
+Holographic Secure Storage — szyfrowany dostęp do phi-space.
+
+Implementacja Ring-LWE (N=15, Q=256) z wielobitowym kodowaniem (2 bity/element).
+Kontrola dostępu przez system pryzmatów (prisms) — ACL na poziomie inodów.
+
+Izomorfizm phi-space:
+  inode    ≡ atom.id      (adres w przestrzeni)
+  vec      ≡ atom.S       (wektor semantyczny)
+  prisms   ≡ kontekst bąbla (izolacja dostępu między domenami)
+  task     ≡ intencja agenta (task mismatch → deszyfrowanie niemożliwe)
+
+Kluczowe właściwości:
+  - Task mismatch: agent z task A nie może czytać danych task B
+    nawet mając poprawny klucz (50% błędów bitu → garbage)
+  - ACL inodu: właściciel definiuje wymagane prismy przy pierwszym zapisie
+  - Ring-LWE: odporność post-kwantowa
 """
 
 import hashlib

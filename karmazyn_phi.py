@@ -31,7 +31,6 @@ Opcjonalna integracja HRR:
 
 import hashlib
 import time
-from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from karmazyn_atom import (
@@ -215,6 +214,46 @@ class PhiSpace:
             a.touch()
         return a
 
+    def embed(self, text: str, dim: int = 15) -> "np.ndarray":
+        """
+        Deterministyczny embedding tekstu → wektor dim-wymiarowy.
+
+        Algorytm:
+          1. Tokenizuj tekst (słowa > 1 znak)
+          2. Dla każdego tokenu: MD5 → seed → losowy wektor N-D
+          3. Sumuj wektory i normalizuj do sfery jednostkowej
+
+        Właściwości:
+          - Deterministyczny: ten sam tekst → ten sam wektor
+          - Bez zewnętrznych modeli (zero zależności)
+          - Podobne słowa → podobne wektory (przez częściowe overlap tokenów)
+
+        Używany przez PhiBuffer do projekcji semantycznej
+        i przez DOMMapper do osadzania węzłów DOM w phi-space.
+
+        Izomorfizm: text → punkt na sferze S^(dim-1)
+        Odpowiada atom.S gdy S to string semantyczny.
+        """
+        import hashlib as _hl, re as _re
+        try:
+            import numpy as _np
+        except ImportError:
+            return None
+
+        tokens = [w for w in _re.split(r"\W+", text.lower()) if len(w) > 1]
+        if not tokens:
+            tokens = [text[:8] if text else "phi"]
+
+        vec = _np.zeros(dim, dtype=_np.float32)
+        for tok in set(tokens):
+            seed = int(_hl.md5(tok.encode()).hexdigest(), 16) % (2 ** 32)
+            v    = _np.random.default_rng(seed).standard_normal(dim).astype(_np.float32)
+            vec += v
+
+        norm = _np.linalg.norm(vec)
+        return (vec / norm) if norm > 1e-9 else vec
+
+
     def peek_atom(self, id: str) -> Optional[Atom]:
         """Pobierz atom BEZ ogrzewania — do użytku wewnętrznego
         (render, scheduler, audyt). Nie zmienia T."""
@@ -231,6 +270,47 @@ class PhiSpace:
 
     def has_atom(self, id: str) -> bool:
         return self.matrix.has(id)
+
+    def step(self, rate: float = DECAY_DEFAULT):
+        """
+        Jeden krok termodynamiczny — odpowiednik tick() z eventami.
+
+        Różnica od tick():
+          tick() → zwraca Dict[str, int] (statystyki)
+          step() → yields (atom, event_type) — reaktywny, do iteracji
+
+        Event types:
+          "tick"          — atom żyje, standardowy krok
+          "state_changed" — zmiana HOT/WARM/COLD
+          "vacuum_decay"  — atom przekroczył próg TOMB
+
+        Użycie:
+          for atom, event in phi.step():
+              if event == "vacuum_decay":
+                  cleanup(atom)
+
+        Kompatybilny z HSSKarmazynMatrix.step() (ten sam protokół).
+        """
+        self._tick_n += 1
+        to_remove = []
+
+        for atom in list(self.matrix.atoms()):
+            old_state = atom.state
+            atom.decay(rate)
+
+            if atom.is_dead():
+                to_remove.append(atom.id)
+                self.events.emit("vacuum_decay", atom)
+                yield atom, "vacuum_decay"
+            else:
+                yield atom, "tick"
+                if atom.state != old_state:
+                    self.events.emit("state_changed", atom)
+                    yield atom, "state_changed"
+
+        for atom_id in to_remove:
+            self.matrix.delete(atom_id)
+
 
     # ── Bąble ─────────────────────────────────────────────────────────────────
 
@@ -350,6 +430,35 @@ class PhiSpace:
         atoms = self.matrix.atoms()
         atoms.sort(key=lambda a: -a.T)
         return [(a.id, a.T, a.state) for a in atoms]
+
+    def stop_loop(self) -> None:
+        """Zatrzymaj phi-space — stub kompatybilności z SanctuaryRuntime."""
+        pass
+
+    def stabilize_atom(self, atom_id: str) -> bool:
+        """Stabilizuj atom (ustaw T=T_WARM) — stub."""
+        a = self.matrix.get(atom_id)
+        if a is None:
+            return False
+        if a.T < T_WARM:
+            a.heat(T_WARM - a.T)
+        return True
+
+    def corrupt_atom(self, atom_id: str) -> bool:
+        """Oznacz atom jako uszkodzony (T→1) — stub."""
+        a = self.matrix.get(atom_id)
+        if a is None:
+            return False
+        a.cool(a.T - 1.0)
+        return True
+
+    def list_bubbles(self) -> list:
+        """Zwraca listę bąbli — alias dla bąbli w phi-space."""
+        return [
+            {"label": b_id, "active_atoms": len(b.atoms)}
+            for b_id, b in self._bubbles.items()
+        ]
+
 
     def status_summary(self) -> Dict[str, int]:
         return self.matrix.stats()

@@ -36,6 +36,8 @@ import os
 import queue
 import threading
 import time
+import hashlib
+import random
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 # ─── Graceful degradation bez pygame ─────────────────────────────────────────
@@ -62,7 +64,8 @@ C_WARM   = (60,  160, 255)  # niebieski — T 30-70
 C_COLD   = (40,  80,  140)  # ciemny — T < 30
 C_TURTLE = (100, 220, 100)  # zielony — żółw
 C_TRAIL  = (50,  120, 50)   # ciemniejszy zielony — ślad
-C_GRID   = (20,  20,  35)   # siatka phi-map
+C_GRID   = (20,  20,  35)
+C_STATUS = (160, 160, 180)   # szarawy — komunikaty systemu   # siatka phi-map
 
 
 # ─── TerminalState ────────────────────────────────────────────────────────────
@@ -87,7 +90,12 @@ class TerminalState:
         self._shutdown:  bool             = False   # sygnał zamknięcia
         self._history:   List[str]        = []      # historia komend
         self._hist_idx:  int              = 0       # pozycja w historii
-        self.completer:  Optional[Callable] = None  # Hook uzupełniania TAB
+        self._scroll_offset: int          = 0
+
+    def scroll(self, delta: int) -> None:
+        """Przewiń widok terminala (delta<0=góra, delta>0=dół)."""
+        with self._lock:
+            self._scroll_offset = max(0, self._scroll_offset + delta)
 
     def shutdown(self) -> None:
         """Sygnalizuje workerowi żeby zakończył get_input_blocking()."""
@@ -108,8 +116,10 @@ class TerminalState:
     def get_input_blocking(self) -> str:
         """
         Blokuje worker thread aż do Enter lub sygnału shutdown.
-        Timeout 100ms — worker nie blokuje się na wieczność.
+        Timeout 100ms — worker nie blokuje się na wieczność
+        gdy SDL zamknie okno. Zwraca '' przy shutdown.
         """
+        self.append(self.prompt, C_ACCENT)
         while not self._shutdown:
             try:
                 return self._key_queue.get(timeout=0.1)
@@ -123,35 +133,32 @@ class TerminalState:
         """Przetwarza KEYDOWN. Wywołuj tylko z main thread."""
         if not PYGAME_OK:
             return
-        if event.key == pygame.K_RETURN:
-            line            = self.input_buf
-            self.input_buf  = ""
-            if line.strip():
-                self._history.append(line)
-                self._hist_idx = len(self._history)
-            self._key_queue.put(line)
-        elif event.key == pygame.K_BACKSPACE:
-            self.input_buf = self.input_buf[:-1]
-        elif event.key == pygame.K_DELETE:
-            self.input_buf = ''  # Ctrl+Del czyści cały bufor
-        elif event.key == pygame.K_UP:
-            if self._history and self._hist_idx > 0:
-                self._hist_idx -= 1
-                self.input_buf = self._history[self._hist_idx]
-        elif event.key == pygame.K_DOWN:
-            if self._history and self._hist_idx < len(self._history) - 1:
-                self._hist_idx += 1
-                self.input_buf = self._history[self._hist_idx]
-            else:
-                self._hist_idx = len(self._history)
-                self.input_buf = ""
-        elif event.key == pygame.K_TAB:
-            if self.completer and self.input_buf:
-                suggestion = self.completer(self.input_buf)
-                if suggestion:
-                    self.input_buf = suggestion
-        elif event.unicode and event.unicode.isprintable():
-            self.input_buf += event.unicode
+        
+        with self._lock:
+            if event.key == pygame.K_RETURN:
+                line            = self.input_buf
+                self.input_buf  = ""
+                if line.strip():
+                    self._history.append(line)
+                    self._hist_idx = len(self._history)
+                self._key_queue.put(line)
+            elif event.key == pygame.K_BACKSPACE:
+                self.input_buf = self.input_buf[:-1]
+            elif event.key == pygame.K_DELETE:
+                self.input_buf = ''  # Ctrl+Del czyści cały bufor
+            elif event.key == pygame.K_UP:
+                if self._history and self._hist_idx > 0:
+                    self._hist_idx -= 1
+                    self.input_buf = self._history[self._hist_idx]
+            elif event.key == pygame.K_DOWN:
+                if self._history and self._hist_idx < len(self._history) - 1:
+                    self._hist_idx += 1
+                    self.input_buf = self._history[self._hist_idx]
+                else:
+                    self._hist_idx = len(self._history)
+                    self.input_buf = ""
+            elif event.unicode and event.unicode.isprintable():
+                self.input_buf += event.unicode
 
     # ── API dla renderera (main thread, read-only) ────────────────────────────
 
@@ -295,8 +302,15 @@ class DrawCtx:
     def polygon(self, pts: List[Tuple], color: Tuple) -> None:
         pygame.draw.polygon(self.surface, color, pts)
 
-    def clear(self, color: Tuple = C_BG) -> None:
-        self.surface.fill(color, self.rect)
+    def clear(self, color: Tuple = C_BG, alpha: int = 220) -> None:
+        """Tło panelu. alpha<255 = mgła phi przebija, 255 = nieprzezroczyste."""
+        if alpha >= 255:
+            self.surface.fill(color, self.rect)
+        else:
+            overlay = pygame.Surface(
+                (self.rect.w, self.rect.h), pygame.SRCALPHA)
+            overlay.fill((*color[:3], alpha))
+            self.surface.blit(overlay, self.rect.topleft)
 
 
 # ─── Czyste funkcje rysowania ─────────────────────────────────────────────────
@@ -317,25 +331,33 @@ def draw_terminal(ctx: DrawCtx,
                   state: TerminalState,
                   t: float) -> None:
     """
-    Terminal — klasyczny strumień shellowy z pływającym tekstem.
+    Terminal — czysta funkcja (ctx, state, t) → None.
+    t = czas od startu dla kursora migającego.
     """
     r = ctx.rect
-    ctx.clear()
+    ctx.clear(C_BG, alpha=230)   # lekko półprzezroczysty — mgła widoczna
     ctx.box(r, outline=C_ACCENT)
 
     line_h  = ctx._line_h
     visible = max(1, (r.h - 8) // line_h - 1)
     lines, input_buf = state.snapshot()
 
+    # Scroll: _scroll_offset=0 → najnowsze linie; >0 → starsze
+    offset = getattr(state, '_scroll_offset', 0)
+    total  = len(lines)
+    end    = max(visible, total - offset)
+    start  = max(0, end - visible)
+    view   = lines[start:end]
+
     y = r.y + 4
-    for text, color in lines[-visible:]:
+    for text, color in view:
         ctx.text(text, color, x=r.x + 6, y=y)
         y += line_h
 
-    # Linia wejścia - zawsze pod spodem, przesuwa się w dół z logami
+    # Input z migającym kursorem
     cursor  = "|" if int(t * 2) % 2 == 0 else " "
     inp_txt = state.prompt + input_buf + cursor
-    ctx.text(inp_txt, (255, 220, 100), x=r.x + 6, y=y)
+    ctx.text(inp_txt, (255, 220, 100), x=r.x + 6, y=y)  # żółty prompt — czytelny
 
 
 def draw_logo(ctx: DrawCtx, state: LogoState) -> None:
@@ -450,15 +472,13 @@ def draw_phi_map(ctx: DrawCtx,
 
 
 def draw_hud(surface: "pygame.Surface",
-             font:       "pygame.font.Font",
-             stats:      Dict[str, Any],
-             t:          float,
-             close_rect: Optional[List] = None) -> None:
+             font:    "pygame.font.Font",
+             stats:   Dict[str, Any],
+             t:       float) -> None:
     """
-    HUD — pasek statusu + przycisk [×] zamknięcia.
-    close_rect: mutable list[Rect] — renderer przechowuje pozycję przycisku.
+    HUD — pasek statusu + przycisk [×] w stałym miejscu (W-30, 1, 28, 20).
+    Pozycja × nie zmienia się — brak mutowalnej listy, brak race condition.
     """
-    _cr_ref = close_rect
 
     r = pygame.Rect(0, 0, W, 26)
     surface.fill((8, 8, 16), r)
@@ -484,24 +504,20 @@ def draw_hud(surface: "pygame.Surface",
         surface.blit(s, (x, 3))
         x += s.get_width()
 
-    # Przycisk [×] — prawy górny róg
-    btn_w = 28
-    _new_cr = pygame.Rect(W - btn_w - 2, 1, btn_w, 20)
-    if _cr_ref is not None:
-        if _cr_ref: _cr_ref[0] = _new_cr
-        else: _cr_ref.append(_new_cr)
-    pygame.draw.rect(surface, (120, 30, 30), _new_cr, 0, 3)
-    pygame.draw.rect(surface, C_ACCENT,      _new_cr, 1, 3)
+    # Przycisk [×] — stała pozycja (W-30, 1, 28, 20) = CLOSE_BTN_RECT
+    btn_r = pygame.Rect(W - 30, 1, 28, 20)
+    pygame.draw.rect(surface, (120, 30, 30), btn_r, 0, 3)
+    pygame.draw.rect(surface, C_ACCENT,      btn_r, 1, 3)
     lbl = font.render("×", True, (220, 220, 220))
-    surface.blit(lbl, (_new_cr.x + (_new_cr.w - lbl.get_width()) // 2,
-                        _new_cr.y + 2))
+    surface.blit(lbl, (btn_r.x + (btn_r.w - lbl.get_width()) // 2,
+                        btn_r.y + 2))
 
     # Linia oddzielająca HUD od paneli
     pygame.draw.line(surface, C_ACCENT, (0, 25), (W, 25), 1)
 
 
 def draw_dividers(surface: "pygame.Surface") -> None:
-    """Linia podziału — tylko pionowa, tylko gdy split."""""
+    """Linia podziału — tylko pionowa, tylko gdy split."""
     pygame.draw.line(surface, C_ACCENT,
                      (W//2, 22), (W//2, H), 1)
     pygame.draw.line(surface, (40, 20, 20),
@@ -509,6 +525,334 @@ def draw_dividers(surface: "pygame.Surface") -> None:
 
 
 # ─── ImmediateRenderer ────────────────────────────────────────────────────────
+
+# ─── PhiBuffer — mgła termodynamiczna ────────────────────────────────────────
+
+class PhiBuffer:
+    """
+    Natywna warstwa emisyjna KarmazynOS.
+    Rzutuje atomy z phi-space na płótno 2D przez temperaturę T.
+
+    Trzy właściwości wizualne:
+      Sól 1 — tętno: każdy atom pulsuje w swoim rytmie (faza z hash)
+      Sól 2 — ślad:  fade zamiast clear, historia aktywności widoczna
+      Pieprz — regiony semantyczne: prefix id → region ekranu
+    """
+
+    # Regiony semantyczne: prefix → (cx, cy) w [0,1]
+    _REGIONS = {
+        "shell":   (0.15, 0.15),   # lewy górny  — powłoka
+        "file":    (0.85, 0.15),   # prawy górny — pliki
+        "module":  (0.50, 0.15),   # góra środek — moduły
+        "program": (0.50, 0.50),   # centrum      — programy
+        "bubble":  (0.15, 0.80),   # lewy dolny  — bąble
+        "run":     (0.85, 0.80),   # prawy dolny — wyniki
+        "cache":   (0.50, 0.85),   # dół środek  — cache
+        "out":     (0.85, 0.80),   # prawy dolny — output
+        "code":    (0.85, 0.15),   # prawy górny — kod
+        "nooedit": (0.15, 0.15),   # lewy górny  — edytor
+        "luneta":  (0.50, 0.50),   # centrum      — przeglądarka
+        "logo":    (0.15, 0.50),   # lewy środek — logo
+    }
+
+    def __init__(self, width: int, height: int):
+        self.width   = width
+        self.height  = height
+        self.surface = pygame.Surface((width, height), pygame.SRCALPHA)
+        self.surface.fill((0, 0, 0, 0))
+        self._C_HOT  = (255,  50,  50)
+        self._C_WARM = (180,  20,  50)
+        self._C_COLD = (100, 100, 100)
+        # Fade surface — skaluje alpha w dół (BLEND_RGBA_MULT)
+        # 210/255 ≈ 0.82 → każda klatka alpha * 0.82
+        # Przy 60fps: zanika w ~10 klatek ≈ 0.17s (szybki ślad)
+        # Przy 30fps: zanika w ~5 klatek  ≈ 0.17s (spójne)
+        self._fade   = pygame.Surface((width, height), pygame.SRCALPHA)
+        self._fade.fill((255, 255, 255, 210))  # MULT: alpha *= 210/255
+
+    def _project(self, atom) -> tuple:
+        """
+        Projekcja → (x, y).
+        Wektor N-D:  dim[0], dim[1] ∈ [-1,1] → ekran
+        String id:   prefix → region semantyczny + MD5 rozproszenie ±12.5%
+        """
+        S = None
+        try:    S = atom["S"]
+        except Exception: pass
+        if S is None:
+            S = getattr(atom, "S", None)
+
+        if S is not None and hasattr(S, "__len__") and not isinstance(S, str):
+            try:
+                x = int((float(S[0]) + 1.0) / 2.0 * self.width)
+                y = int((float(S[1]) + 1.0) / 2.0 * self.height)
+                return max(0, min(self.width-1, x)), max(0, min(self.height-1, y))
+            except Exception:
+                pass
+
+        # Prefix → region semantyczny
+        atom_id = atom.get("id", None) if isinstance(atom, dict) else getattr(atom, "id", None)
+        atom_id = str(atom_id or S or "?")
+        prefix  = atom_id.split(".")[0]
+        cx, cy  = self._REGIONS.get(prefix, (0.50, 0.50))
+
+        # MD5 jako rozproszenie wokół centrum regionu (±12.5% ekranu)
+        h  = int(hashlib.md5(atom_id.encode()).hexdigest(), 16)
+        dx = ((h & 0xFF) / 255.0 - 0.5) * 0.25
+        dy = (((h >> 8) & 0xFF) / 255.0 - 0.5) * 0.25
+
+        x  = int((cx + dx) * self.width)
+        y  = int((cy + dy) * self.height)
+        return max(0, min(self.width-1, x)), max(0, min(self.height-1, y))
+
+    def sync_matrix(self, matrix) -> None:
+        """
+        Pętla renderująca mgłę.
+        Sól 1: tętno — sinus na radius, faza unikalna per atom
+        Sól 2: ślad  — fade zamiast fill, historia aktywności
+        """
+        import math as _math
+
+        # Ślad termiczny — skaluj alpha zamiast dodawać czarne tło
+        # BLEND_RGBA_MULT: każdy piksel alpha *= 210/255 ≈ 0.82
+        self.surface.blit(self._fade, (0, 0),
+                         special_flags=pygame.BLEND_RGBA_MULT)
+
+        if matrix is None:
+            return
+
+        try:
+            atoms = matrix.atoms() if callable(matrix.atoms) else matrix.atoms
+        except Exception:
+            return
+
+        now = _math.fmod(_math.floor(_math.pi * 1e6 + id(matrix) * 1e-9)
+                         + __import__("time").monotonic(), 1e6)
+
+        for atom in atoms:
+            T = atom.get("T", 0) if isinstance(atom, dict) else getattr(atom, "T", 0)
+            T = float(T)
+            if T < 10.0:
+                continue
+
+            alpha  = min(220, int(T * 2.2))
+
+            # Tętno — każdy atom ma własną fazę z hash id
+            atom_id = atom.get("id", "?") if isinstance(atom, dict) else getattr(atom, "id", "?")
+            atom_id = str(atom_id)
+            phase   = (hash(atom_id) & 0x3F) / 63.0 * 6.28   # 0–2π unikalne
+            pulse   = 1.0 + 0.18 * _math.sin(
+                __import__("time").monotonic() * 2.8 + phase)
+            radius  = max(2, int(T / 18 * pulse))
+
+            x, y = self._project(atom)
+
+            if T >= 70.0:
+                color = (*self._C_HOT,  alpha)
+            elif T >= 30.0:
+                color = (*self._C_WARM, alpha)
+            else:
+                # Szum termiczny — drobny drift ale stabilny między klatkami
+                random.seed(hash(atom_id) ^ int(T))
+                x += random.randint(-2, 2)
+                y += random.randint(-2, 2)
+                color = (*self._C_COLD, max(40, alpha))
+
+            x = max(0, min(self.width  - 1, x))
+            y = max(0, min(self.height - 1, y))
+
+            pygame.draw.circle(self.surface, color, (x, y), radius)
+
+    def get_frame(self) -> pygame.Surface:
+        return self.surface
+
+
+# ─── EditorState ─────────────────────────────────────────────────────────────
+
+class EditorState:
+    """
+    Bufor tekstu wbudowanego edytora SDL.
+
+    Klawiatura → push_key() (main thread SDL)
+    Shell worker → process_key() (blokuje do następnego klawisza)
+
+    Jeden EditorState = jeden otwarty bąbel.
+    Zapis Ctrl+S → bubble.content + VFS backup.
+    Uruchomienie F5 → output w prawym terminalu.
+    """
+    INDENT = 4
+
+    def __init__(self, label, content, content_type="py"):
+        self.label        = label
+        self.content_type = content_type
+        self.lines        = content.split("\n")
+        if not self.lines: self.lines = [""]
+        self.cursor_row   = 0
+        self.cursor_col   = 0
+        self.scroll_top   = 0
+        self.modified     = False
+        self.status       = "Ctrl+S zapisz | Ctrl+Q wyjdz | F5 uruchom"
+        self._key_queue: queue.Queue = queue.Queue()
+        self._quit        = False
+        self._save        = False
+        self._run         = False
+
+    def push_key(self, event):
+        self._key_queue.put(event)
+
+    def process_key(self):
+        event = self._key_queue.get()
+        key   = event.key
+        mod   = event.mod
+        ctrl  = bool(mod & pygame.KMOD_CTRL)
+
+        if ctrl and key == pygame.K_q:
+            self._quit = True; return "quit"
+        if ctrl and key == pygame.K_s:
+            self._save = True; return "save"
+        if key == pygame.K_F5:
+            self._run  = True; return "run"
+
+        if key == pygame.K_UP:
+            self.cursor_row = max(0, self.cursor_row - 1)
+            self.cursor_col = min(self.cursor_col, len(self.lines[self.cursor_row]))
+        elif key == pygame.K_DOWN:
+            self.cursor_row = min(len(self.lines)-1, self.cursor_row + 1)
+            self.cursor_col = min(self.cursor_col, len(self.lines[self.cursor_row]))
+        elif key == pygame.K_LEFT:
+            if self.cursor_col > 0: self.cursor_col -= 1
+            elif self.cursor_row > 0:
+                self.cursor_row -= 1
+                self.cursor_col  = len(self.lines[self.cursor_row])
+        elif key == pygame.K_RIGHT:
+            line = self.lines[self.cursor_row]
+            if self.cursor_col < len(line): self.cursor_col += 1
+            elif self.cursor_row < len(self.lines)-1:
+                self.cursor_row += 1; self.cursor_col = 0
+        elif key == pygame.K_HOME:  self.cursor_col = 0
+        elif key == pygame.K_END:   self.cursor_col = len(self.lines[self.cursor_row])
+        elif key == pygame.K_PAGEUP:
+            self.cursor_row = max(0, self.cursor_row - 20)
+        elif key == pygame.K_PAGEDOWN:
+            self.cursor_row = min(len(self.lines)-1, self.cursor_row + 20)
+        elif key == pygame.K_RETURN:
+            line   = self.lines[self.cursor_row]
+            indent = len(line) - len(line.lstrip())
+            if line.rstrip().endswith(":"): indent += self.INDENT
+            rest   = line[self.cursor_col:]
+            self.lines[self.cursor_row] = line[:self.cursor_col]
+            self.cursor_row += 1
+            self.lines.insert(self.cursor_row, " " * indent + rest)
+            self.cursor_col  = indent
+            self.modified    = True
+        elif key == pygame.K_BACKSPACE:
+            if self.cursor_col > 0:
+                line = self.lines[self.cursor_row]
+                self.lines[self.cursor_row] = line[:self.cursor_col-1]+line[self.cursor_col:]
+                self.cursor_col -= 1; self.modified = True
+            elif self.cursor_row > 0:
+                prev = self.lines[self.cursor_row-1]
+                cur  = self.lines.pop(self.cursor_row)
+                self.cursor_row -= 1; self.cursor_col = len(prev)
+                self.lines[self.cursor_row] = prev + cur
+                self.modified = True
+        elif key == pygame.K_DELETE:
+            line = self.lines[self.cursor_row]
+            if self.cursor_col < len(line):
+                self.lines[self.cursor_row] = line[:self.cursor_col]+line[self.cursor_col+1:]
+                self.modified = True
+            elif self.cursor_row < len(self.lines)-1:
+                nxt = self.lines.pop(self.cursor_row+1)
+                self.lines[self.cursor_row] += nxt; self.modified = True
+        elif key == pygame.K_TAB:
+            line = self.lines[self.cursor_row]
+            self.lines[self.cursor_row] = line[:self.cursor_col]+" "*self.INDENT+line[self.cursor_col:]
+            self.cursor_col += self.INDENT; self.modified = True
+        elif event.unicode and event.unicode.isprintable():
+            line = self.lines[self.cursor_row]
+            self.lines[self.cursor_row] = line[:self.cursor_col]+event.unicode+line[self.cursor_col:]
+            self.cursor_col += 1; self.modified = True
+
+        self._clamp_scroll()
+        return "continue"
+
+    def _clamp_scroll(self, visible_lines=40):
+        if self.cursor_row < self.scroll_top:
+            self.scroll_top = self.cursor_row
+        elif self.cursor_row >= self.scroll_top + visible_lines:
+            self.scroll_top = self.cursor_row - visible_lines + 1
+
+    def get_text(self): return "\n".join(self.lines)
+
+    def snapshot(self):
+        return (list(self.lines), self.cursor_row, self.cursor_col,
+                self.scroll_top, self.modified, self.label,
+                self.content_type, self.status)
+
+
+_PY_KW = frozenset((
+    'def','class','return','if','elif','else','for','while','try','except',
+    'finally','with','import','from','as','pass','break','continue',
+    'and','or','not','in','is','lambda','yield','raise','True','False','None',
+))
+
+def _draw_py_line(ctx, line, x, y, max_w):
+    char_w = max(1, ctx.font.size('A')[0])
+    max_c  = max(1, max_w // char_w)
+    line   = line[:max_c]
+    s = line.lstrip()
+    if s.startswith('#'):
+        ctx.text(line, (100,160,100), x=x, y=y); return
+    quote3d = ('"""',)
+    quote3s = ("'''",)
+    if s.startswith(quote3d) or s.startswith(quote3s):
+        ctx.text(line, (200,140,100), x=x, y=y); return
+    if s and s[0] in ('"', "'"):
+        ctx.text(line, (200,140,100), x=x, y=y); return
+    import re as _re
+    for m in _re.finditer(r'[A-Za-z_][A-Za-z_0-9]*|.', line):
+        tok = m.group()
+        px  = x + m.start() * char_w
+        col = (120,180,255) if tok in _PY_KW else C_FG
+        ctx.text(tok, col, x=px, y=y)
+
+
+def draw_editor(ctx, state):
+    r = ctx.rect
+    ctx.clear(C_BG, alpha=230)   # lekko półprzezroczysty — mgła widoczna
+    ctx.box(r, outline=C_ACCENT)
+    line_h    = ctx._line_h
+    lnum_w    = 52
+    text_x    = r.x + lnum_w + 4
+    text_w    = r.w - lnum_w - 8
+    visible_n = max(1, (r.h - line_h - 4) // line_h)
+    lines, cur_row, cur_col, scroll_top, modified, label, ct, status = state.snapshot()
+    state._clamp_scroll(visible_n)
+    scroll_top = state.scroll_top
+    char_w = max(1, ctx.font.size('A')[0])
+    for i, line in enumerate(lines[scroll_top:scroll_top + visible_n]):
+        abs_row = scroll_top + i
+        y       = r.y + 4 + i * line_h
+        lc = C_ACCENT if abs_row == cur_row else (70, 70, 100)
+        ctx.text(f'{abs_row+1:4}', lc, x=r.x+4, y=y)
+        if abs_row == cur_row:
+            hl = pygame.Rect(text_x-2, y-1, text_w, line_h)
+            pygame.draw.rect(ctx.surface, (30,30,55), hl)
+        if ct == 'py':
+            _draw_py_line(ctx, line, text_x, y, text_w)
+        else:
+            ctx.text(line[:max(1,text_w//char_w)], C_FG, x=text_x, y=y)
+        if abs_row == cur_row:
+            cpx = text_x + cur_col * char_w
+            pygame.draw.line(ctx.surface, (255,255,100),
+                             (cpx, y), (cpx, y+line_h-2), 2)
+    sb_y = r.bottom - line_h - 2
+    ctx.surface.fill((20,30,60), pygame.Rect(r.x, sb_y, r.w, line_h+2))
+    mark = '*' if modified else ''
+    ct_s = {'py':'Python','lua':'Lua','md':'Markdown','txt':'Tekst'}.get(ct,ct)
+    ctx.text(f' {label}{mark} [{ct_s}]  {status}',
+             (200,220,255), x=r.x+4, y=sb_y+2)
+
 
 class ImmediateRenderer:
     """
@@ -542,9 +886,11 @@ class ImmediateRenderer:
         self._clock      = pygame.time.Clock()
         self._t0         = time.monotonic()
         self._tick_n     = 0
-        self._close_rect: List = []   # [pygame.Rect] — pozycja przycisku ×
+        # Stała pozycja przycisku × — zawsze w prawym górnym rogu HUD
+        self.CLOSE_BTN_RECT = pygame.Rect(W - 30, 1, 28, 20)
         self._tick_fn:   Optional[Callable] = None  # fizyka: phi.tick()
         self._last_phys  = 0.0        # ostatni czas wywołania tick_fn
+        self._editor:    Optional[Any]  = None   # EditorState gdy aktywny
 
         # ── Workspace — dynamiczne panele ────────────────────────────────────
         # Programy rejestrują się gdy aktywne, zwalniają gdy nieaktywne.
@@ -555,6 +901,9 @@ class ImmediateRenderer:
         self._left_draw:   Optional[Callable] = None   # fn(ctx) → None
         self._left_label:  str              = ""
         self._show_phi:    bool             = False     # F2 toggle
+
+        # ── PhiBuffer — mgła termodynamiczna ──────────────────────────
+        self._phi_buf:     Optional[PhiBuffer] = None
 
     def _make_ctx(self, rect: "pygame.Rect") -> DrawCtx:
         return DrawCtx(self.screen, self.font, rect)
@@ -571,6 +920,7 @@ class ImmediateRenderer:
         """Program zajmuje lewy panel.
         draw_fn(ctx: DrawCtx) → None  — wywoływane każdą klatkę.
         """
+        if not callable(draw_fn): return
         self._left_draw  = draw_fn
         self._left_label = label
         self._layout     = "split"
@@ -580,6 +930,11 @@ class ImmediateRenderer:
         self._left_draw  = None
         self._left_label = ""
         self._layout     = "solo"
+        self._editor     = None   # edytor zwolniony razem z panelem
+
+    def set_editor(self, state: Optional[Any]) -> None:
+        """Podepnij EditorState — klawiatura idzie do edytora (nie terminala)."""
+        self._editor = state
 
     def toggle_phi(self) -> bool:
         """Przełącz widoczność phi-map (F2). Zwraca nowy stan."""
@@ -588,12 +943,14 @@ class ImmediateRenderer:
 
     def _try_click_link(self, pos: Tuple[int,int]) -> None:
         """Klik w terminalu — wykryj [N] i podążaj za linkiem N."""
-        if not self.browser_ref or not self.browser_ref._current:
+        if not self.browser_ref or not getattr(self.browser_ref, '_current', False):
             return
-        # Oblicz rect terminala w aktualnym layout
+        # Snapshot layoutu — spójny z ostatnią klatką render_frame
+        layout    = self._layout      # odczyt atomowy — nie zmieni się w trakcie
+        show_phi  = self._show_phi
         available_h = H - self.HUD_H
-        phi_h  = int(available_h * 0.25) if self._show_phi else 0
-        right_x = W//2 if self._layout == "split" else 0
+        phi_h   = int(available_h * 0.25) if show_phi else 0
+        right_x = W//2 if layout == "split" else 0
         right_w = W - right_x
         term_y  = self.HUD_H + phi_h
         term_h  = available_h - phi_h
@@ -626,6 +983,9 @@ class ImmediateRenderer:
 
     def render_frame(self, t: float) -> None:
         """Pełny redraw — deterministyczna funkcja t i stanu."""
+        # Lazy init PhiBuffer
+        if self._phi_buf is None:
+            self._phi_buf = PhiBuffer(W, H)
         # Fizyka: tick co sekundę (niezależnie od frame rate)
         if self._tick_fn and t - self._last_phys >= 1.0:
             self._last_phys = t
@@ -635,7 +995,14 @@ class ImmediateRenderer:
                 pass
 
         s = self.screen
-        s.fill(C_BG)
+
+        # ── Warstwa 1: mgła termodynamiczna (PhiBuffer) ──────────────
+        if self._phi_buf is not None and self.phi_ref is not None:
+            self._phi_buf.sync_matrix(self.phi_ref.matrix)
+            s.fill(C_BG)  # tło pod mgłę
+            s.blit(self._phi_buf.get_frame(), (0, 0))
+        else:
+            s.fill(C_BG)
 
         hud_offset = self.HUD_H
 
@@ -686,7 +1053,7 @@ class ImmediateRenderer:
                              (W//2, hud_offset), (W//2, H), 1)
 
         # HUD + dividers
-        draw_hud(s, self.font, self._phi_stats(), t, self._close_rect)
+        draw_hud(s, self.font, self._phi_stats(), t)
         # Linia środkowa tylko gdy split
         if self._layout == 'split':
             draw_dividers(s)
@@ -697,36 +1064,71 @@ class ImmediateRenderer:
         if event.type == pygame.QUIT:
             return False
         if event.type == pygame.KEYDOWN:
-            # Escape lub Ctrl+Q → quit
-            if event.key == pygame.K_ESCAPE:
+            # Escape → quit (tylko gdy brak aktywnego edytora)
+            if event.key == pygame.K_ESCAPE and not self._editor:
                 return False
             ctrl = event.mod & pygame.KMOD_CTRL
-            if ctrl and event.key == pygame.K_q:
+            if ctrl and event.key == pygame.K_q and not self._editor:
                 return False
-            # F1 — zwolnij lewy panel (terminal full-screen)
-            if event.key == pygame.K_F1:
+            # F1 — zwolnij lewy panel
+            if event.key == pygame.K_F1 and not self._editor:
                 self.release_left()
                 return True
             # F2 — przełącz phi-map
-            if event.key == pygame.K_F2:
+            if event.key == pygame.K_F2 and not self._editor:
                 self.toggle_phi()
+                return True
+            # Edytor aktywny → klawiatura do EditorState
+            if self._editor is not None:
+                self._editor.push_key(event)
                 return True
             self.term_state.push_key(event)
         if event.type == pygame.MOUSEBUTTONDOWN:
-            # Kliknięcie przycisku × w HUD → quit
-            if self._close_rect and self._close_rect[0].collidepoint(event.pos):
+            # Kliknięcie × w HUD → quit
+            if self.CLOSE_BTN_RECT.collidepoint(event.pos):
                 return False
-            self._handle_click(event.pos)
+            if event.button == 1:    # LPM
+                self._handle_click(event.pos)
+                self._try_click_link(event.pos)
+            elif event.button == 3:  # PPM — skróty
+                self._handle_right_click(event.pos)
+            elif event.button == 4:  # kółko góra
+                self.term_state.scroll(-3)
+            elif event.button == 5:  # kółko dół
+                self.term_state.scroll(3)
         return True
+
+    def _handle_right_click(self, pos: Tuple[int,int]) -> None:
+        """PPM — pokaż dostępne skróty w terminalu."""
+        W2 = self.screen.get_width() // 2
+        # Lewy panel aktywny tylko gdy layout=split ORAZ _left_draw ustawiony
+        is_left_panel = (
+            self._layout == "split"
+            and self._left_draw is not None
+            and pos[0] < W2
+        )
+        if is_left_panel:
+            label = self._left_label or "panel"
+            self.term_state.append(
+                f"Panel lewy [{label}]: F1=zamknij  Ctrl+S=zapisz  Ctrl+Q=wyjdz",
+                (160, 200, 255))
+        else:
+            self.term_state.append(
+                "Skroty: F1=panel  F2=phi-map  j/k=scroll  b=wstecz (Luneta)",
+                (160, 200, 255))
+
 
     def _handle_click(self, pos: Tuple[int,int]) -> None:
         """Kliknięcie: atom w phi-map lub link w terminalu."""
         mx, my = pos
-        if not self._show_phi:
+        # Snapshot stanu — identyczny z ostatnią klatką render_frame
+        show_phi = self._show_phi
+        layout   = self._layout
+        if not show_phi:
             return   # phi-map niewidoczna — nic do kliknięcia
         available_h = H - self.HUD_H
         phi_h   = int(available_h * 0.25)
-        right_x = W//2 if self._layout == "split" else 0
+        right_x = W//2 if layout == "split" else 0
         phi_r   = pygame.Rect(right_x, self.HUD_H,
                               W - right_x, phi_h)
         if not phi_r.collidepoint(mx, my):
@@ -833,6 +1235,7 @@ class KarmazynDisplay:
         Inicjalizuje SDL2. Zwraca False jeśli pygame niedostępne
         lub brak wyświetlacza — system działa dalej w trybie tekstowym.
         """
+        if getattr(self, "available", False): return True
         if not PYGAME_OK:
             return False
         try:

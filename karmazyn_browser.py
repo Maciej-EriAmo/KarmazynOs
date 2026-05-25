@@ -1,3 +1,33 @@
+"""
+karmazyn_browser.py — Luneta: Przeglądarka KarmazynOS v4.5
+===========================================================
+Przeglądarka tekstowa zintegrowana z phi-space.
+
+Filozofia:
+  Luneta nie renderuje pikseli — renderuje znaczenie.
+  Każda odwiedzona strona staje się atomem phi-space.
+  Temperatura atomu rośnie przy każdej wizycie.
+  Historia przeglądania = termodynamika dostępu.
+
+Izomorfizm phi-space:
+  URL      ≡ atom.id      (adres)
+  Treść    ≡ atom.E       (emanacja)
+  Wizyty   ≡ atom.T       (temperatura = częstość)
+
+Skróty (vi-style):
+  j/k     — scroll w dół/górę
+  b/h     — wstecz
+  N       — podążaj za linkiem N
+  o/u     — pokaż aktualny URL
+  r       — przeładuj
+
+Komendy:
+  LUNETA <url>           — otwórz stronę
+  LUNETA FOLLOW <n>      — podążaj za linkiem n
+  LUNETA BACK            — wstecz
+  LUNETA LINKS           — lista linków
+"""
+
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
@@ -85,6 +115,7 @@ def visible_len(s: str) -> int:
 
 
 class ANSIState:
+    """Stan parsera ANSI — śledzi aktywne sekwencje escape."""
     def __init__(self):
         self.codes: List[str] = []
 
@@ -246,6 +277,7 @@ except ImportError:
 # ── Semantyczny model drzewa ──────────────────────────────────────────────────
 
 class NodeType:
+    """Typy węzłów semantycznych DOM."""
     DOCUMENT = 0
     BLOCK    = 1
     INLINE   = 2
@@ -260,6 +292,7 @@ class NodeType:
 
 @dataclass
 class SemanticNode:
+    """Węzeł semantyczny — odpowiednik elementu DOM z typem i treścią."""
     typ:      int
     tag:      str                     = ''
     attrs:    dict                    = field(default_factory=dict)
@@ -274,6 +307,7 @@ class SemanticNode:
 
 @dataclass
 class TextChunk:
+    """Fragment tekstu z atrybutami wizualnymi (kolor, bold)."""
     text:         str
     preformatted: bool = False
     style:        str  = ''
@@ -283,6 +317,7 @@ class TextChunk:
 
 @dataclass
 class ParsedPage:
+    """Sparsowana strona — tytuł, linki, nagłówki, treść."""
     title:         str
     chunks:        List[TextChunk]
     links:         List[Tuple[str, str]]
@@ -452,6 +487,7 @@ class SemanticHTMLParser(HTMLParser):
 # ── Renderer ANSI ─────────────────────────────────────────────────────────────
 
 class ANSIRenderer:
+    """Renderer drzewa semantycznego → tekst z kolorami ANSI."""
     def __init__(self, base_url: str, width: int):
         self.base_url = base_url
         self.width    = width
@@ -657,6 +693,7 @@ def _log_error(msg: str) -> None:
 # ── Główna klasa przeglądarki ─────────────────────────────────────────────────
 
 class KarmazynBrowser:
+    """Przeglądarka phi-space — stan sesji, historia, cache."""
     T_FRESH  = 80.0
     T_CACHED = 45.0
     T_STALE  = 20.0

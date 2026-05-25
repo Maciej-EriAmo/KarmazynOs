@@ -221,7 +221,13 @@ class AtomRegistry:
             return True
         return False
 
+    @property
+    def atoms_wrapper(self) -> "AtomsWrapper":
+        """Zwraca AtomsWrapper — wspiera atoms() i iterację."""
+        return AtomsWrapper(self)
+
     def atoms(self) -> List[Atom]:
+        """Zwraca listę wszystkich żywych atomów."""
         return list(self._atoms.values())
 
     def tick(self, rate: float = DECAY_DEFAULT) -> List[str]:
@@ -267,3 +273,43 @@ class AtomRegistry:
     # Kompatybilność z runtime.py: matrix.has_atom(), matrix.atoms()
     def has_atom(self, id: str) -> bool:
         return self.has(id)
+
+
+class AtomsWrapper:
+    """
+    Wrapper AtomRegistry wspierający dwa style dostępu:
+      matrix.atoms()  — wywołanie jako funkcja (oryginalny API)
+      matrix.atoms    — użycie jako property/iterowalny obiekt
+
+    Rozwiązuje niekompatybilność między modułami które używają
+    różnych konwencji dostępu do listy atomów.
+
+    Używany przez PhiBuffer, draw_phi_map, zewnętrzne narzędzia.
+    """
+
+    def __init__(self, registry: "AtomRegistry"):
+        self._reg   = registry
+        self._cache: Optional[List["Atom"]] = None
+        self._cache_size = -1
+
+    def _get_list(self) -> List["Atom"]:
+        """Zwraca listę atomów — z cache jeśli rozmiar się nie zmienił."""
+        current_size = len(self._reg._atoms)
+        if self._cache is None or self._cache_size != current_size:
+            self._cache      = list(self._reg._atoms.values())
+            self._cache_size = current_size
+        return self._cache
+
+    def __call__(self) -> List["Atom"]:
+        """Pozwala wywołać atoms() jako funkcję."""
+        return self._get_list()
+
+    def __iter__(self):
+        """Pozwala iterować bezpośrednio: for atom in matrix.atoms."""
+        return iter(self._reg._atoms.values())
+
+    def __len__(self) -> int:
+        return len(self._reg._atoms)
+
+    def __getitem__(self, index: int) -> "Atom":
+        return self._get_list()[index]

@@ -1,3 +1,33 @@
+"""
+karmazyn_logo.py — LOGO KarmazynOS v4.0
+========================================
+Interpreter LOGO z integracją phi-space i workspace SDL.
+
+Filozofia:
+  LOGO jako język eksploracji przestrzeni przez żółwia.
+  Każdy ruch = segment w phi-space (atom T=70).
+  Kanwa LOGO zajmuje lewy panel SDL przez claim_left().
+  RESET zwalnia panel — terminal wraca do full-screen.
+
+Izomorfizm phi-space:
+  Pozycja żółwia ≡ stan atomu (gdzie jest uwaga)
+  Segment rysowany ≡ emanacja (ślad w przestrzeni)
+  Temperatura kanwy ≡ intensywność aktywności LOGO
+
+Komendy:
+  LOGO RUN <kod>     — uruchom kod LOGO
+  LOGO FILE <ścieżka>— wczytaj i uruchom plik
+  LOGO RESET         — wyczyść kanwę, zwolnij panel
+  LOGO HELP          — lista komend
+
+Składnia LOGO:
+  FD 100, BK 50     — ruch w przód/tył
+  RT 90, LT 45      — obrót w prawo/lewo
+  PU, PD            — podnieś/opuść pióro
+  REPEAT N [ ... ]  — pętla
+  TO nazwa ... END  — definicja procedury
+"""
+
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
@@ -808,6 +838,7 @@ class LogoInterp:
 # ─── Powłoka ─────────────────────────────────────────────────────────────────
 
 class LogoShell:
+    """Powłoka LOGO — przyjmuje komendy, zarządza workspace SDL."""
     def __init__(self, display=None):
         self.env      = LogoEnv(display=display)
         self.interp   = LogoInterp(self.env)
