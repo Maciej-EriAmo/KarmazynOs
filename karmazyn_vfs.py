@@ -1,248 +1,248 @@
+#!/usr/bin/env python3
 """
-karmazyn_vfs.py — KarmazynOS Virtual File System v1.0
+karmazyn_vfs.py — KarmazynOS Virtual File System v2.0
 ======================================================
-Wspólna warstwa szyfrowanego przechowywania bąbli.
-Poprzednio duplikowana w NooEdit.py i AstraEdit.py.
-
-Filozofia:
-  Bąbel jest dokumentem — bubble.content to canonical source.
-  VFS to zaszyfrowany backup na wypadek restartu (AES-256-GCM).
-  Plik tymczasowy (.bubbles/tmp) to workspace edytora — efemeryczny.
-
-Izomorfizm z phi-space:
-  label  ≡ atom.id    (adres)
-  content ≡ atom.E    (emanacja — treść)
-  VFS     ≡ persistence layer dla atomów-dokumentów
-
-Użycie:
-  vfs = BubbleVFS()
-  vfs.save("moj_skrypt", "print('hello')", ".py")
-  content = vfs.load("moj_skrypt", ".py")    # None jeśli brak
-  tmp = vfs.materialize("moj_skrypt", content, ".py")  # ścieżka tmp
+Warstwa szyfrowanego przechowywania bąbli oparta na KAFD v2.0.
+Kompatybilna z FM (karmazyn_fm.py v2.1) i innymi komponentami.
 """
 
-import hashlib
-import hmac as _hmac
 import os
-from typing import Optional
+import json
+from typing import Any, Optional, List, Dict, Tuple
 
-# ── Szyfrowanie AES-256-GCM ───────────────────────────────────────────────────
-
-_VFS_MAGIC = b"BVFS"  # nagłówek identyfikujący zaszyfrowany blob
-
+# Import KAFD v2.0
 try:
-    from cryptography.hazmat.primitives.ciphers.aead import AESGCM as _AESGCM
+    from karmazyn_kafd import (
+        KAFDWriter, KAFDReader, KAFDAtom,
+        vfs_pack, vfs_unpack, upgrade_v1,
+        A_RAW, A_MANIFEST, A_PHI_ATOM,
+        S_HOT, S_WARM, S_COLD, S_TOMB
+    )
+    _KAFD_OK = True
+except ImportError:
+    _KAFD_OK = False
+    raise ImportError("Brak modułu karmazyn_kafd – wymagany do działania VFS v2.0")
+
+# Szyfrowanie AES-256-GCM
+try:
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
     _CRYPTO_OK = True
 except ImportError:
-    _AESGCM    = None
     _CRYPTO_OK = False
 
+_VFS_MAGIC = b"BVFS"
 
 def _derive_key(workspace_key: bytes, label: str) -> bytes:
-    """Derywuje klucz szyfrowania dla konkretnej etykiety bąbla."""
-    return _hmac.new(
-        workspace_key,
-        b"vfs:" + label.encode(),
-        hashlib.sha256
-    ).digest()
-
+    import hmac, hashlib
+    return hmac.new(workspace_key, b"vfs:" + label.encode(), hashlib.sha256).digest()
 
 def vfs_encrypt(plaintext: bytes, workspace_key: bytes, label: str) -> bytes:
-    """
-    Szyfruje treść bąbla (AES-256-GCM).
-    Bez cryptography: zwraca plaintext z nagłówkiem (fallback bez szyfrowania).
-    """
     if not _CRYPTO_OK:
         return _VFS_MAGIC + b"\x00" * 28 + plaintext
-    salt  = os.urandom(16)
+    import os
+    salt = os.urandom(16)
     nonce = os.urandom(12)
-    key   = _hmac.new(_derive_key(workspace_key, label),
-                      salt, hashlib.sha256).digest()
-    ct    = _AESGCM(key).encrypt(nonce, plaintext, _VFS_MAGIC + label.encode())
+    key = _derive_key(workspace_key, label)
+    ct = AESGCM(key).encrypt(nonce, plaintext, _VFS_MAGIC + label.encode())
     return _VFS_MAGIC + salt + nonce + ct
 
-
 def vfs_decrypt(blob: bytes, workspace_key: bytes, label: str) -> bytes:
-    """
-    Deszyfruje blob z VFS.
-    Rozpoznaje blobы niezaszyfrowane (fallback) przez nagłówek.
-    """
     if blob[:4] != _VFS_MAGIC:
-        return blob  # stary format bez szyfrowania
-    salt  = blob[4:20]
+        return blob
+    salt = blob[4:20]
     nonce = blob[20:32]
-    ct    = blob[32:]
+    ct = blob[32:]
     if not _CRYPTO_OK or (salt == b"\x00" * 16 and nonce == b"\x00" * 12):
-        return ct  # fallback: brak szyfrowania
-    key = _hmac.new(_derive_key(workspace_key, label),
-                    salt, hashlib.sha256).digest()
-    try:
-        return _AESGCM(key).decrypt(nonce, ct, _VFS_MAGIC + label.encode())
-    except Exception as e:
-        raise ValueError(f"VFS: deszyfrowanie nieudane dla '{label}': {type(e).__name__}")
-
+        return ct
+    key = _derive_key(workspace_key, label)
+    return AESGCM(key).decrypt(nonce, ct, _VFS_MAGIC + label.encode())
 
 def vfs_workspace_key() -> bytes:
-    """
-    Zwraca klucz workspace (32 bajty).
-    Przy pierwszym wywołaniu generuje i zapisuje do .bubbles/.vfskey.
-    Klucz jest persistentny między sesjami.
-    """
     key_path = os.path.join(".bubbles", ".vfskey")
     if os.path.exists(key_path):
         try:
             raw = open(key_path, "rb").read()
-            if len(raw) == 32:
-                return raw
-        except Exception:
-            pass
+            if len(raw) == 32: return raw
+        except: pass
     new_key = os.urandom(32)
-    try:
-        os.makedirs(".bubbles", exist_ok=True)
-        open(key_path, "wb").write(new_key)
-    except Exception:
-        pass  # brak dostępu do dysku — klucz sesyjny
+    os.makedirs(".bubbles", exist_ok=True)
+    with open(key_path, "wb") as f: f.write(new_key)
     return new_key
 
-
-# ── BubbleVFS ─────────────────────────────────────────────────────────────────
-
 class BubbleVFS:
-    """
-    Szyfrowany system plików dla bąbli KarmazynOS.
-
-    Dwa katalogi:
-      .bubbles/content/  — zaszyfrowane canonical backupy
-      .bubbles/tmp/      — efemeryczne pliki workspace edytora
-
-    Canonical source bąbla: bubble.content (w runtime).
-    VFS: zaszyfrowany backup który przeżywa restart.
-    Tmp: chwilowy plik do edycji — może być usunięty w każdej chwili.
-    """
-
     CONTENT_DIR = ".bubbles/content"
-    TMP_DIR     = ".bubbles/tmp"
-
-    # Mapowanie typów treści → rozszerzenia
-    _EXT = {
-        "py":   ".py",
-        "lua":  ".lua",
-        "md":   ".md",
-        "txt":  ".txt",
-        "karm": ".karm",
-        "sh":   ".sh",
-    }
+    TMP_DIR = ".bubbles/tmp"
 
     def __init__(self):
         os.makedirs(self.CONTENT_DIR, exist_ok=True)
-        os.makedirs(self.TMP_DIR,     exist_ok=True)
+        os.makedirs(self.TMP_DIR, exist_ok=True)
 
-    def _ext(self, content_type: str) -> str:
-        """Rozszerzenie pliku dla typu treści."""
-        return self._EXT.get(content_type, ".txt")
+    def _content_path(self, label: str) -> str:
+        return os.path.join(self.CONTENT_DIR, f"{label}.kafd")
 
-    def _content_path(self, label: str, content_type: str) -> str:
-        return os.path.join(self.CONTENT_DIR,
-                            f"{label}{self._ext(content_type)}")
+    def _tmp_path(self, label: str, ext: str = ".txt") -> str:
+        return os.path.join(self.TMP_DIR, f"{label}{ext}")
 
-    def _tmp_path(self, label: str, content_type: str) -> str:
-        return os.path.join(self.TMP_DIR,
-                            f"{label}{self._ext(content_type)}")
+    # --- Operacje na bąblach (API dla FM) ---
 
-    # ── Canonical backup ──────────────────────────────────────────────────────
-
-    def save(self, label: str, content: str,
-             content_type: str = "py") -> str:
-        """
-        Zapisz zaszyfrowany backup bąbla.
-        Zwraca ścieżkę do pliku lub '' przy błędzie.
-        """
-        path = self._content_path(label, content_type)
-        try:
-            key  = vfs_workspace_key()
-            blob = vfs_encrypt(content.encode("utf-8"), key, label)
-            with open(path, "wb") as f:
-                f.write(blob)
-            return path
-        except Exception:
-            return ""
-
-    def load(self, label: str,
-             content_type: str = "py") -> Optional[str]:
-        """
-        Wczytaj zaszyfrowany backup bąbla.
-        Zwraca None jeśli brak pliku lub błąd deszyfrowania.
-        """
-        path = self._content_path(label, content_type)
-        if not os.path.exists(path):
-            return None
-        try:
-            raw = open(path, "rb").read()
-            key = vfs_workspace_key()
-            return vfs_decrypt(raw, key, label).decode("utf-8")
-        except Exception:
-            # Próba odczytu jako zwykły tekst (migracja starszych plików)
-            try:
-                return open(path, encoding="utf-8", errors="replace").read()
-            except Exception:
-                return None
-
-    def has(self, label: str, content_type: str = "py") -> bool:
-        """Sprawdza czy istnieje backup dla bąbla."""
-        return os.path.exists(self._content_path(label, content_type))
-
-    # ── Tmp workspace ─────────────────────────────────────────────────────────
-
-    def materialize(self, label: str, content: str,
-                    content_type: str = "py") -> str:
-        """
-        Zapisz treść do pliku tymczasowego (workspace edytora).
-        Zwraca ścieżkę do pliku tmp.
-        Plik tmp nie jest szyfrowany — jest efemeryczny.
-        """
-        path = self._tmp_path(label, content_type)
-        try:
-            with open(path, "w", encoding="utf-8", errors="replace") as f:
-                f.write(content)
-        except Exception:
-            pass
-        return path
-
-    def read_tmp(self, label: str,
-                 content_type: str = "py") -> Optional[str]:
-        """Wczytaj plik tymczasowy (po edycji przez zewnętrzny edytor)."""
-        path = self._tmp_path(label, content_type)
-        if not os.path.exists(path):
-            return None
-        try:
-            with open(path, encoding="utf-8", errors="replace") as f:
-                return f.read()
-        except Exception:
-            return None
-
-    def list_bubbles(self) -> list:
-        """Zwraca listę bąbli jako słowniki {label, content_type, size}."""
+    def list_bubbles(self) -> List[dict]:
         result = []
         if not os.path.exists(self.CONTENT_DIR):
             return result
         for fname in os.listdir(self.CONTENT_DIR):
-            name, _, ext = fname.rpartition('.')
-            if name:
-                path = os.path.join(self.CONTENT_DIR, fname)
+            if not fname.endswith(".kafd"):
+                continue
+            label = fname[:-5]
+            path = self._content_path(label)
+            if not os.path.exists(path):
+                continue
+            try:
+                raw = open(path, "rb").read()
+                dec = vfs_decrypt(raw, vfs_workspace_key(), label)
+                reader = KAFDReader(dec)
+                meta = reader.meta
+                active = len([aid for aid in reader.atom_ids if aid != "__main__"])
+                size = os.path.getsize(path)
                 result.append({
-                    "label":        name,
-                    "content_type": ext or "txt",
-                    "size":         os.path.getsize(path),
-                    "active_atoms": 0,
+                    "id": label,
+                    "label": label,
+                    "content_type": meta.get("content_type", "txt"),
+                    "size": size,
+                    "size_bytes": size,
+                    "active_atoms": active,
                 })
+            except Exception:
+                continue
         return result
 
+    def create_bubble(self, name: str) -> str:
+        self.save(name, "", "txt")
+        return name
+
+    def delete_bubble(self, bubble_id: str) -> None:
+        path = self._content_path(bubble_id)
+        if os.path.exists(path):
+            os.remove(path)
+        for ext in [".txt", ".py", ".md", ".karm", ".sh"]:
+            tmp = self._tmp_path(bubble_id, ext)
+            if os.path.exists(tmp):
+                os.remove(tmp)
+
+    def import_to_bubble(self, bubble_id: str, atom_id: str, phi: Any) -> None:
+        atom = phi.get_atom(atom_id)
+        if not atom:
+            return
+        atoms_data, meta = self._load_kafd(bubble_id)
+        path = getattr(atom, "E", "")
+        if path and os.path.exists(path):
+            with open(path, "rb") as f:
+                data = f.read()
+        else:
+            data = json.dumps({
+                "id": atom_id,
+                "S": getattr(atom, "S", ""),
+                "E": getattr(atom, "E", ""),
+                "T": getattr(atom, "T", 50.0),
+                "T_max": getattr(atom, "T_max", 100.0),
+                "state": getattr(atom, "state", "WARM"),
+                "_manifest_v": 2
+            }).encode("utf-8")
+        atoms_data[atom_id] = data
+        self._save_kafd(bubble_id, atoms_data, meta)
+
+    def remove_from_bubble(self, bubble_id: str, atom_id: str) -> None:
+        atoms_data, meta = self._load_kafd(bubble_id)
+        if atom_id in atoms_data:
+            del atoms_data[atom_id]
+            self._save_kafd(bubble_id, atoms_data, meta)
+
+    def get_active_atoms(self, bubble_id: str) -> List[dict]:
+        atoms_data, _ = self._load_kafd(bubble_id)
+        atoms = []
+        for aid in atoms_data:
+            if aid == "__main__":
+                continue
+            # Odczytaj z danych atomu (jeśli JSON) aby wydobyć T i S
+            raw = atoms_data[aid]
+            T = 50.0
+            S = "binary"
+            try:
+                if raw.startswith(b'{'):
+                    d = json.loads(raw.decode())
+                    T = d.get("T", 50.0)
+                    S = d.get("S", S)
+            except:
+                pass
+            atoms.append({
+                "id": aid,
+                "S": S,
+                "T": T,
+                "state": "WARM" if T > 30 else "COLD"
+            })
+        return atoms
+
+    # --- Metody pomocnicze do odczytu/zapisu KAFD (z szyfrowaniem) ---
+
+    def _load_kafd(self, label: str) -> Tuple[Dict[str, bytes], dict]:
+        path = self._content_path(label)
+        if not os.path.exists(path):
+            return {}, {"content_type": "txt"}
+        try:
+            raw = open(path, "rb").read()
+            dec = vfs_decrypt(raw, vfs_workspace_key(), label)
+            atoms, meta = vfs_unpack(dec)
+            return atoms, meta
+        except Exception:
+            return {}, {"content_type": "txt"}
+
+    def _save_kafd(self, label: str, atoms_data: Dict[str, bytes], meta: dict) -> None:
+        blob = vfs_pack(atoms_data, meta)
+        enc = vfs_encrypt(blob, vfs_workspace_key(), label)
+        path = self._content_path(label)
+        with open(path, "wb") as f:
+            f.write(enc)
+
+    # --- Metody dla edytorów (zgodność z poprzednim API) ---
+
+    def save(self, label: str, content: str, content_type: str = "py") -> str:
+        atoms_data, meta = self._load_kafd(label)
+        atoms_data["__main__"] = content.encode("utf-8")
+        meta["content_type"] = content_type
+        self._save_kafd(label, atoms_data, meta)
+        return self._content_path(label)
+
+    def load(self, label: str, content_type: str = "py") -> Optional[str]:
+        atoms_data, _ = self._load_kafd(label)
+        if "__main__" not in atoms_data:
+            return None
+        data = atoms_data["__main__"]
+        try:
+            return data.decode("utf-8")
+        except UnicodeDecodeError:
+            return str(data)
+
+    def has(self, label: str, content_type: str = "py") -> bool:
+        return os.path.exists(self._content_path(label))
+
+    def materialize(self, label: str, content: str, content_type: str = "py") -> str:
+        ext = { "py": ".py", "txt": ".txt", "md": ".md", "karm": ".karm", "sh": ".sh" }.get(content_type, ".txt")
+        path = self._tmp_path(label, ext)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(content)
+        return path
+
+    def read_tmp(self, label: str, content_type: str = "py") -> Optional[str]:
+        ext = { "py": ".py", "txt": ".txt", "md": ".md", "karm": ".karm", "sh": ".sh" }.get(content_type, ".txt")
+        path = self._tmp_path(label, ext)
+        if not os.path.exists(path):
+            return None
+        with open(path, encoding="utf-8", errors="replace") as f:
+            return f.read()
+
     def cleanup_tmp(self, label: str, content_type: str = "py") -> None:
-        """Usuń plik tymczasowy po zakończeniu edycji."""
-        path = self._tmp_path(label, content_type)
+        ext = { "py": ".py", "txt": ".txt", "md": ".md", "karm": ".karm", "sh": ".sh" }.get(content_type, ".txt")
+        path = self._tmp_path(label, ext)
         try:
             os.remove(path)
-        except FileNotFoundError:
-            pass
-        except Exception:
+        except:
             pass

@@ -106,12 +106,13 @@ def load_programs(config_path: str = "karmazyn_programs.json") -> int:
         REGISTRY.log("ERR", "loader", f"Błąd odczytu programs.json: {e}")
         return 0
 
-    # Kontekst wstrzykiwany do programów
+    # Kontekst wstrzykiwany do programów (dodano $CLUSTER)
     ctx = {
         "$RUNTIME": RUNTIME,
         "$DISPLAY": DISPLAY,
         "$BUBBLES": BUBBLES,
         "$HSS": HSS,
+        "$CLUSTER": None,   # <--- DODANE dla TOP, CLUSTER itp.
     }
 
     def resolve(v):
@@ -247,6 +248,16 @@ def main():
 
     # Wczytaj programy z JSON (to rejestruje wszystkie komendy)
     load_programs()
+
+    # Rejestracja KarminDB (KQL, INDEX, SEARCH) – DODANE
+    try:
+        from karmazyn_karmindb import register_karmindb
+        register_karmindb(reg, RUNTIME)
+        REGISTRY.log("INFO", "karmindb", "KarminDB zarejestrowany")
+    except ImportError:
+        REGISTRY.log("WARN", "karmindb", "Brak karmazyn_karmindb – pomijam")
+    except Exception as e:
+        REGISTRY.log("ERROR", "karmindb", f"Błąd rejestracji: {e}")
 
     # Banner startowy
     print("\n" + "═"*60)
