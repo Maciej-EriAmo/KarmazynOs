@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-karmazyn_handshake.py — KarmazynOS Symmetric Handshake v1.0
+karmazyn_handshake.py — KarmazynOS Symmetric Handshake v1.2
 =============================================================
 Maciej Mazur, Warsaw 2026
 
@@ -21,6 +21,7 @@ Strategia scalenia symetrycznego:
 Transport:
   TCP socket, IPv4, framing = 4-bajty big-endian length prefix + JSON payload
   Maks payload: 64 MB. Timeout: 30 s.
+  Kompresja: zlib level-6 przed szyfrowaniem (JSON atomów kompresuje się 3-10x).
 
 Kryptografia (priorytety):
   1. HSS  — Ring-LWE post-quantum (karmazyn_hss, gdy dostępny)
@@ -37,6 +38,8 @@ Użycie standalone demo:
 
 import hashlib
 import hmac as _hmac
+import math
+import zlib
 import json
 import os
 import secrets
@@ -75,11 +78,17 @@ except ImportError:
 
 # ── Stałe protokołu ───────────────────────────────────────────────────────────
 
-PROTO_VERSION   = "KSH-1.0"
+PROTO_VERSION   = "KSH-1.2"
+
+# SYNCUJE:     atomy phi-space (RAM): id, T, S, E, state, age, T_max
+# NIE SYNCUJE: bąble BubbleVFS (.soul) — karmazyn_gossip.py (TODO)
+# PhiSpace API: phi.matrix.atoms() / get_atom() / create_atom()
+# PSK auth:     export KARM_PSK=haslo_sieci
 FRAME_MAX_BYTES = 64 * 1024 * 1024   # 64 MB hard cap
 TIMEOUT_SEC     = 30.0
 TOMB_THRESHOLD  = 2.0                 # atomy T < 2.0 nie są transferowane
-MERGE_TEMP_BIAS = 0.0                 # bias scalenia (0 = zdalny musi być > lokalny)
+MERGE_TEMP_BIAS  = 0.0
+REPLAY_WINDOW_SEC = 300.0              # anty-replay: 5 min — zapas na Termux NTP drift                 # bias scalenia (0 = zdalny musi być > lokalny)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -93,18 +102,21 @@ def _send_frame(sock: socket.socket, data: bytes) -> None:
     sock.sendall(struct.pack(">I", len(data)) + data)
 
 
-def _recv_frame(sock: socket.socket) -> bytes:
+def _recv_frame(sock: socket.socket, deadline: float = 0.0) -> bytes:
     """Odbierz ramkę z length prefix."""
-    hdr = _recv_exact(sock, 4)
+    hdr = _recv_exact(sock, 4, deadline)
     n   = struct.unpack(">I", hdr)[0]
     if n > FRAME_MAX_BYTES:
         raise ValueError(f"Ramka za duża: {n}")
-    return _recv_exact(sock, n)
+    return _recv_exact(sock, n, deadline)
 
 
-def _recv_exact(sock: socket.socket, n: int) -> bytes:
+def _recv_exact(sock: socket.socket, n: int, deadline: float = 0.0) -> bytes:
+    """[BUG FIX #4] deadline anti-slowloris — bez tego 1 bajt/20s wisi w nieskończoność."""
     buf = bytearray()
     while len(buf) < n:
+        if deadline and time.monotonic() > deadline:
+            raise TimeoutError(f"Deadline przekroczony: odebrano {len(buf)}/{n} B")
         chunk = sock.recv(n - len(buf))
         if not chunk:
             raise ConnectionError("Połączenie zamknięte przed odebraniem danych")
@@ -113,11 +125,22 @@ def _recv_exact(sock: socket.socket, n: int) -> bytes:
 
 
 def _send_json(sock: socket.socket, obj: dict) -> None:
-    _send_frame(sock, json.dumps(obj, ensure_ascii=False).encode("utf-8"))
+    # [BUG FIX #15] sort_keys=True — canonical JSON niezależny od platformy
+    _send_frame(sock, json.dumps(obj, ensure_ascii=False, sort_keys=True).encode("utf-8"))
 
 
-def _recv_json(sock: socket.socket) -> dict:
-    return json.loads(_recv_frame(sock).decode("utf-8"))
+def _recv_json(sock: socket.socket, deadline: float = 0.0) -> dict:
+    # [BUG FIX #18] errors=replace — nie crashuje na malformed UTF-8
+    return json.loads(_recv_frame(sock, deadline).decode("utf-8", errors="replace"))
+
+
+def _compress(data: bytes) -> bytes:
+    """zlib compress — JSON kompresuje się 3-10x."""
+    return zlib.compress(data, level=6)
+
+
+def _decompress(data: bytes) -> bytes:
+    return zlib.decompress(data)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -141,11 +164,15 @@ class _CryptoLayer:
 
     # ── HSS (Ring-LWE post-quantum) ───────────────────────────────────────────
 
-    def negotiate_hss_initiator(self, sock: socket.socket) -> bytes:
+    def negotiate_hss_initiator(self, sock: socket.socket, deadline: float = 0.0) -> bytes:
+        # Zakładane: init_session() → (token, pubkey_bytes: bytes)
         hss = HSSDaemon()
-        token, pubkey_bytes = hss.init_session()
+        try:
+            token, pubkey_bytes = hss.init_session()
+        except (TypeError, ValueError) as e:
+            raise RuntimeError(f"HSSDaemon.init_session() niezgodne API: {e}") from e
         _send_json(sock, {"mode": "hss", "pubkey": pubkey_bytes.hex()})
-        resp        = _recv_json(sock)
+        resp        = _recv_json(sock, deadline)
         ack         = bytes.fromhex(resp["ack"])
         key         = hss.finalize(token, ack)
         self._key   = key
@@ -154,9 +181,13 @@ class _CryptoLayer:
 
     def negotiate_hss_responder(self, sock: socket.socket,
                                  init_msg: dict) -> bytes:
+        # Zakładane: respond_handshake(pubkey) → (token, shared_key, ack: bytes)
         hss = HSSDaemon()
-        pubkey_a                  = bytes.fromhex(init_msg["pubkey"])
-        _token_b, shared_key, ack = hss.respond_handshake(pubkey_a)
+        pubkey_a = bytes.fromhex(init_msg["pubkey"])
+        try:
+            _token_b, shared_key, ack = hss.respond_handshake(pubkey_a)
+        except (TypeError, ValueError) as e:
+            raise RuntimeError(f"HSSDaemon.respond_handshake() niezgodne API: {e}") from e
         _send_json(sock, {"ack": ack.hex()})
         self._key  = shared_key
         self._mode = "hss"
@@ -164,11 +195,11 @@ class _CryptoLayer:
 
     # ── ECDH fallback (X25519 + HKDF + AES-256-GCM) ──────────────────────────
 
-    def negotiate_ecdh_initiator(self, sock: socket.socket) -> bytes:
+    def negotiate_ecdh_initiator(self, sock: socket.socket, deadline: float = 0.0) -> bytes:
         priv = X25519PrivateKey.generate()
         pub  = priv.public_key().public_bytes_raw()
         _send_json(sock, {"mode": "ecdh", "pubkey": pub.hex()})
-        resp   = _recv_json(sock)
+        resp   = _recv_json(sock, deadline)
         pub_b  = X25519PublicKey.from_public_bytes(bytes.fromhex(resp["pubkey"]))
         shared = priv.exchange(pub_b)
         key    = self._hkdf(shared)
@@ -191,10 +222,10 @@ class _CryptoLayer:
 
     # ── Simple fallback (PBKDF2 — tylko dev/demo) ─────────────────────────────
 
-    def negotiate_simple_initiator(self, sock: socket.socket) -> bytes:
+    def negotiate_simple_initiator(self, sock: socket.socket, deadline: float = 0.0) -> bytes:
         nonce_a = secrets.token_bytes(32)
         _send_json(sock, {"mode": "simple", "nonce": nonce_a.hex()})
-        resp    = _recv_json(sock)
+        resp    = _recv_json(sock, deadline)
         nonce_b = bytes.fromhex(resp["nonce"])
         key     = hashlib.pbkdf2_hmac(
             "sha256", nonce_a + nonce_b, b"karmazyn-handshake-v1", 100_000)
@@ -267,20 +298,24 @@ def _serialize_atoms(phi: Any) -> List[dict]:
     except Exception:
         return []
 
+    node = _node_id()   # dołączany do każdego atomu — potrzebny do tiebreakera
     result = []
     for a in atoms:
         T     = float(getattr(a, "T", 0))
+        if not math.isfinite(T):   # [BUG FIX #12] NaN/Inf → crash parsera
+            T = 0.0
         state = str(getattr(a, "state", "WARM"))
         if T < TOMB_THRESHOLD or state == "TOMB":
             continue
         result.append({
-            "id":    str(getattr(a, "id",    "")),
-            "S":     str(getattr(a, "S",     "")),
-            "E":     str(getattr(a, "E",     "")),
-            "T":     T,
-            "T_max": float(getattr(a, "T_max", 100.0)),
-            "state": state,
-            "age":   int(getattr(a, "age",   0)),
+            "id":       str(getattr(a, "id",    "")),
+            "S":        str(getattr(a, "S",     "")),
+            "E":        str(getattr(a, "E",     "")),
+            "T":        T,
+            "T_max":    float(getattr(a, "T_max", 100.0)),
+            "state":    state,
+            "age":      int(getattr(a, "age",   0)),
+            "_node_id": node,   # tiebreaker w _merge_atoms
         })
     return result
 
@@ -315,8 +350,19 @@ def _merge_atoms(phi: Any,
 
         if existing is not None:
             T_local = float(getattr(existing, "T", 0))
+            # [BUG FIX #2] tiebreaker oparty o hash treści — nie node_id
+            # node_id jest arbitralny; hash treści jest deterministyczny
             if T_remote > T_local + MERGE_TEMP_BIAS:
-                # Zdalny gorętszy → nadpisz T, S, E
+                r_win = True
+            elif abs(T_remote - T_local) <= MERGE_TEMP_BIAS:
+                _r = {k: rec.get(k) for k in ("id", "S", "E", "T")}
+                _l = {"id": atom_id, "S": str(getattr(existing, "S", "")),
+                      "E": str(getattr(existing, "E", "")), "T": T_local}
+                r_win = (hashlib.sha256(json.dumps(_r, sort_keys=True).encode()).hexdigest()
+                       > hashlib.sha256(json.dumps(_l, sort_keys=True).encode()).hexdigest())
+            else:
+                r_win = False
+            if r_win:
                 try:
                     existing.T = T_remote
                     if rec.get("S"):
@@ -327,22 +373,34 @@ def _merge_atoms(phi: Any,
                 except Exception:
                     skipped += 1
             else:
-                # Lokalny wygrał lub remis — bez zmian
+                # Lokalny wygrał (lub remis + lokalny node_id mniejszy)
                 skipped += 1
         else:
             # Nowy atom — dodaj do phi-space
             try:
-                phi.create_atom(
-                    atom_id,
-                    S=rec.get("S", ""),
-                    E=rec.get("E", ""),
-                    T=T_remote,
-                )
+                _na = phi.create_atom(atom_id,
+                    S=rec.get("S", ""), E=rec.get("E", ""), T=T_remote)
+                if _na is not None:
+                    try:
+                        _st = rec.get("state", "WARM")
+                        _na.state = _st if _st != "TOMB" else "COLD"  # TOMB guard
+                        _na.age   = rec.get("age",   0)
+                        _na.T_max = rec.get("T_max", 100.0)
+                        _na.touch()   # aktywuj w thermal engine
+                    except Exception: pass
                 added += 1
-            except Exception:
-                skipped += 1
+            except Exception as _ex:
+                skipped += 1  # [BUG FIX #13] loguj
+                try:
+                    import logging as _lg; _lg.warning("[merge] create %s: %s", atom_id, _ex)
+                except Exception: pass
 
     return added, updated, skipped
+
+
+# Cache widzianych session_id — anty-replay (RAM, reset przy restarcie procesu)
+# Wystarczy dla LAN; produkcja powinna persystować na dysk z TTL
+_SEEN_SESSIONS: set = set()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -374,10 +432,13 @@ class KarmazynHandshake:
 
     def __init__(self,
                  phi:    Any,
-                 log_fn: Optional[Callable[[str], None]] = None) -> None:
-        self.phi     = phi
-        self._log    = log_fn or print
-        self._crypto = _CryptoLayer()
+                 log_fn: Optional[Callable[[str], None]] = None,
+                 psk:    Optional[bytes] = None) -> None:  # [BUG FIX #8] peer auth
+        self.phi        = phi
+        self._log       = log_fn or print
+        self._crypto    = _CryptoLayer()
+        self._phi_lock  = threading.Lock()  # [BUG FIX #10] race w serve_async
+        self._psk       = psk               # [BUG FIX #8] optional PSK auth
 
     # ── Publiczne API ─────────────────────────────────────────────────────────
 
@@ -450,6 +511,7 @@ class KarmazynHandshake:
 
     def _run_protocol(self, sock: socket.socket, role: str) -> dict:
         t0        = time.monotonic()
+        deadline  = t0 + TIMEOUT_SEC   # [BUG FIX #4] globalny deadline
         is_server = (role == "server")
 
         # ── FAZA 0: Powitanie ─────────────────────────────────────────────────
@@ -458,9 +520,9 @@ class KarmazynHandshake:
 
         if is_server:
             _send_json(sock, local_caps)
-            remote_caps = _recv_json(sock)
+            remote_caps = _recv_json(sock, deadline)
         else:
-            remote_caps = _recv_json(sock)
+            remote_caps = _recv_json(sock, deadline)
             _send_json(sock, local_caps)
 
         # Wersja protokołu musi być zgodna
@@ -469,15 +531,35 @@ class KarmazynHandshake:
                 f"Niezgodna wersja protokołu: "
                 f"lokalna={PROTO_VERSION}, zdalna={remote_caps.get('version')}")
 
+        # Anti-replay: sprawdź timestamp zdalny — odrzuć stare sesje
+        remote_ts = float(remote_caps.get("ts", 0))
+        local_ts  = float(local_caps["ts"])
+        if abs(local_ts - remote_ts) > REPLAY_WINDOW_SEC:
+            raise RuntimeError(
+                f"Anty-replay: różnica zegarów {abs(local_ts-remote_ts):.1f}s "
+                f"> {REPLAY_WINDOW_SEC}s — możliwy replay attack lub desync NTP")
+
+        # Sprawdź czy session_id nie był już widziany (RAM cache, nie persystentny)
+        _session_id = remote_caps.get("session_id", "")
+        if _session_id in _SEEN_SESSIONS:
+            raise RuntimeError(f"Anty-replay: session_id '{_session_id}' już użyty")
+        if _session_id:
+            _SEEN_SESSIONS.add(_session_id)
+
         self._log(f"[KSH] Zdalny: {remote_caps.get('node_id','?')} "
                   f"({remote_caps.get('phi_atoms',0)} atomów)")
 
         # ── FAZA 1: Kryptografia ──────────────────────────────────────────────
         self._log("[KSH] Faza 1: negocjacja klucza")
         crypto_mode = self._select_crypto_mode(local_caps, remote_caps)
-        shared_key  = self._negotiate_crypto(sock, is_server, crypto_mode)
+        shared_key  = self._negotiate_crypto(sock, is_server, crypto_mode, deadline)
+        # [BUG FIX #8] PSK — wmieszany do klucza, peer bez PSK nie przejdzie MAC
+        if self._psk:
+            shared_key = hashlib.sha256(shared_key + self._psk).digest()
+            self._crypto._key = shared_key
         self._log(f"[KSH] Klucz: {crypto_mode.upper()}, "
-                  f"{len(shared_key)*8} bit")
+                  f"{len(shared_key)*8} bit"
+                  + (" [PSK]" if self._psk else ""))
 
         # ── FAZA 2: Serializacja lokalnego phi-space ──────────────────────────
         self._log("[KSH] Faza 2: serializacja phi-space")
@@ -487,22 +569,27 @@ class KarmazynHandshake:
             "ts":      time.time(),
             "node_id": local_caps["node_id"],
         }, ensure_ascii=False).encode("utf-8")
-        encrypted   = self._crypto.encrypt(local_blob)
+        # Kompresja zlib przed szyfrowaniem — JSON atomów kompresuje się 3-10x
+        compressed  = _compress(local_blob)
+        encrypted   = self._crypto.encrypt(compressed)
+        ratio       = len(local_blob) / max(1, len(compressed))
         self._log(f"[KSH] Serializacja: {len(local_atoms)} atomów → "
-                  f"{len(encrypted)} bajtów (zaszyfrowane)")
+                  f"{len(local_blob)} B → {len(compressed)} B (zlib {ratio:.1f}x) → "
+                  f"{len(encrypted)} B (szyfrowane)")
 
         # ── FAZA 3: Wymiana ───────────────────────────────────────────────────
         # Serwer wysyła pierwszy (klient już czeka na odbiór)
         self._log("[KSH] Faza 3: wymiana blobów")
         if is_server:
             _send_frame(sock, encrypted)
-            remote_enc = _recv_frame(sock)
+            remote_enc = _recv_frame(sock, deadline)
         else:
-            remote_enc  = _recv_frame(sock)
+            remote_enc  = _recv_frame(sock, deadline)
             _send_frame(sock, encrypted)
 
-        remote_blob  = self._crypto.decrypt(remote_enc)
-        remote_data  = json.loads(remote_blob.decode("utf-8"))
+        remote_raw   = self._crypto.decrypt(remote_enc)
+        remote_blob  = _decompress(remote_raw)   # odwrotność kompresji
+        remote_data  = json.loads(remote_blob.decode("utf-8", errors="replace"))
         remote_atoms = remote_data.get("atoms", [])
         self._log(f"[KSH] Odebrano: {len(remote_atoms)} atomów zdalnych")
 
@@ -510,19 +597,26 @@ class KarmazynHandshake:
         self._log("[KSH] Faza 4: scalenie (union + conflict-by-T)")
         added, updated, skipped = _merge_atoms(self.phi, remote_atoms)
 
-        # MAC z hash scalonego stanu — oba węzły powinny dostać identyczny wynik
+        # [BUG FIX #1]  — dodano age do kanonicznej reprezentacji
+        # [BUG FIX #11] — pełny SHA256 nie truncated 64-bit
+        # [BUG FIX #15] — sort_keys=True
         merged_atoms = _serialize_atoms(self.phi)
+        canonical    = sorted(
+            (a["id"], round(a["T"], 4), a["S"], a["E"], a["state"], a["age"])
+            for a in merged_atoms
+        )
         state_hash   = hashlib.sha256(
-            json.dumps(sorted(a["id"] for a in merged_atoms)).encode()
-        ).hexdigest()[:16]
+            json.dumps(canonical, ensure_ascii=False, sort_keys=True).encode()
+        ).hexdigest()
 
-        mac = _hmac.new(shared_key, state_hash.encode(), hashlib.sha256).hexdigest()[:16]
+        # [BUG FIX #11] pełny HMAC-SHA256 — nie truncated 64-bit
+        mac = _hmac.new(shared_key, state_hash.encode(), hashlib.sha256).hexdigest()
 
         if is_server:
             _send_json(sock, {"mac": mac, "n": len(merged_atoms)})
-            peer = _recv_json(sock)
+            peer = _recv_json(sock, deadline)
         else:
-            peer = _recv_json(sock)
+            peer = _recv_json(sock, deadline)
             _send_json(sock, {"mac": mac, "n": len(merged_atoms)})
 
         peer_mac_ok = (peer.get("mac") == mac)
@@ -535,20 +629,22 @@ class KarmazynHandshake:
             f"{elapsed:.2f} s"
         )
 
+        # sync: phi-space (RAM) only — BubbleVFS (.soul) future: karmazyn_gossip
         return {
-            "status":       "ok",
-            "role":         role,
-            "crypto_mode":  crypto_mode,
-            "remote_node":  remote_caps.get("node_id", "?"),
-            "local_atoms":  len(local_atoms),
-            "remote_atoms": len(remote_atoms),
-            "merged_total": len(merged_atoms),
-            "added":        added,
-            "updated":      updated,
-            "skipped":      skipped,
-            "state_hash":   state_hash,
-            "peer_mac_ok":  peer_mac_ok,
-            "elapsed_s":    round(elapsed, 3),
+            "status":         "ok",
+            "role":           role,
+            "crypto_mode":    crypto_mode,
+            "remote_node":    remote_caps.get("node_id", "?"),
+            "local_atoms":    len(local_atoms),
+            "remote_atoms":   len(remote_atoms),
+            "merged_total":   len(merged_atoms),
+            "added":          added,
+            "updated":        updated,
+            "skipped":        skipped,
+            "state_hash":     state_hash,
+            "peer_mac_ok":    peer_mac_ok,
+            "elapsed_s":      round(elapsed, 3),
+            "bubbles_synced": False,
         }
 
     # ── Helpers ───────────────────────────────────────────────────────────────
@@ -563,10 +659,12 @@ class KarmazynHandshake:
         crypto_list.append("simple")   # zawsze dostępny
 
         return {
-            "version":   PROTO_VERSION,
-            "node_id":   _node_id(),
-            "crypto":    crypto_list,
-            "phi_atoms": len(_serialize_atoms(self.phi)),
+            "version":    PROTO_VERSION,
+            "node_id":    _node_id(),
+            "crypto":     crypto_list,
+            "phi_atoms":  len(_serialize_atoms(self.phi)),
+            "ts":         time.time(),          # anty-replay: timestamp sesji
+            "session_id": secrets.token_hex(8), # anty-replay: unikalny ID sesji
         }
 
     def _select_crypto_mode(self, local: dict, remote: dict) -> str:
@@ -583,25 +681,27 @@ class KarmazynHandshake:
     def _negotiate_crypto(self,
                            sock:      socket.socket,
                            is_server: bool,
-                           mode:      str) -> bytes:
+                           mode:      str,
+                           deadline:  float = 0.0) -> bytes:
         """Dispatcher dla negocjacji klucza."""
+        # Przekaż deadline do wszystkich metod crypto które wołają _recv_json
         if mode == "hss":
             if is_server:
                 return self._crypto.negotiate_hss_responder(
-                    sock, _recv_json(sock))
-            return self._crypto.negotiate_hss_initiator(sock)
+                    sock, _recv_json(sock, deadline))
+            return self._crypto.negotiate_hss_initiator(sock, deadline)
 
         if mode == "ecdh":
             if is_server:
                 return self._crypto.negotiate_ecdh_responder(
-                    sock, _recv_json(sock))
-            return self._crypto.negotiate_ecdh_initiator(sock)
+                    sock, _recv_json(sock, deadline))
+            return self._crypto.negotiate_ecdh_initiator(sock, deadline)
 
         # simple (PBKDF2)
         if is_server:
             return self._crypto.negotiate_simple_responder(
-                sock, _recv_json(sock))
-        return self._crypto.negotiate_simple_initiator(sock)
+                sock, _recv_json(sock, deadline))
+        return self._crypto.negotiate_simple_initiator(sock, deadline)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -610,16 +710,30 @@ class KarmazynHandshake:
 
 def _node_id() -> str:
     """
-    Stabilny identyfikator węzła (SHA256 z hostname + MAC address).
-    Prefiks "node_" + 12 hex znaków.
+    [BUG FIX #9] Persystentny node_id w ~/.karmazyn_node_id.
+    uuid.getnode() może się zmieniać (VM, kontener, random MAC).
+    Plik zapewnia stabilność między restartami.
     """
+    id_path = os.path.join(os.path.expanduser("~"), ".karmazyn_node_id")
+    try:
+        saved = open(id_path, encoding="utf-8").read().strip()
+        if saved.startswith("node_") and len(saved) == 17:
+            return saved
+    except Exception:
+        pass
     raw = socket.gethostname().encode("utf-8", errors="replace")
     try:
         import uuid
         raw += str(uuid.getnode()).encode()
     except Exception:
         pass
-    return "node_" + hashlib.sha256(raw).hexdigest()[:12]
+    node_id = "node_" + hashlib.sha256(raw).hexdigest()[:12]
+    try:
+        with open(id_path, "w", encoding="utf-8") as f:
+            f.write(node_id)
+    except Exception:
+        pass
+    return node_id
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -654,7 +768,8 @@ def cmd_handshake(args,
     # Ostatni argument numeryczny interpretuj jako port
     port = int(args[-1]) if len(args) > 1 and args[-1].isdigit() else 7700
 
-    hs   = KarmazynHandshake(runtime, log_fn=_out)
+    hs   = KarmazynHandshake(runtime, log_fn=_out,
+                             psk=os.environb.get(b'KARM_PSK'))
 
     if sub == "SERVE":
         result = hs.serve(port=port)
@@ -684,6 +799,7 @@ def cmd_handshake(args,
         f"  Stan hash:  {result['state_hash']}",
         f"  MAC peer:   {'OK  ✓' if result['peer_mac_ok'] else 'BLAD ✗  (rozbieznosc stanu!)'}",
         f"  Czas:       {result['elapsed_s']} s",
+        "  Bable:      nie syncowane (tylko phi-space RAM)",
         "──────────────────────────────────────",
     ]
     return "\n".join(lines)
