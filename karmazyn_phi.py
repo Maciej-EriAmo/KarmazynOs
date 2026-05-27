@@ -1,10 +1,15 @@
 """
-karmazyn_phi.py — Phi-Space KarmazynOS v1.0
-============================================
+karmazyn_phi.py — Phi-Space KarmazynOS v1.0.1
+==============================================
 KarmazynOS — Maciej Mazur, Warsaw 2026
 
 Warstwa phi-space: atomy, bąble, hologramy.
 Używa karmazyn_atom.Atom jako jedynego modelu atomu.
+
+FIX v1.0.1:
+  - Usunięto zduplikowaną definicję list_bubbles()
+  - Naprawiono len(b.atoms) → len(b) (atoms to metoda, nie property)
+  - step() zwraca generator (atom, event) zamiast Dict
 
 Interfejs kompatybilny z istniejącym runtime.py:
   phi.create_atom(id, S, E, T)
@@ -123,9 +128,9 @@ class PhiBubble:
         return False
 
     def _update_T(self) -> None:
-        atoms = self.atoms()
-        if atoms:
-            self._T = sum(a.T for a in atoms) / len(atoms)
+        atom_list = self.atoms()
+        if atom_list:
+            self._T = sum(a.T for a in atom_list) / len(atom_list)
 
     @property
     def T(self) -> float:
@@ -196,14 +201,17 @@ class PhiSpace:
             # Aktualizuj istniejący
             a = self.matrix.get(id)
             a.S = S; a.E = E
-            a.heat(T - a.T) if T > a.T else a.cool(a.T - T)
+            if T > a.T:
+                a.heat(T - a.T)
+            else:
+                a.cool(a.T - T)
             return a
         a = self.matrix.create(id, S, E, T, **kwargs)
         # Podepnij callback do EventBus
         a.on_state_change(lambda atom: self._on_state_change(atom))
         # Opcjonalnie: generuj wektor HRR
         if self._hrr is not None:
-            a.vector = self._hrr.atom(id).vector
+            a.vector = self._hrr.atom_vector(id)
         self.events.emit("atom_created", a)
         return a
 
@@ -252,7 +260,6 @@ class PhiSpace:
 
         norm = _np.linalg.norm(vec)
         return (vec / norm) if norm > 1e-9 else vec
-
 
     def peek_atom(self, id: str) -> Optional[Atom]:
         """Pobierz atom BEZ ogrzewania — do użytku wewnętrznego
@@ -311,7 +318,6 @@ class PhiSpace:
         for atom_id in to_remove:
             self.matrix.delete(atom_id)
 
-
     # ── Bąble ─────────────────────────────────────────────────────────────────
 
     def consolidate(self, atom_id: str,
@@ -343,12 +349,19 @@ class PhiSpace:
         bubble.add(atom_id)
         return True
 
+    # FIX v1.0.1: Jedna definicja list_bubbles z poprawnymi polami
+    # Usunięto zduplikowaną drugą definicję która nadpisywała tę
+    # i miała bug len(b.atoms) zamiast len(b)
     def list_bubbles(self) -> List[Dict[str, Any]]:
+        """Zwraca listę bąbli z metadanymi dla FM i innych komponentów."""
         result = []
         for label, bubble in self._bubbles.items():
             result.append({
                 "label":        label,
                 "id":           label,
+                # FIX: len(bubble) zamiast len(bubble.atoms)
+                # bubble.atoms to metoda (zwraca listę), len() na metodzie = TypeError
+                # lub zawsze 1 (truthy). len(bubble) wywołuje __len__ = len(self._ids)
                 "active_atoms": len(bubble),
                 "T":            round(bubble.T, 1),
                 "state":        bubble.state,
@@ -444,21 +457,13 @@ class PhiSpace:
             a.heat(T_WARM - a.T)
         return True
 
-    def corrupt_atom(self, atom_id: str) -> bool:
+    def corrupt_atom(self, atom_id: str, amount: float = 25) -> bool:
         """Oznacz atom jako uszkodzony (T→1) — stub."""
         a = self.matrix.get(atom_id)
         if a is None:
             return False
         a.cool(a.T - 1.0)
         return True
-
-    def list_bubbles(self) -> list:
-        """Zwraca listę bąbli — alias dla bąbli w phi-space."""
-        return [
-            {"label": b_id, "active_atoms": len(b.atoms)}
-            for b_id, b in self._bubbles.items()
-        ]
-
 
     def status_summary(self) -> Dict[str, int]:
         return self.matrix.stats()

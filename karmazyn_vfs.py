@@ -1,12 +1,17 @@
 #!/usr/bin/env python3
 """
-karmazyn_vfs.py — KarmazynOS Virtual File System v2.0
-======================================================
+karmazyn_vfs.py — KarmazynOS Virtual File System v2.0.1
+========================================================
 Warstwa szyfrowanego przechowywania bąbli oparta na KAFD v2.0.
 Kompatybilna z FM (karmazyn_fm.py v2.1) i innymi komponentami.
+
+FIX v2.0.1:
+  - Dodano _sanitize_label() — ochrona przed path traversal
+  - create_bubble, save, load, has, delete — walidują label
 """
 
 import os
+import re
 import json
 from typing import Any, Optional, List, Dict, Tuple
 
@@ -31,6 +36,47 @@ except ImportError:
     _CRYPTO_OK = False
 
 _VFS_MAGIC = b"BVFS"
+
+# FIX v2.0.1: Regex dozwolonych znaków w label
+# Tylko alfanumeryczne, podkreślnik, myślnik, kropka
+# Blokuje: /, \, .., ~, $, spacje, znaki specjalne
+_SAFE_LABEL_RE = re.compile(r'^[a-zA-Z0-9_.\-]+$')
+_MAX_LABEL_LEN = 128
+
+
+def _sanitize_label(label: str) -> str:
+    """
+    Waliduje i sanityzuje label bąbla.
+    Zapobiega path traversal (../, /, ~) i znakom specjalnym.
+
+    Rzuca ValueError dla niebezpiecznych labeli.
+    """
+    if not label:
+        raise ValueError("Label bąbla nie może być pusty")
+
+    if len(label) > _MAX_LABEL_LEN:
+        raise ValueError(f"Label za długi: {len(label)} > {_MAX_LABEL_LEN}")
+
+    # Blokuj path traversal
+    if '..' in label:
+        raise ValueError(f"Label nie może zawierać '..': {label!r}")
+
+    if '/' in label or '\\' in label:
+        raise ValueError(f"Label nie może zawierać separatorów ścieżki: {label!r}")
+
+    if label.startswith('~') or label.startswith('$'):
+        raise ValueError(f"Label nie może zaczynać się od ~ lub $: {label!r}")
+
+    # Walidacja dozwolonych znaków
+    if not _SAFE_LABEL_RE.match(label):
+        # Zamiast odrzucenia — sanityzuj automatycznie
+        sanitized = re.sub(r'[^a-zA-Z0-9_.\-]', '_', label)
+        if not sanitized:
+            raise ValueError(f"Label nie zawiera dozwolonych znaków: {label!r}")
+        return sanitized
+
+    return label
+
 
 def _derive_key(workspace_key: bytes, label: str) -> bytes:
     import hmac, hashlib
@@ -63,7 +109,8 @@ def vfs_workspace_key() -> bytes:
         try:
             raw = open(key_path, "rb").read()
             if len(raw) == 32: return raw
-        except: pass
+        except Exception:
+            pass
     new_key = os.urandom(32)
     os.makedirs(".bubbles", exist_ok=True)
     with open(key_path, "wb") as f: f.write(new_key)
@@ -78,10 +125,13 @@ class BubbleVFS:
         os.makedirs(self.TMP_DIR, exist_ok=True)
 
     def _content_path(self, label: str) -> str:
-        return os.path.join(self.CONTENT_DIR, f"{label}.kafd")
+        # FIX v2.0.1: sanityzacja label przed użyciem w ścieżce
+        safe_label = _sanitize_label(label)
+        return os.path.join(self.CONTENT_DIR, f"{safe_label}.kafd")
 
     def _tmp_path(self, label: str, ext: str = ".txt") -> str:
-        return os.path.join(self.TMP_DIR, f"{label}{ext}")
+        safe_label = _sanitize_label(label)
+        return os.path.join(self.TMP_DIR, f"{safe_label}{ext}")
 
     # --- Operacje na bąblach (API dla FM) ---
 
@@ -93,7 +143,7 @@ class BubbleVFS:
             if not fname.endswith(".kafd"):
                 continue
             label = fname[:-5]
-            path = self._content_path(label)
+            path = os.path.join(self.CONTENT_DIR, f"{label}.kafd")
             if not os.path.exists(path):
                 continue
             try:
@@ -116,15 +166,18 @@ class BubbleVFS:
         return result
 
     def create_bubble(self, name: str) -> str:
-        self.save(name, "", "txt")
-        return name
+        # FIX v2.0.1: sanityzacja nazwy
+        safe_name = _sanitize_label(name)
+        self.save(safe_name, "", "txt")
+        return safe_name
 
     def delete_bubble(self, bubble_id: str) -> None:
-        path = self._content_path(bubble_id)
+        safe_id = _sanitize_label(bubble_id)
+        path = os.path.join(self.CONTENT_DIR, f"{safe_id}.kafd")
         if os.path.exists(path):
             os.remove(path)
         for ext in [".txt", ".py", ".md", ".karm", ".sh"]:
-            tmp = self._tmp_path(bubble_id, ext)
+            tmp = os.path.join(self.TMP_DIR, f"{safe_id}{ext}")
             if os.path.exists(tmp):
                 os.remove(tmp)
 
@@ -162,7 +215,6 @@ class BubbleVFS:
         for aid in atoms_data:
             if aid == "__main__":
                 continue
-            # Odczytaj z danych atomu (jeśli JSON) aby wydobyć T i S
             raw = atoms_data[aid]
             T = 50.0
             S = "binary"
@@ -171,7 +223,7 @@ class BubbleVFS:
                     d = json.loads(raw.decode())
                     T = d.get("T", 50.0)
                     S = d.get("S", S)
-            except:
+            except Exception:
                 pass
             atoms.append({
                 "id": aid,
@@ -189,7 +241,8 @@ class BubbleVFS:
             return {}, {"content_type": "txt"}
         try:
             raw = open(path, "rb").read()
-            dec = vfs_decrypt(raw, vfs_workspace_key(), label)
+            safe_label = _sanitize_label(label)
+            dec = vfs_decrypt(raw, vfs_workspace_key(), safe_label)
             atoms, meta = vfs_unpack(dec)
             return atoms, meta
         except Exception:
@@ -197,7 +250,8 @@ class BubbleVFS:
 
     def _save_kafd(self, label: str, atoms_data: Dict[str, bytes], meta: dict) -> None:
         blob = vfs_pack(atoms_data, meta)
-        enc = vfs_encrypt(blob, vfs_workspace_key(), label)
+        safe_label = _sanitize_label(label)
+        enc = vfs_encrypt(blob, vfs_workspace_key(), safe_label)
         path = self._content_path(label)
         with open(path, "wb") as f:
             f.write(enc)
@@ -222,7 +276,10 @@ class BubbleVFS:
             return str(data)
 
     def has(self, label: str, content_type: str = "py") -> bool:
-        return os.path.exists(self._content_path(label))
+        try:
+            return os.path.exists(self._content_path(label))
+        except ValueError:
+            return False
 
     def materialize(self, label: str, content: str, content_type: str = "py") -> str:
         ext = { "py": ".py", "txt": ".txt", "md": ".md", "karm": ".karm", "sh": ".sh" }.get(content_type, ".txt")
@@ -244,5 +301,5 @@ class BubbleVFS:
         path = self._tmp_path(label, ext)
         try:
             os.remove(path)
-        except:
+        except Exception:
             pass

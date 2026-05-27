@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """
-karmazyn_shell_cmds.py — KarmazynOS Shell Commands v1.0
-=========================================================
+karmazyn_shell_cmds.py — KarmazynOS Shell Commands v1.0.1
+==========================================================
 Maciej Mazur, Warsaw 2026
 
-Uzupełnienie brakujących komend w ksh:
+FIX v1.0.1:
+  - atom_id hash w cmd_bimport: 10→12 znaków (zgodność z karmazyn_fm.py)
+  - _touch_file_atom: ten sam hash length co FM (_atom_id)
 
 WARSTWA 1 — Filesystem (prawdziwe operacje na plikach):
   CP   src dst         — kopiuj plik lub katalog
@@ -59,6 +61,10 @@ from typing import Any, Optional
 EMBED_THRESHOLD = 256 * 1024   # 256 KB — powyżej tego tylko referencja
 MAX_EMBED_SIZE  = 4 * 1024 * 1024  # 4 MB — twardy limit embeddowania
 
+# FIX v1.0.1: Stała długości hasha — jeden punkt prawdy dla całego systemu
+# Musi być identyczna z karmazyn_fm._atom_id() (12 znaków)
+ATOM_HASH_LEN = 12
+
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -86,6 +92,17 @@ def _file_T(size_bytes: int) -> float:
     kb   = size_bytes / 1024
     T    = max(20.0, 70.0 - math.log10(max(1, kb)) * 12)
     return round(T, 1)
+
+
+def _atom_id_for_path(path: str) -> str:
+    """
+    Generuje atom_id dla ścieżki pliku.
+    FIX v1.0.1: Jeden punkt prawdy — identyczny algorytm co karmazyn_fm._atom_id().
+    Poprzednio: hexdigest()[:10] tutaj vs [:12] w FM — różne ID dla tego samego pliku.
+    """
+    import hashlib as _hl
+    hid = _hl.sha1(os.path.abspath(path).encode()).hexdigest()[:ATOM_HASH_LEN]
+    return f"file.{hid}"
 
 
 def _resolve_bubble(bubbles: Any, name: str) -> Optional[str]:
@@ -219,10 +236,9 @@ def cmd_sete(args, runtime=None, **_) -> str:
 def _touch_file_atom(runtime: Any, path: str) -> None:
     """Utwórz/zaktualizuj atom phi-space dla pliku."""
     if not runtime: return
-    import hashlib as _hl
     abs_path = os.path.abspath(path)
-    hid      = _hl.sha1(abs_path.encode()).hexdigest()[:12]
-    atom_id  = f"file.{hid}"
+    # FIX v1.0.1: używamy _atom_id_for_path() — jeden punkt prawdy
+    atom_id  = _atom_id_for_path(abs_path)
     try:
         size = os.path.getsize(path) if os.path.exists(path) else 0
         T    = _file_T(size)
@@ -468,10 +484,8 @@ def cmd_bimport(args, runtime=None, bubbles=None, **_) -> str:
         return (f"Plik zbyt duży do osadzenia ({_fmt_size(size)} > {_fmt_size(MAX_EMBED_SIZE)}). "
                 f"Użyj referencji (bez --embed).")
 
-    # Zbuduj atom
-    import hashlib as _hl
-    hid     = _hl.sha1(abs_path.encode()).hexdigest()[:10]
-    atom_id = f"file.{hid}"
+    # FIX v1.0.1: używamy _atom_id_for_path() — identyczny hash co FM
+    atom_id = _atom_id_for_path(abs_path)
 
     if should_embed:
         with open(path, "rb") as f:
@@ -513,9 +527,6 @@ def cmd_bimport(args, runtime=None, bubbles=None, **_) -> str:
                 bubbles.import_to_bubble(bid, atom_id, runtime)
             except Exception:
                 pass
-        else:
-            # Bez runtime — zapisz bezpośrednio przez snapshot
-            pass
 
         return (f"OK: {filename} → bąbel '{bubble_name}'\n"
                 f"  atom_id: {atom_id}\n"
@@ -643,7 +654,7 @@ def register_all(reg_fn, runtime=None, bubbles=None) -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    print("KarmazynOS Shell Commands v1.0")
+    print("KarmazynOS Shell Commands v1.0.1")
     print("Zarejestrowane komendy:")
     cmds = [
         ("CP",      "Kopiuj plik/katalog"),
