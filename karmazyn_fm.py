@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """
-karmazyn_fm.py — KarmazynOS File Manager v2.6
-==============================================
+karmazyn_fm.py — KarmazynOS File Manager v2.7 (Fix #8)
+=======================================================
 Menedżer plików TUI z wieloma ontologiami (fs, phi, bbl) oraz wyszukiwaniem semantycznym.
 Skrót Ctrl+F otwiera okno wyszukiwania i przełącza panel w tryb SEARCH.
 
-Poprawki v2.6:
+Poprawki v2.7:
+  - Fix #8: import_files_to_bubble() używa peek_atom() aby uniknąć podwójnego
+    podgrzewania atomów przy sprawdzaniu istnienia (get_atom → touch).
   - artefakty przy tworzeniu plików/katalogów – wymuszony synchroniczny refresh
   - tworzenie bąbla możliwe tylko w trybie BBL, komunikat gdy zły tryb
   - import plików do bąbla – walidacja trybów źródła i celu, czytelny komunikat
@@ -50,7 +52,7 @@ except ImportError:
     REGISTRY = _MinLog()
 
 # ── Stałe ─────────────────────────────────────────────────────────────────────
-VERSION       = "KFM-2.6"
+VERSION       = "KFM-2.7"
 ATOM_T_FILE   = 60.0
 ATOM_T_OPEN   = 75.0
 SORT_NAME     = 0
@@ -214,7 +216,6 @@ class PhiEntry(Entry):
     def delete(self, fm: "FM", rnd: "Renderer") -> bool:
         if fm.phi:
             try:
-                # bezpieczne usuwanie – nie zakładamy istnienia matrix
                 if hasattr(fm.phi, 'delete_atom'):
                     fm.phi.delete_atom(self._id)
                 elif hasattr(fm.phi, 'matrix') and hasattr(fm.phi.matrix, 'delete'):
@@ -261,7 +262,6 @@ class PhiAtomCache:
         self._last_version = -1
 
     def _get_atoms(self):
-        """Bezpiecznie pobiera listę wszystkich atomów, niezależnie od wewnętrznej implementacji phi."""
         if hasattr(self.phi, 'get_all_atoms'):
             return self.phi.get_all_atoms()
         if hasattr(self.phi, '_atoms_dict'):
@@ -548,18 +548,35 @@ class Panel:
         if e and e.is_dir(): return e.delete(fm, rnd)
         return False
 
+    # ── Fix #8: import_files_to_bubble – użycie peek_atom() ─────────────────
     def import_files_to_bubble(self, files: List[str]) -> int:
-        if self._bubbles is None or self.current_bubble_id is None: return 0
+        """Importuje pliki do aktywnego bąbla.
+        Używa peek_atom() zamiast get_atom() aby uniknąć podwójnego podgrzewania
+        atomów podczas sprawdzania istnienia.
+        """
+        if self._bubbles is None or self.current_bubble_id is None:
+            return 0
         count = 0
         for path in files:
             atom_id = _atom_id(path)
             try:
                 if self._phi:
-                    if not self._phi.get_atom(atom_id):
-                        self._phi.create_atom(atom_id, S=os.path.basename(path), E=path, T=ATOM_T_FILE)
+                    # Pobranie atomu BEZ touch – najpierw szukamy peek_atom,
+                    # potem fallback do matrix.get (jeśli istnieje)
+                    existing = None
+                    if hasattr(self._phi, 'peek_atom'):
+                        existing = self._phi.peek_atom(atom_id)
+                    elif hasattr(self._phi, 'matrix') and hasattr(self._phi.matrix, 'get'):
+                        existing = self._phi.matrix.get(atom_id)
+                    if not existing:
+                        self._phi.create_atom(atom_id, S=os.path.basename(path),
+                                              E=path, T=ATOM_T_FILE)
+                # import_to_bubble wewnętrznie może wołać get_atom – to jedyne touch,
+                # a nie podwójne
                 self._bubbles.import_to_bubble(self.current_bubble_id, atom_id, self._phi)
                 count += 1
-            except: continue
+            except Exception:
+                continue
         self.refresh()
         return count
 
@@ -894,7 +911,6 @@ class FM:
             self._searching = False
             return False
 
-    # ── Akcje ────────────────────────────────────────────────────────────────
     def _action_enter(self, rnd):
         e = self._cur_panel.current()
         if e: e.open(self, rnd)

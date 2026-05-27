@@ -1,29 +1,12 @@
 #!/usr/bin/env python3
 """
-AstraEdit.py — AstraEdit 5.1 KarmazynOS Edition
-================================================
+AstraEdit.py — AstraEdit 5.1.1 KarmazynOS Edition (FIX)
+========================================================
 Edytor plików z integracją phi-space.
-Ojciec NooEdit, adoptowany przez architekturę KarmazynOS.
 
-Różnica NooEdit vs AstraEdit:
-  NooEdit   — edytuje BĄBLE (bubble.content = canonical)
-  AstraEdit — edytuje PLIKI (plik na dysku = canonical)
-              phi-space śledzi temperaturę dostępu
-
-Tryby (auto-detect lub flaga):
-  --sdl  → zewnętrzny edytor + FileWatcher (SDL zajmuje terminal)
-  --gui  → Tkinter z phi-space status bar
-  --tui  → prompt_toolkit z phi summary
-
-Zależności wewnętrzne:
-  karmazyn_vfs       — BubbleVFS (opcjonalny backup)
-  karmazyn_sdl_utils — FileWatcher, is_sdl_mode, find_external_editor
-
-Izomorfizm phi-space:
-  Otwarty plik  = atom T=80  (HOT gdy aktywny)
-  Edytowany     = atom T=92  (szczyt aktywności)
-  Zamknięty     = atom T=45  (COLD, naturalnie stygnie)
-  Output skryptu = atom T=95 (najgorętszy — świeży wynik)
+FIX v5.1.1:
+  - Usunięto martwy kod po return w is_binary_file()
+  - Dodano brakującą funkcję _print_status() (używaną w __main__)
 """
 
 import argparse
@@ -193,14 +176,13 @@ class PhiAdapter:
 # ── BubbleVFS (z NooEdit) ─────────────────────────────────────────────────────
 
 def is_binary_file(filepath: str) -> bool:
+    """Sprawdza czy plik jest binarny (zawiera bajt null w pierwszych 1024B)."""
     try:
         with open(filepath, "rb") as f:
             return b"\x00" in f.read(1024)
-    except Exception: return False
-
-    os.makedirs(pathlib.Path(path).parent, exist_ok=True)
-    with open(path, "w", encoding=encoding, errors="replace") as f:
-        f.write(text)
+    except Exception:
+        return False
+    # FIX: usunięto martwy kod (fragment write_text_file wklejony po return)
 
 # ── Pygments ──────────────────────────────────────────────────────────────────
 
@@ -1418,6 +1400,20 @@ def cmd_astraedit(args, runtime=None, term_state=None):
         return "prompt_toolkit niedostepny. Uzyj --gui lub --sdl"
     AstraEditTUI(file_path, runtime=runtime).run()
     return "ok"
+
+
+# ────────────────────────────────────────────────────────────────────
+# FIX #3b: Dodana brakująca _print_status (używana w __main__)
+# ────────────────────────────────────────────────────────────────────
+def _print_status(message: str, level: str = "info"):
+    """Wyświetla status z kolorowym prefixem (dla __main__)."""
+    prefixes = {
+        "info":  f"\033[36m[AstraEdit]\033[0m",
+        "warn":  f"\033[33m[AstraEdit WARN]\033[0m",
+        "error": f"\033[31m[AstraEdit ERROR]\033[0m",
+    }
+    prefix = prefixes.get(level, prefixes["info"])
+    print(f"{prefix} {message}")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

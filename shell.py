@@ -3,6 +3,9 @@
 shell.py — KarmazynOS Shell (ksh) v4.0
 =======================================
 Cienka warstwa – komendy ładowane dynamicznie z karmazyn_programs.json.
+
+Fix #11: Integracja BubbleSync – mostek RAM (RUNTIME._bubbles) ↔ VFS (BubbleVFS)
+         Automatyczna synchronizacja przy starcie oraz komenda BSYNC.
 """
 
 import os
@@ -66,6 +69,7 @@ LUNETA_INST = None
 RADIO = None
 SCHEDULER = None
 NET = None
+BUBBLE_SYNC = None          # <--- FIX #11: globalny uchwyt dla mostka synchronizacji
 
 # ── Rejestr komend (wypełniany przez load_programs) ───────────────────────────
 _COMMANDS: Dict[str, Any] = {}
@@ -154,6 +158,31 @@ def load_programs(config_path: str = "karmazyn_programs.json") -> int:
             REGISTRY.log("WARN", "loader", f"Program {name}: {e}")
     REGISTRY.log("INFO", "loader", f"Załadowano {loaded} programów")
     return loaded
+
+# ── FIX #11: Inicjalizacja BubbleSync Bridge ─────────────────────────────────
+def _init_bubble_sync():
+    """Inicjalizuj bridge synchronizacji bąbli RAM ↔ VFS."""
+    global BUBBLE_SYNC
+    BUBBLE_SYNC = None
+    try:
+        from karmazyn_bubble_sync import BubbleSync
+        BUBBLE_SYNC = BubbleSync(RUNTIME, BUBBLES)
+        # Automatyczna synchronizacja VFS → RAM przy starcie
+        synced = BUBBLE_SYNC.sync_vfs_to_ram()
+        if synced > 0:
+            REGISTRY.log("INFO", "bubble_sync",
+                         f"Załadowano {synced} bąbli z VFS do RAM")
+        # Rejestracja komendy BSYNC
+        BUBBLE_SYNC.register_commands(reg)
+        REGISTRY.register("bubble_sync", "OK",
+                          detail=f"Bridge RAM↔VFS aktywny")
+    except ImportError:
+        REGISTRY.register("bubble_sync", "MISSING",
+                          detail="Brak karmazyn_bubble_sync.py")
+    except Exception as e:
+        REGISTRY.register("bubble_sync", "ERROR",
+                          detail=str(e)[:60])
+# ──────────────────────────────────────────────────────────────────────────────
 
 # ── Główne funkcje shella ─────────────────────────────────────────────────────
 def shell_worker(term):
@@ -246,10 +275,14 @@ def main():
         else:
             DISPLAY = None
 
+    # ── FIX #11: Inicjalizacja bridge synchronizacji bąbli ─────────────────
+    _init_bubble_sync()
+    # ───────────────────────────────────────────────────────────────────────
+
     # Wczytaj programy z JSON (to rejestruje wszystkie komendy)
     load_programs()
 
-    # Rejestracja KarminDB (KQL, INDEX, SEARCH) – DODANE
+    # Rejestracja KarminDB (KQL, INDEX, SEARCH)
     try:
         from karmazyn_karmindb import register_karmindb
         register_karmindb(reg, RUNTIME)

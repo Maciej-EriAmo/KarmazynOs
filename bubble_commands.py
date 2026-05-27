@@ -1,8 +1,13 @@
+#!/usr/bin/env python3
 """
-bubble_commands.py — Komendy Babli dla shell.py v2.0
-=====================================================
+bubble_commands.py — Komendy Babli dla shell.py v2.1 (Fix #7)
+=============================================================
 Przebudowany na model fundamentalny karmazyn_core.py.
 Uzywa runtime._bubbles bezposrednio — brak zaleznosci od bedit.BubbleRuntime.
+
+Fix #7 (2026-05-27):
+  - Kompatybilność z różnymi runtime'ami (SanctuaryRuntime vs KarmazynOS vs PhiSpace).
+  - _bubble_new używa create_atom/write z wykrywaniem sygnatury.
 
 Komendy dostepne w shell:
   BUBBLE LS                    — lista Babli ze stanem Psi/Theta
@@ -155,6 +160,7 @@ def _bubble_ls(args) -> str:
 
 
 def _bubble_new(args) -> str:
+    """Tworzy nowy Babl. Fix #7: kompatybilne tworzenie atomu."""
     err = _require_runtime()
     if err:
         return err
@@ -170,7 +176,30 @@ def _bubble_new(args) -> str:
 
     # Atom z ta sama etykieta co Babl — consolidate uzyje jej jako klucza
     if not RUNTIME.has_atom(label):
-        RUNTIME.write(label, label, "bubble_init", 1.0)
+        # ── Fix #7: Kompatybilność z różnymi runtime'ami ─────────────────
+        if hasattr(RUNTIME, 'create_atom'):
+            # SanctuaryRuntime / PhiSpace
+            try:
+                RUNTIME.create_atom(label, S=label, E="bubble_init", T=50.0)
+            except TypeError:
+                try:
+                    RUNTIME.create_atom(label, label, "bubble_init", 50.0)
+                except Exception:
+                    pass
+        elif hasattr(RUNTIME, 'write'):
+            # KarmazynOS lub inne API z write()
+            import inspect
+            try:
+                sig = inspect.signature(RUNTIME.write)
+                if len(sig.parameters) >= 4:
+                    # SanctuaryRuntime.write(name, S, E, T)
+                    RUNTIME.write(label, label, "bubble_init", 1.0)
+                else:
+                    # KarmazynOS.write(content, auto_consolidate=0)
+                    RUNTIME.write(label)
+            except Exception:
+                pass
+        # ─────────────────────────────────────────────────────────────────
 
     RUNTIME.consolidate(label)
 

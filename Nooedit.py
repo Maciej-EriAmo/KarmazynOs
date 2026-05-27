@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
 """
-Nooedit.py — Edytor Bąbli KarmazynOS v5.2
-==========================================
-Edytor wbudowany w SDL workspace — lewy panel.
+Nooedit.py — Edytor Bąbli KarmazynOS v5.2.1 (Fix #6)
+======================================================
+Edytor wbudowany w SDL workspace – lewy panel.
 Bąbel jest dokumentem: bubble.content to canonical source.
+
+Fix #6 (push_content):
+  - Rozdzielono create_atom i consolidate na osobne try/except.
+  - Konsolidacja nieudana → status "vfs_only" zamiast fałszywego "absorbed".
+  - Dane zawsze zapisywane do VFS backup.
 
 Tryby (auto-detect):
   SDL aktywny → EditorState w lewym panelu SDL
@@ -95,18 +100,18 @@ class NooContext:
             content = getattr(bubble, "content", "")
             if content and content not in ("bubble_init", "", self.label):
                 return content
-        
+
         # 2. Fallback: VFS (zaszyfrowany backup)
-        # Używa content_type zgodnie z API z karmazyn_vfs.py
         if self.vfs.has(self.label, self.content_type):
             return self.vfs.load(self.label, self.content_type)
-        
+
         # 3. Domyślny szablon
         lang = {"py":"Python","lua":"Lua","md":"Markdown",
                 "txt":"Tekst","karm":"KarmazynScript"}.get(self.content_type, "?")
         return (f"# Babl \'{self.label}\' [{lang}]\n"
                 f"# Ctrl+S: zapisz  F5: uruchom  Ctrl+Q: wyjdz\n")
 
+    # ── Fix #6: poprawiona metoda push_content ─────────────────────────────
     def push_content(self, new_content: str) -> dict:
         h = hashlib.md5(new_content.encode("utf-8")).hexdigest()
         if h == self._last_hash:
@@ -118,24 +123,51 @@ class NooContext:
         if bubble is not None:
             bubble.content = new_content
 
-        # 2. Backup: zaszyfrowany VFS (używa .save() i content_type z karmazyn_vfs.py)
+        # 2. Backup: zaszyfrowany VFS (zawsze zapisujemy)
         self.vfs.save(self.label, new_content, self.content_type)
 
         # 3. Konsolidacja atomu (synchronizuje phi-space)
+        #    Rozdzielone create_atom i consolidate – nie raportujemy
+        #    "absorbed", gdy tylko create_atom się powiódł a konsolidacja nie.
         tmp_id = None
         try:
             tmp_id = f"nooedit_{self.label}_{int(time.time())}"
-            with _silent():
-                # Zgodne z API PhiSpace
-                self.runtime.create_atom(tmp_id, new_content[:256], self.label, T=90.0)
-                self.runtime.consolidate(tmp_id, self.label)
+
+            # Krok A: tworzenie atomu
+            try:
+                with _silent():
+                    self.runtime.create_atom(tmp_id, new_content[:256], self.label, T=90.0)
+            except Exception as e_create:
+                # Atom nie powstał – VFS backup jest OK, ale phi-space nie
+                return {"status": "vfs_only", "note": f"create_atom: {e_create}"}
+
+            # Krok B: konsolidacja
+            consolidate_ok = False
+            try:
+                with _silent():
+                    self.runtime.consolidate(tmp_id, self.label)
+                consolidate_ok = True
+            except Exception as e_consolidate:
+                # Konsolidacja się nie udała, ale VFS backup jest bezpieczny
+                pass
+
+            if consolidate_ok:
                 result = {"status": "absorbed"}
+            else:
+                result = {"status": "vfs_only",
+                          "note": "konsolidacja nie powiodła się, dane w VFS backup"}
+
         except Exception as e:
-            result = {"status": "absorbed", "note": f"konsolidacja: {e}"}
+            # Zupełnie nieoczekiwany błąd – dane w VFS, ale atomu nie ma
+            result = {"status": "vfs_only", "note": f"błąd: {e}"}
         finally:
-            if tmp_id and self.runtime.has_atom(tmp_id):
-                try: self.runtime.delete_atom(tmp_id)
-                except Exception: pass
+            if tmp_id:
+                try:
+                    if self.runtime.has_atom(tmp_id):
+                        self.runtime.delete_atom(tmp_id)
+                except Exception:
+                    pass
+
         return result
 
     def run_in_new_bubble(self, content: str, tmp_path: str):
@@ -147,18 +179,18 @@ class NooContext:
             with _silent():
                 self.runtime.create_atom(code_id, code_id, content, T=80.0)
                 self.runtime.consolidate(code_id, result_label)
-                
+
             # Subprocess
             cmd  = self._get_run_command(tmp_path)
             proc = subprocess.run(cmd, capture_output=True, text=True,
                                   timeout=30, encoding="utf-8", errors="replace")
             output = proc.stdout + proc.stderr
-            
+
             # Atom z outputem (Pozostawiamy jako artefakt)
             out_id = f"out_{result_label}"
             self.runtime.create_atom(out_id, output[:512] or "(brak wyjscia)", result_label, T=80.0)
             self.runtime.consolidate(out_id, result_label)
-            
+
             return result_label, proc.returncode, output
         except subprocess.TimeoutExpired:
             return result_label, -1, "TIMEOUT"
@@ -498,7 +530,7 @@ def cmd_nooedit(args, runtime=None, term_state=None, display=None):
                     ctx.push_content(state.get_text())
                     if term_state:
                         term_state.append("NooEdit: auto-zapis " + label, C_OK)
-            
+
             # API z karmazyn_vfs.py — używamy content_type (force_type)
             ctx.vfs.cleanup_tmp(label, force_type)
             return "ok"
@@ -516,7 +548,7 @@ def cmd_nooedit(args, runtime=None, term_state=None, display=None):
     tmp2   = ctx.vfs.materialize(label, content, force_type)
     editor = NooEditTUI(ctx, tmp2)
     editor.run()
-    
+
     # API z karmazyn_vfs.py — używamy content_type (force_type)
     final = ctx.vfs.load(label, force_type)
     if final:

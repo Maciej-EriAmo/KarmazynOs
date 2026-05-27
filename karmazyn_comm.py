@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
 """
-karmazyn_comm.py — Termodynamiczny menadżer komunikacji v1.0.0
-==============================================================
+karmazyn_comm.py — Termodynamiczny menadżer komunikacji v1.0.1 (Fix #9)
+======================================================================
 Obsługuje SMS i połączenia przez Termux API.
-Kontakty i wiadomości jako Atomy Φ — ważne stygnią wolniej,
+Kontakty i wiadomości jako Atomy Φ — ważne stygną wolniej,
 spam wypada przez Vacuum Decay.
 
-Wymaga: Termux:API (termux-sms-list, termux-sms-send,
-                     termux-telephony-call, termux-contact-list)
-        numpy, karmazyn.py, hss_karmazyn_matrix.py, hss_demo.py
+Fix #9 (2026-05-27):
+  - Zastąpiono bezpośredni dostęp do self.ko.phi._mx.atoms
+    metodami _get_atom_T() / _set_atom_T().
+  - Działa z różnymi implementacjami Phi (dict / obiekt Atom).
+
+Wymaga: Termux:API, numpy, karmazyn.py, hss_karmazyn_matrix.py, hss_demo.py
 """
 
 import os
@@ -28,7 +31,7 @@ except ImportError:
     print("Błąd: nie znaleziono karmazyn.py")
     sys.exit(1)
 
-VERSION = "1.0.0"
+VERSION = "1.0.1"
 
 # ─── Konfiguracja termiczna ───────────────────────────────────────────────────
 
@@ -173,6 +176,60 @@ class KarmazynComm:
         print(f"\n  KarmazynComm v{VERSION} — Termodynamiczny Menadżer Komunikacji")
         print(f"  T_vacuum = {self.ko.phi.t_vacuum():.4f} bit\n")
 
+    # ── Fix #9: Uniwersalne gettery / settery temperatury atomów ──────────
+
+    def _set_atom_T(self, label: str, T_value: float) -> bool:
+        """
+        Ustawia temperaturę atomu o podanej etykiecie.
+        Działa z różnymi implementacjami phi:
+          - get_atom() (PhiSpace / SanctuaryRuntime)
+          - phi._mx.atoms (HSSKarmazynMatrix)
+        """
+        # Priorytet 1: API wysokopoziomowe
+        if hasattr(self.ko, 'get_atom'):
+            atom = self.ko.get_atom(label)
+            if atom is not None:
+                if isinstance(atom, dict):
+                    atom['T'] = T_value
+                else:
+                    atom.T = T_value
+                return True
+
+        # Priorytet 2: bezpośrednia lista atomów w phi._mx
+        if hasattr(self.ko, 'phi') and hasattr(self.ko.phi, '_mx'):
+            try:
+                atoms = self.ko.phi._mx.atoms
+                for a in atoms:
+                    a_label = a.get('label', '') if isinstance(a, dict) else getattr(a, 'label', getattr(a, 'id', ''))
+                    if a_label == label:
+                        if isinstance(a, dict):
+                            a['T'] = T_value
+                        else:
+                            a.T = T_value
+                        return True
+            except Exception:
+                pass
+        return False
+
+    def _get_atom_T(self, label: str) -> float:
+        """
+        Pobiera temperaturę atomu. Zwraca 0.0 jeśli nie znaleziono.
+        """
+        if hasattr(self.ko, 'get_atom'):
+            atom = self.ko.get_atom(label)
+            if atom is not None:
+                return atom.get('T', 0.0) if isinstance(atom, dict) else getattr(atom, 'T', 0.0)
+
+        if hasattr(self.ko, 'phi') and hasattr(self.ko.phi, '_mx'):
+            try:
+                for a in self.ko.phi._mx.atoms:
+                    a_label = a.get('label', '') if isinstance(a, dict) else getattr(a, 'label', getattr(a, 'id', ''))
+                    if a_label == label:
+                        return a.get('T', 0.0) if isinstance(a, dict) else getattr(a, 'T', 0.0)
+            except Exception:
+                pass
+        return 0.0
+
     # ── Kontakty ─────────────────────────────────────────────────────────────
 
     def load_contacts(self):
@@ -194,10 +251,8 @@ class KarmazynComm:
         content = f"kontakt:{number}:{name}"
         init_T  = T_CONTACT_KNOWN if known else T_CONTACT_UNKNOWN
         label   = self.ko.write(content)
-        for a in self.ko.phi._mx.atoms:
-            if a['label'] == label:
-                a['T'] = init_T
-                break
+        # FIX #9: użyj helpera zamiast bezpośredniej iteracji
+        self._set_atom_T(label, init_T)
         c = Contact(number=number, name=name, label=label, known=known,
                     last_seen_epoch=self.ko.phi.epoch)
         self.contacts[number] = c
@@ -213,10 +268,8 @@ class KarmazynComm:
         c = self.contacts.get(number)
         if not c:
             return 0.0
-        for a in self.ko.phi._mx.atoms:
-            if a['label'] == c.label:
-                return a['T']
-        return 0.0
+        # FIX #9: użyj helpera
+        return self._get_atom_T(c.label)
 
     # ── Wiadomości ────────────────────────────────────────────────────────────
 
@@ -257,10 +310,8 @@ class KarmazynComm:
             # zapisz do Φ
             content = f"sms_in:{number}:{name}:{body[:200]}"
             label   = self.ko.write(content)
-            for a in self.ko.phi._mx.atoms:
-                if a['label'] == label:
-                    a['T'] = init_T
-                    break
+            # FIX #9: ustaw temperaturę przez helper
+            self._set_atom_T(label, init_T)
 
             msg = Message(id=sid, number=number, body=body,
                           timestamp=ts, direction="in",
@@ -279,10 +330,11 @@ class KarmazynComm:
                 )
                 print(f"  [SMS↓] {name or number}: {body[:60]} (T={init_T:.1f})")
                 # podniesienie temperatury kontaktu
-                for a in self.ko.phi._mx.atoms:
-                    if a['label'] == c_lbl:
-                        a['T'] = min(a['T'] + 1.5, T_CONTACT_KNOWN * 1.5)
-                        break
+                # FIX #9: użyj helperów do odczytu i zapisu
+                current_contact_T = self._get_atom_T(c_lbl)
+                if current_contact_T > 0:
+                    new_T = min(current_contact_T + 1.5, T_CONTACT_KNOWN * 1.5)
+                    self._set_atom_T(c_lbl, new_T)
 
             new_count += 1
 
@@ -365,11 +417,10 @@ class KarmazynComm:
         msg = self.messages.get(msg_id)
         if msg:
             msg.replied = True
-            # stygnięcie po odpowiedzi
-            for a in self.ko.phi._mx.atoms:
-                if a['label'] == msg.label:
-                    a['T'] *= 0.5
-                    break
+            # stygnięcie po odpowiedzi – FIX #9: helpery
+            current_T = self._get_atom_T(msg.label)
+            if current_T > 0:
+                self._set_atom_T(msg.label, current_T * 0.5)
 
     # ── Polling ───────────────────────────────────────────────────────────────
 
