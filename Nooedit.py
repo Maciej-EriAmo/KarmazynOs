@@ -40,6 +40,10 @@ from typing import Optional
 
 # ── Importy wewnętrzne KarmazynOS ─────────────────────────────────────────────
 from karmazyn_vfs import BubbleVFS, vfs_workspace_key
+try:
+    from karmazyn_vfs import set_vfs_base_dir
+except ImportError:
+    set_vfs_base_dir = None
 from karmazyn_sdl_utils import FileWatcher, is_sdl_mode, find_external_editor
 
 # Importy SDL — opcjonalne (brak gdy pygame niedostępny)
@@ -431,7 +435,12 @@ class NooEditTUI:
 
 # --- Główna komenda ---
 
-def cmd_nooedit(args, runtime=None, term_state=None, display=None):
+def cmd_nooedit(args, runtime=None, term_state=None, display=None, vfs_dir=None):
+    # FIX: opcjonalny vfs_dir — spójność katalogu bąbli z powłoką.
+    # Zwykle Nooedit dziedziczy _VFS_BASE_DIR powłoki (ten sam proces),
+    # ale gdy wywołany z innego kontekstu można podać jawnie.
+    if vfs_dir and set_vfs_base_dir is not None:
+        set_vfs_base_dir(vfs_dir)
     if runtime is None:
         return "Brak runtime."
     if not args:
@@ -543,7 +552,14 @@ def cmd_nooedit(args, runtime=None, term_state=None, display=None):
         HAS_TUI = False
 
     if not HAS_TUI:
-        return "Brak SDL display i prompt_toolkit."
+        # FIX: zamiast zwracać błąd — fallback do zewnętrznego edytora
+        # (nano/vi/notepad przez find_external_editor). Gwarantuje działający
+        # edytor nawet gdy brak SDL i prompt_toolkit (typowe na Termux).
+        tmp_ext = ctx.vfs.materialize(label, content, force_type)
+        ext = NooEditSDL(ctx, tmp_ext, term_state=term_state)
+        msg = ext.run()
+        ctx.vfs.cleanup_tmp(label, force_type)
+        return msg
 
     tmp2   = ctx.vfs.materialize(label, content, force_type)
     editor = NooEditTUI(ctx, tmp2)

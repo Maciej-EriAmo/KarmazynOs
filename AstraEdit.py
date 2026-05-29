@@ -23,6 +23,10 @@ from typing import Any, Optional, Tuple
 
 # ── Importy wewnętrzne KarmazynOS ─────────────────────────────────────────────
 from karmazyn_vfs import BubbleVFS
+try:
+    from karmazyn_vfs import set_vfs_base_dir
+except ImportError:
+    set_vfs_base_dir = None   # starsze karmazyn_vfs bez tej funkcji
 from karmazyn_sdl_utils import FileWatcher, is_sdl_mode, find_external_editor
 
 
@@ -1309,8 +1313,12 @@ class AstraEditSDL:
         try:
             content = read_text_file(path)
             self.phi.file_edited(path)
-            # Opcjonalnie: zapisz do VFS
-            vfs   = BubbleVFS()
+            # Opcjonalnie: zapisz do VFS.
+            # FIX: cache instancji VFS zamiast tworzyć BubbleVFS() przy KAŻDEJ
+            # zmianie pliku — wcześniej każda zmiana alokowała nowy obiekt.
+            if getattr(self, "_vfs_cache", None) is None:
+                self._vfs_cache = BubbleVFS()
+            vfs   = self._vfs_cache
             label = re.sub(r"[^a-z0-9]", "_",
                            pathlib.Path(path).name.lower())[:24]
             ct    = pathlib.Path(path).suffix.lstrip(".") or "txt"
@@ -1427,7 +1435,16 @@ if __name__ == "__main__":
     parser.add_argument("--tui",    action="store_true")
     parser.add_argument("--sdl",    action="store_true")
     parser.add_argument("--runtime", default=None, help="Sciezka do runtime (opcjonalnie)")
+    parser.add_argument("--vfs-dir", default=None,
+                        help="Katalog bazowy bąbli (musi być ten sam co powłoka KarmazynOS)")
     pargs = parser.parse_args()
+
+    # FIX: spójny katalog bąbli z powłoką.
+    # Priorytet: --vfs-dir > KARMAZYN_VFS_DIR (env) > domyślny (katalog karmazyn_vfs.py)
+    _vfs_dir = pargs.vfs_dir or os.environ.get("KARMAZYN_VFS_DIR")
+    if _vfs_dir and set_vfs_base_dir is not None:
+        set_vfs_base_dir(_vfs_dir)
+        _print_status(f"Katalog bąbli: {_vfs_dir}")
 
     runtime = None
     if pargs.runtime:
@@ -1469,7 +1486,13 @@ if __name__ == "__main__":
 
     if force == "tui":
         if not _HAS_TUI:
-            _print_status("prompt_toolkit niedostepny", "error")
-            sys.exit(1)
+            # FIX: zamiast wyjścia z błędem — fallback do zewnętrznego edytora
+            # (nano/vi/notepad). Gwarantuje że ZAWSZE jest działający edytor.
+            _print_status("prompt_toolkit niedostepny — fallback do zewnetrznego edytora", "warn")
+            for fp in (pargs.files or [DEFAULT_FILE]):
+                ed = AstraEditSDL(fp, runtime=runtime)
+                msg = ed.run()
+                _print_status(msg)
+            sys.exit(0)
         for fp in (pargs.files or [DEFAULT_FILE]):
             AstraEditTUI(fp, runtime=runtime).run()

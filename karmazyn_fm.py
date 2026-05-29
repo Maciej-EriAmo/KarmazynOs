@@ -310,6 +310,7 @@ class Panel:
         self._load_queue = queue.Queue()
         self._search_results = None
         self._lock = threading.Lock()
+        self.last_import_errors = []   # FIX v2.1: diagnostyka importu do bąbli
 
     def set_phi(self, phi) -> None:
         self._phi = phi
@@ -548,35 +549,77 @@ class Panel:
         if e and e.is_dir(): return e.delete(fm, rnd)
         return False
 
-    # ── Fix #8: import_files_to_bubble – użycie peek_atom() ─────────────────
+    # ── Fix v2.1: import_files_to_bubble – błędy widoczne, weryfikacja zapisu ──
     def import_files_to_bubble(self, files: List[str]) -> int:
         """Importuje pliki do aktywnego bąbla.
-        Używa peek_atom() zamiast get_atom() aby uniknąć podwójnego podgrzewania
-        atomów podczas sprawdzania istnienia.
+
+        FIX: poprzednia wersja miała `except Exception: continue` które połykało
+        WSZYSTKIE błędy po cichu — zły zapis bez żadnego komunikatu, count mógł
+        rosnąć mimo braku faktycznego zapisu (fałszywy sukces).
+
+        Teraz:
+          - sprawdza phi i bubbles z jasnym komunikatem
+          - błędy są zbierane i raportowane przez self.last_import_errors
+          - count rośnie TYLKO po potwierdzonym zapisie (weryfikacja w bąblu)
         """
-        if self._bubbles is None or self.current_bubble_id is None:
+        self.last_import_errors = []
+
+        if self._bubbles is None:
+            self.last_import_errors.append("Brak backendu bąbli (bubbles=None)")
             return 0
+        if self.current_bubble_id is None:
+            self.last_import_errors.append("Żaden bąbel nie jest otwarty")
+            return 0
+        if self._phi is None:
+            self.last_import_errors.append(
+                "Brak phi-space (phi=None) — nie można utworzyć atomów")
+            return 0
+
         count = 0
         for path in files:
             atom_id = _atom_id(path)
             try:
-                if self._phi:
-                    # Pobranie atomu BEZ touch – najpierw szukamy peek_atom,
-                    # potem fallback do matrix.get (jeśli istnieje)
-                    existing = None
-                    if hasattr(self._phi, 'peek_atom'):
-                        existing = self._phi.peek_atom(atom_id)
-                    elif hasattr(self._phi, 'matrix') and hasattr(self._phi.matrix, 'get'):
-                        existing = self._phi.matrix.get(atom_id)
-                    if not existing:
-                        self._phi.create_atom(atom_id, S=os.path.basename(path),
-                                              E=path, T=ATOM_T_FILE)
-                # import_to_bubble wewnętrznie może wołać get_atom – to jedyne touch,
-                # a nie podwójne
+                if not os.path.exists(path):
+                    self.last_import_errors.append(f"{os.path.basename(path)}: plik nie istnieje")
+                    continue
+
+                # Sprawdź istnienie atomu BEZ touch (peek_atom / matrix.get)
+                existing = None
+                if hasattr(self._phi, 'peek_atom'):
+                    existing = self._phi.peek_atom(atom_id)
+                elif hasattr(self._phi, 'matrix') and hasattr(self._phi.matrix, 'get'):
+                    existing = self._phi.matrix.get(atom_id)
+
+                if not existing:
+                    created = self._phi.create_atom(
+                        atom_id, S=os.path.basename(path), E=path, T=ATOM_T_FILE)
+                    # Weryfikacja: czy atom faktycznie powstał i ma E?
+                    if created is None and not (
+                        self._phi.peek_atom(atom_id)
+                        if hasattr(self._phi, 'peek_atom') else True
+                    ):
+                        self.last_import_errors.append(
+                            f"{os.path.basename(path)}: create_atom nie zwrócił atomu")
+                        continue
+
+                # Import do bąbla — import_to_bubble czyta treść z atom.E
                 self._bubbles.import_to_bubble(self.current_bubble_id, atom_id, self._phi)
+
+                # WERYFIKACJA: czy atom faktycznie trafił do bąbla?
+                if hasattr(self._bubbles, 'get_active_atoms'):
+                    active = {a.get('id') for a in
+                              self._bubbles.get_active_atoms(self.current_bubble_id)}
+                    if atom_id not in active:
+                        self.last_import_errors.append(
+                            f"{os.path.basename(path)}: zapis nie potwierdzony w bąblu")
+                        continue
+
                 count += 1
-            except Exception:
+            except Exception as e:
+                self.last_import_errors.append(
+                    f"{os.path.basename(path)}: {type(e).__name__}: {e}")
                 continue
+
         self.refresh()
         return count
 
@@ -948,11 +991,36 @@ class FM:
             e = self._cur_panel.current()
             if e and e.name() != "..": sources = [e]
         if not sources: return
-        dest = rnd.dialog("Kopiuj do:", self._other_panel.path)
+
+        # FIX v2.1: jeśli DRUGI panel to otwarty bąbel (MODE_BBL wewnątrz bąbla),
+        # F5 kopiuje pliki DO bąbla zamiast tylko na filesystem.
+        # Poprzednio F5 jawnie pomijał bąble (if not isinstance(e, FsEntry): continue)
+        # → "brak możliwości kopiowania do bąbli".
+        other = self._other_panel
+        if other.mode == MODE_BBL and other.current_bubble_id is not None:
+            paths = [e.path() for e in sources
+                     if isinstance(e, FsEntry) and not e.is_dir()]
+            if not paths:
+                self.status = "Do bąbla można kopiować tylko pliki (nie katalogi)."
+                return
+            count = other.import_files_to_bubble(paths)
+            errs = getattr(other, 'last_import_errors', [])
+            if errs:
+                self.status = (f"Skopiowano do bąbla: {count}/{len(paths)}  "
+                               f"(błąd: {errs[0]})")
+            else:
+                self.status = f"Skopiowano do bąbla: {count} plików"
+            self.left.refresh(); self.right.refresh()
+            return
+
+        # Standardowe kopiowanie na filesystem
+        dest = rnd.dialog("Kopiuj do:", other.path)
         if not dest: return
         count = errors = 0
+        last_err = ""
         for e in sources:
-            if not isinstance(e, FsEntry): continue
+            if not isinstance(e, FsEntry):
+                continue
             try:
                 dst = os.path.join(dest, e.name())
                 if e.is_dir(): shutil.copytree(e.path(), dst, dirs_exist_ok=True)
@@ -960,8 +1028,9 @@ class FM:
                 count += 1
             except Exception as ex:
                 errors += 1
-                self.status = f"Błąd: {ex}"
-        self.status = f"Skopiowano: {count}" + (f" (błędów: {errors})" if errors else "")
+                last_err = str(ex)
+        self.status = f"Skopiowano: {count}" + (
+            f" (błędów: {errors}: {last_err})" if errors else "")
         self.left.refresh(); self.right.refresh()
 
     def _action_move(self, rnd):
@@ -1058,7 +1127,12 @@ class FM:
             self.status = "Nie wybrano plików."
             return
         count = dest_panel.import_files_to_bubble(paths)
-        self.status = f"Zaimportowano {count} plików do bąbla"
+        errs = getattr(dest_panel, 'last_import_errors', [])
+        if errs:
+            self.status = (f"Zaimportowano {count}/{len(paths)} do bąbla  "
+                           f"(błąd: {errs[0]})")
+        else:
+            self.status = f"Zaimportowano {count} plików do bąbla"
         src_panel.refresh(async_load=False)
         dest_panel.refresh()
 
