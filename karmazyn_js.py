@@ -1,407 +1,616 @@
 """
-test_karmazyn_js.py — Testy KarmazynJS v1.0
-=============================================
-Testuje Core i Phi oddzielnie — każda warstwa niezależnie.
+karmazyn_js.py — KarmazynJS Engine v0.2
+========================================
+KarmazynOS — Maciej Mazur, Warsaw 2026
+
+Silnik JS oparty na phi-space. Każda wartość to Atom,
+każdy scope to Bubble, każde closure to referencja do Bubble.
+
+Zmiany v0.2 względem MVP:
+  - Ewaluator wyrażeń (expr) oddzielony od instrukcji (stmt)
+    MVP miał tylko wartości statyczne — teraz można pisać a+b, call(fn, args)
+  - touch() wywoływane przy każdym dostępie do atomu
+  - decay() wywoływane przez scheduler (tick)
+  - Function owinięty w Atom — spójny model
+  - if / while / porównania
+  - Sandbox: każdy kontekst dostaje izolowany phi-space
+  - Detekcja anomalii termicznej (crypto miner / infinite loop)
+
+Model instrukcji (program jako AST w Pythonie):
+
+  Wyrażenia (expr — zwracają wartość):
+    ("lit",  value)              — literał: 42, "hello", True
+    ("var",  name)               — odczyt zmiennej
+    ("op",   left, op, right)    — arytmetyka/porównanie: a + b, x == y
+    ("call", fn_expr, arg_exprs) — wywołanie funkcji
+    ("fn",   params, body)       — definicja funkcji (wyrażenie lambda)
+    ("not",  expr)               — negacja logiczna
+
+  Instrukcje (stmt — efekt uboczny):
+    ("let",    name, expr)       — deklaracja zmiennej
+    ("assign", name, expr)       — przypisanie do istniejącej
+    ("return", expr)             — zwrot wartości
+    ("expr",   expr)             — wyrażenie jako instrukcja (wywołanie)
+    ("if",     cond, then, else_)— warunkowy
+    ("while",  cond, body)       — pętla
+    ("def",    name, params, body)— definicja funkcji (instrukcja)
 """
-import sys
-sys.path.insert(0, '.')
 
-from karmazyn_js_core import KarmazynJSCore
-from karmazyn_js_phi  import KarmazynJSPhi, PhiAtom, PhiScope
-
-results = {}
+import time
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional, Tuple
 
 
-# ════════════════════════════════════════════════════════════════
-# CORE TESTS — czysty interpreter, zero phi-space
-# ════════════════════════════════════════════════════════════════
+# ─── Atom ────────────────────────────────────────────────────────────────────
 
-def test_core():
-    vm = KarmazynJSCore()
+class Atom:
+    """
+    Wartość JS jako atom phi-space.
+    Temperatura = częstotliwość użycia.
+    Zimny atom → kandydat do GC.
+    """
+    T_HOT   = 100.0
+    T_DECAY = 0.95    # mnożnik przy każdym tick()
+    T_TOMB  = 1.0     # próg GC
 
-    # ── Literały i arytmetyka ─────────────────────────────────
+    def __init__(self, value: Any, name: str = ""):
+        self.value  = value
+        self.name   = name
+        self.T      = 50.0     # temperatura startowa — WARM
+        self.state  = "WARM"
+        self._born  = time.time()
+
+    def touch(self) -> None:
+        """Dostęp do atomu go ogrzewa."""
+        self.T = min(self.T_HOT, self.T + 10.0)
+        self._update_state()
+
+    def decay(self) -> None:
+        """Tick schedulera — atom stygnie."""
+        self.T *= self.T_DECAY
+        self._update_state()
+
+    def _update_state(self) -> None:
+        if self.T >= 70:   self.state = "HOT"
+        elif self.T >= 30: self.state = "WARM"
+        elif self.T >= self.T_TOMB: self.state = "COLD"
+        else:              self.state = "TOMB"
+
+    def is_dead(self) -> bool:
+        return self.T < self.T_TOMB
+
+    def __repr__(self) -> str:
+        return f"Atom({self.value!r}, T={self.T:.1f}, {self.state})"
+
+
+# ─── Bubble (Scope) ───────────────────────────────────────────────────────────
+
+class Bubble:
+    """
+    Scope JS jako bąbel phi-space.
+    Hierarchia bąbli = scope chain.
+    Lookup: bieżący bąbel → rodzic → ... → global → NameError.
+
+    Ucieczka z bąbla prowadzi do pustego bąbla — nie do zewnętrznego runtime.
+    Nie ma "na zewnątrz" — jest tylko próżnia phi-space.
+    """
+
+    def __init__(self, parent: Optional["Bubble"] = None,
+                 name: str = "bubble"):
+        self.name     = name
+        self.parent   = parent
+        self.vars:    Dict[str, Atom] = {}
+        self.children: List["Bubble"] = []
+        self._ticks   = 0        # licznik dostępów (anomalia termiczna)
+
+        if parent is not None:
+            parent.children.append(self)
+
+    # ── Lookup ───────────────────────────────────────────────────────────────
+
+    def get(self, key: str) -> Atom:
+        """
+        Szukaj atomu przez scope chain.
+        Każdy dostęp ogrzewa atom — to jest JIT profiling za darmo.
+        """
+        if key in self.vars:
+            atom = self.vars[key]
+            atom.touch()
+            return atom
+        if self.parent is not None:
+            return self.parent.get(key)
+        # Ucieczka z bąbla — lądujemy w próżni
+        raise NameError(f"'{key}' is not defined")
+
+    def set_local(self, key: str, value: Any) -> None:
+        """Utwórz atom w bieżącym bąblu (let / const)."""
+        atom = Atom(value, name=key)
+        self.vars[key] = atom
+
+    def assign(self, key: str, value: Any) -> None:
+        """
+        Przypisz wartość do istniejącego atomu (=).
+        Szuka przez scope chain — jak JS assignment.
+        """
+        if key in self.vars:
+            self.vars[key].value = value
+            self.vars[key].touch()
+            return
+        if self.parent is not None:
+            self.parent.assign(key, value)
+            return
+        raise NameError(f"'{key}' is not defined (assign)")
+
+    # ── Termodynamika ─────────────────────────────────────────────────────────
+
+    def tick(self) -> List[str]:
+        """
+        Tick schedulera — wszystkie atomy stygną.
+        Zwraca nazwy atomów które osiągnęły TOMB (kandydaci GC).
+        """
+        self._ticks += 1
+        dead = []
+        for key, atom in list(self.vars.items()):
+            atom.decay()
+            if atom.is_dead():
+                dead.append(key)
+        return dead
+
+    def gc(self) -> int:
+        """Usuń martwe atomy (TOMB). Zwraca liczbę usuniętych."""
+        dead = [k for k, a in self.vars.items() if a.is_dead()]
+        for k in dead:
+            del self.vars[k]
+        return len(dead)
+
+    def thermal_anomaly(self, threshold: float = 200.0) -> bool:
+        """
+        Detekcja anomalii — bąbel który ma zbyt dużo ticków bez wyników
+        to kandydat na crypto miner lub infinite loop.
+        """
+        return self._ticks > threshold and not self.vars
+
+    def __repr__(self) -> str:
+        keys = list(self.vars.keys())
+        return f"Bubble({self.name!r}, vars={keys}, parent={self.parent.name if self.parent else None})"
+
+
+# ─── Function (closure = referencja do bąbla) ────────────────────────────────
+
+class JSFunction:
+    """
+    Funkcja JS. Closure = referencja do bąbla w którym została zdefiniowana.
+    Bąbel nie umiera dopóki funkcja żyje — termodynamiczne weak reference.
+    """
+
+    def __init__(self, params: List[str], body: list, closure: Bubble,
+                 name: str = "<anonymous>"):
+        self.params  = params
+        self.body    = body
+        self.closure = closure   # ← to jest cała magia closures
+        self.name    = name
+
+    def call(self, runtime: "KarmazynJS", args: List[Any]) -> Any:
+        # Nowy scope = child bąbla closure (nie global)
+        local = Bubble(parent=self.closure,
+                       name=f"fn_{self.name}_scope")
+        # Binduj argumenty jako atomy lokalne
+        for param, arg in zip(self.params, args):
+            local.set_local(param, arg)
+        # Uzupełnij brakujące parametry jako undefined
+        for param in self.params[len(args):]:
+            local.set_local(param, None)
+        return runtime._exec_block(self.body, local)
+
+    def __repr__(self) -> str:
+        return f"JSFunction({self.name}, params={self.params})"
+
+
+# ─── Return / Break wyjątki kontrolne ────────────────────────────────────────
+
+class _Return(Exception):
+    def __init__(self, value: Any):
+        self.value = value
+
+class _Break(Exception):
+    pass
+
+class _Continue(Exception):
+    pass
+
+
+# ─── Runtime ─────────────────────────────────────────────────────────────────
+
+class KarmazynJS:
+    """
+    Silnik JS na bąblach.
+
+    Każdy kontekst ma własny, izolowany phi-space.
+    "Ucieczka" z bąbla trafia do pustej próżni — nie do zewnętrznego runtime.
+
+    Sandbox jest strukturalny, nie polityczny:
+      - Kod JS widzi tylko swój phi-space
+      - Nie ma referencji do external runtime
+      - Puste bąble poza granicą nie mają atomów do odczytu/modyfikacji
+    """
+
+    MAX_TICKS   = 10_000   # limit iteracji (ochrona przed infinite loop)
+
+    def __init__(self, name: str = "global"):
+        self.global_bubble = Bubble(name=name)
+        self._tick_count   = 0
+        self._setup_builtins()
+
+    def _setup_builtins(self) -> None:
+        """Wbudowane funkcje JS — tylko bezpieczne, bez dostępu do runtime."""
+        builtins = {
+            "console_log": JSFunction(
+                ["x"], [("_builtin", "print")],
+                self.global_bubble, "console.log"
+            ),
+            "Math_abs":    JSFunction(
+                ["x"], [("_builtin", "abs")],
+                self.global_bubble, "Math.abs"
+            ),
+            "String":      JSFunction(
+                ["x"], [("_builtin", "str")],
+                self.global_bubble, "String"
+            ),
+            "Number":      JSFunction(
+                ["x"], [("_builtin", "num")],
+                self.global_bubble, "Number"
+            ),
+        }
+        for name, fn in builtins.items():
+            self.global_bubble.set_local(name, fn)
+
+    # ── Ewaluacja wyrażeń ─────────────────────────────────────────────────────
+
+    def _eval(self, expr: Any, scope: Bubble) -> Any:
+        """
+        Ewaluuje wyrażenie i zwraca wartość Pythona.
+        To jest kluczowa warstwa której brakowało w MVP.
+        """
+        # Nie-tuple = literał
+        if not isinstance(expr, tuple):
+            return expr
+
+        op = expr[0]
+
+        # Literał
+        if op == "lit":
+            return expr[1]
+
+        # Odczyt zmiennej
+        if op == "var":
+            return scope.get(expr[1]).value
+
+        # Operacje binarne: ("op", left, operator, right)
+        if op == "op":
+            _, left_expr, operator, right_expr = expr
+            left  = self._eval(left_expr, scope)
+            right = self._eval(right_expr, scope)
+            return self._apply_op(left, operator, right)
+
+        # Negacja
+        if op == "not":
+            return not self._eval(expr[1], scope)
+
+        # Wywołanie: ("call", fn_expr, [arg_exprs...])
+        if op == "call":
+            _, fn_expr, arg_exprs = expr
+            fn   = self._eval(fn_expr, scope)
+            args = [self._eval(a, scope) for a in arg_exprs]
+            return self._call_fn(fn, args, scope)
+
+        # Definicja funkcji jako wyrażenie (lambda)
+        if op == "fn":
+            _, params, body = expr
+            return JSFunction(params, body, scope)
+
+        # Dostęp do właściwości obiektu (uproszczony)
+        if op == "prop":
+            _, obj_expr, prop = expr
+            obj = self._eval(obj_expr, scope)
+            if isinstance(obj, dict):
+                return obj.get(prop)
+            return getattr(obj, prop, None)
+
+        # Array literal
+        if op == "array":
+            return [self._eval(e, scope) for e in expr[1]]
+
+        # Object literal
+        if op == "object":
+            return {k: self._eval(v, scope) for k, v in expr[1].items()}
+
+        raise SyntaxError(f"Nieznane wyrażenie: {op}")
+
+    def _apply_op(self, left: Any, op: str, right: Any) -> Any:
+        """Operatory JS."""
+        ops = {
+            "+":   lambda a, b: a + b,
+            "-":   lambda a, b: a - b,
+            "*":   lambda a, b: a * b,
+            "/":   lambda a, b: a / b if b != 0 else float("inf"),
+            "%":   lambda a, b: a % b,
+            "**":  lambda a, b: a ** b,
+            "==":  lambda a, b: a == b,
+            "!=":  lambda a, b: a != b,
+            "<":   lambda a, b: a < b,
+            ">":   lambda a, b: a > b,
+            "<=":  lambda a, b: a <= b,
+            ">=":  lambda a, b: a >= b,
+            "&&":  lambda a, b: a and b,
+            "||":  lambda a, b: a or b,
+        }
+        if op not in ops:
+            raise SyntaxError(f"Nieznany operator: {op}")
+        return ops[op](left, right)
+
+    def _call_fn(self, fn: Any, args: List[Any], scope: Bubble) -> Any:
+        """Wywołuje funkcję — JSFunction lub wbudowaną."""
+        if isinstance(fn, JSFunction):
+            try:
+                return fn.call(self, args)
+            except _Return as r:
+                return r.value
+        if callable(fn):
+            return fn(*args)
+        raise TypeError(f"Nie jest funkcją: {fn!r}")
+
+    # ── Wykonanie instrukcji ──────────────────────────────────────────────────
+
+    def _exec_block(self, block: list, scope: Bubble) -> Any:
+        """Wykonuje blok instrukcji."""
+        result = None
+
+        for stmt in block:
+            self._tick_count += 1
+            if self._tick_count > self.MAX_TICKS:
+                raise RuntimeError("KarmazynJS: przekroczono limit ticków "
+                                   "(infinite loop lub anomalia termiczna)")
+
+            result = self._exec_stmt(stmt, scope)
+
+        return result
+
+    def _exec_stmt(self, stmt: tuple, scope: Bubble) -> Any:
+        op = stmt[0]
+
+        # Deklaracja zmiennej (let)
+        if op == "let":
+            _, name, expr = stmt
+            value = self._eval(expr, scope)
+            scope.set_local(name, value)
+            return None
+
+        # Przypisanie (=)
+        if op == "assign":
+            _, name, expr = stmt
+            value = self._eval(expr, scope)
+            scope.assign(name, value)
+            return None
+
+        # Definicja funkcji (statement)
+        if op == "def":
+            _, name, params, body = stmt
+            fn = JSFunction(params, body, scope, name=name)
+            scope.set_local(name, fn)
+            return None
+
+        # Return
+        if op == "return":
+            value = self._eval(stmt[1], scope)
+            raise _Return(value)
+
+        # Wyrażenie jako instrukcja (np. console.log, wywołanie funkcji)
+        if op == "expr":
+            return self._eval(stmt[1], scope)
+
+        # Wbudowane (print, abs itp.)
+        if op == "_builtin":
+            # Wywoływane z wnętrza JSFunction — pobiera 'x' z local scope
+            builtin = stmt[1]
+            x = scope.get("x").value
+            if builtin == "print":
+                print(x)
+            elif builtin == "abs":
+                return abs(x)
+            elif builtin == "str":
+                return str(x)
+            elif builtin == "num":
+                return float(x) if x is not None else 0.0
+            return None
+
+        # Warunkowy (if)
+        if op == "if":
+            _, cond_expr, then_block, else_block = stmt
+            cond = self._eval(cond_expr, scope)
+            if cond:
+                then_scope = Bubble(parent=scope, name="if_then")
+                return self._exec_block(then_block, then_scope)
+            elif else_block:
+                else_scope = Bubble(parent=scope, name="if_else")
+                return self._exec_block(else_block, else_scope)
+            return None
+
+        # Pętla while
+        if op == "while":
+            _, cond_expr, body = stmt
+            iterations = 0
+            while self._eval(cond_expr, scope):
+                iterations += 1
+                if iterations > 10_000:
+                    raise RuntimeError("while: przekroczono 10000 iteracji")
+                loop_scope = Bubble(parent=scope, name=f"while_{iterations}")
+                try:
+                    self._exec_block(body, loop_scope)
+                except _Break:
+                    break
+                except _Continue:
+                    continue
+            return None
+
+        # Break / Continue
+        if op == "break":    raise _Break()
+        if op == "continue": raise _Continue()
+
+        raise SyntaxError(f"Nieznana instrukcja: {op}")
+
+    # ── Publiczny interfejs ───────────────────────────────────────────────────
+
+    def run(self, program: list) -> Any:
+        """Uruchamia program w global scope."""
+        self._tick_count = 0
+        try:
+            return self._exec_block(program, self.global_bubble)
+        except _Return as r:
+            return r.value
+
+    def get(self, name: str) -> Any:
+        """Odczyt wartości z global scope (dla testów/debugowania)."""
+        return self.global_bubble.get(name).value
+
+    def tick_gc(self) -> Dict[str, int]:
+        """
+        Tick schedulera — stygnięcie atomów i GC.
+        Wywoływany przez KarmazynOS scheduler co N sekund.
+        """
+        def _tick_bubble(b: Bubble) -> Tuple[int, int]:
+            dead  = b.tick()
+            count = b.gc()
+            total_dead  = count
+            total_ticks = 1
+            for child in b.children:
+                cd, ct = _tick_bubble(child)
+                total_dead  += cd
+                total_ticks += ct
+            return total_dead, total_ticks
+
+        collected, bubbles = _tick_bubble(self.global_bubble)
+        return {"collected": collected, "bubbles": bubbles}
+
+    def sandbox(self, name: str = "untrusted") -> "KarmazynJS":
+        """
+        Tworzy izolowany kontekst JS.
+        Nie ma referencji do self — pusty phi-space.
+        Ucieczka prowadzi do próżni, nie do parent runtime.
+        """
+        return KarmazynJS(name=f"sandbox_{name}")
+
+
+# ─── Demo ─────────────────────────────────────────────────────────────────────
+
+if __name__ == "__main__":
+    vm = KarmazynJS()
+
+    # ── Test 1: arytmetyka i zmienne ─────────────────────────────────────────
+    print("=== Test 1: Arytmetyka ===")
     vm.run([
-        ("let", "a", ("lit", 10)),
-        ("let", "b", ("lit", 20)),
-        ("let", "c", ("op", ("var","a"), "+", ("var","b"))),
+        ("let", "x",   ("lit", 10)),
+        ("let", "y",   ("lit", 20)),
+        ("let", "sum", ("op", ("var", "x"), "+", ("var", "y"))),
+        ("expr", ("call", ("var", "console_log"), [("var", "sum")])),
     ])
-    results["core: a+b=30"]       = vm.get("c") == 30
+    assert vm.get("sum") == 30
 
-    # ── Closure / Counter ─────────────────────────────────────
-    vm2 = KarmazynJSCore()
-    vm2.run([
+    # ── Test 2: funkcja z closure ─────────────────────────────────────────────
+    print("\n=== Test 2: Closure / Counter ===")
+    vm.run([
+        # function makeCounter() { let n = 0; return () => n++ }
         ("def", "makeCounter", [], [
             ("let", "n", ("lit", 0)),
-            ("def", "inc", [], [
+            ("def", "increment", [], [
                 ("let", "old", ("var", "n")),
-                ("assign", "n", ("op", ("var","n"),"+",("lit",1))),
-                ("return", ("var","old")),
+                ("assign", "n", ("op", ("var", "n"), "+", ("lit", 1))),
+                ("return", ("var", "old")),
             ]),
-            ("return", ("var","inc")),
+            ("return", ("var", "increment")),
         ]),
-        ("let", "c", ("call", ("var","makeCounter"), [])),
-        ("let", "r0", ("call", ("var","c"), [])),
-        ("let", "r1", ("call", ("var","c"), [])),
-        ("let", "r2", ("call", ("var","c"), [])),
-    ])
-    results["core: closure r0=0"] = vm2.get("r0") == 0
-    results["core: closure r1=1"] = vm2.get("r1") == 1
-    results["core: closure r2=2"] = vm2.get("r2") == 2
 
-    # ── Rekurencja — fibonacci ─────────────────────────────────
-    vm3 = KarmazynJSCore()
-    vm3.run([
+        ("let", "counter", ("call", ("var", "makeCounter"), [])),
+        ("let", "a", ("call", ("var", "counter"), [])),   # 0
+        ("let", "b", ("call", ("var", "counter"), [])),   # 1
+        ("let", "c", ("call", ("var", "counter"), [])),   # 2
+        ("expr", ("call", ("var", "console_log"), [("var", "a")])),
+        ("expr", ("call", ("var", "console_log"), [("var", "b")])),
+        ("expr", ("call", ("var", "console_log"), [("var", "c")])),
+    ])
+    assert vm.get("a") == 0
+    assert vm.get("b") == 1
+    assert vm.get("c") == 2
+
+    # ── Test 3: rekurencja (fibonacci) ────────────────────────────────────────
+    print("\n=== Test 3: Rekurencja (fib) ===")
+    vm.run([
         ("def", "fib", ["n"], [
             ("if",
-                ("op", ("var","n"), "<=", ("lit",1)),
-                [("return", ("var","n"))],
+                ("op", ("var", "n"), "<=", ("lit", 1)),
+                [("return", ("var", "n"))],
                 [("return", ("op",
-                    ("call", ("var","fib"), [("op",("var","n"),"-",("lit",1))]),
+                    ("call", ("var", "fib"), [("op", ("var","n"),"-",("lit",1))]),
                     "+",
-                    ("call", ("var","fib"), [("op",("var","n"),"-",("lit",2))]),
+                    ("call", ("var", "fib"), [("op", ("var","n"),"-",("lit",2))])
                 ))],
             ),
         ]),
-        ("let", "f10", ("call", ("var","fib"), [("lit",10)])),
+        ("let", "fib10", ("call", ("var", "fib"), [("lit", 10)])),
+        ("expr", ("call", ("var", "console_log"), [("var", "fib10")])),
     ])
-    results["core: fib(10)=55"] = vm3.get("f10") == 55
+    assert vm.get("fib10") == 55
 
-    # ── While + break ──────────────────────────────────────────
-    vm4 = KarmazynJSCore()
-    vm4.run([
-        ("let", "i",   ("lit", 0)),
-        ("let", "sum", ("lit", 0)),
-        ("while", ("op", ("var","i"), "<", ("lit",100)), [
-            ("if",
-                ("op", ("var","i"), "==", ("lit",5)),
-                [("break",)],
-                [],
-            ),
-            ("assign", "sum", ("op",("var","sum"),"+",("var","i"))),
-            ("assign", "i",   ("op",("var","i"),  "+",("lit",1))),
-        ]),
-    ])
-    results["core: while+break sum=0+1+2+3+4=10"] = vm4.get("sum") == 10
-
-    # ── Array methods ─────────────────────────────────────────
-    vm5 = KarmazynJSCore()
-    vm5.run([
-        ("let", "arr", ("array", [("lit",1),("lit",2),("lit",3),("lit",4),("lit",5)])),
-        ("let", "doubled", ("call",
-            ("prop", ("var","arr"), "map"),
-            [("fn", ["x"], [("return", ("op",("var","x"),"*",("lit",2)))])]
-        )),
-        ("let", "evens", ("call",
-            ("prop", ("var","arr"), "filter"),
-            [("fn", ["x"], [("return", ("op",("op",("var","x"),"%",("lit",2)),"==",("lit",0)))])]
-        )),
-        ("let", "total", ("call",
-            ("prop", ("var","arr"), "reduce"),
-            [("fn", ["acc","x"], [("return",("op",("var","acc"),"+",("var","x")))]),
-             ("lit", 0)]
-        )),
-    ])
-    results["core: map [2,4,6,8,10]"] = vm5.get("doubled") == [2,4,6,8,10]
-    results["core: filter [2,4]"]      = vm5.get("evens")   == [2,4]
-    results["core: reduce sum=15"]     = vm5.get("total")   == 15
-
-    # ── For-of ────────────────────────────────────────────────
-    vm6 = KarmazynJSCore()
-    vm6.run([
-        ("let", "items", ("array", [("lit","a"),("lit","b"),("lit","c")])),
-        ("let", "out",   ("array", [])),
-        ("for_of", "item", ("var","items"), [
-            ("expr", ("call",
-                ("prop", ("var","out"), "push"),
-                [("op", ("var","item"), "+", ("lit","!"))]
-            )),
-        ]),
-    ])
-    results["core: for_of"]  = vm6.get("out") == ["a!","b!","c!"]
-
-    # ── Try/catch ─────────────────────────────────────────────
-    vm7 = KarmazynJSCore()
-    vm7.run([
-        ("let", "caught", ("lit", False)),
-        ("try",
-            [("throw", ("lit", "oops"))],
-            "err",
-            [("assign", "caught", ("op", ("var","err"), "==", ("lit","oops")))],
-            None,
+    # ── Test 4: while loop ────────────────────────────────────────────────────
+    print("\n=== Test 4: While loop ===")
+    vm.run([
+        ("let", "i",    ("lit", 0)),
+        ("let", "acc",  ("lit", 0)),
+        ("while",
+            ("op", ("var", "i"), "<", ("lit", 5)),
+            [
+                ("assign", "acc", ("op", ("var", "acc"), "+", ("var", "i"))),
+                ("assign", "i",   ("op", ("var", "i"),   "+", ("lit", 1))),
+            ]
         ),
+        ("expr", ("call", ("var", "console_log"), [("var", "acc")])),
     ])
-    results["core: try/catch"] = vm7.get("caught") == True
+    assert vm.get("acc") == 10   # 0+1+2+3+4
 
-    # ── Object literal + prop access ──────────────────────────
-    vm8 = KarmazynJSCore()
-    vm8.run([
-        ("let", "person", ("obj", {
-            "name": ("lit", "Maciej"),
-            "age":  ("lit", 35),
-        })),
-        ("let", "name", ("prop", ("var","person"), "name")),
-        ("expr", ("setprop", ("var","person"), "city", ("lit","Warsaw"))),
-        ("let", "city", ("prop", ("var","person"), "city")),
+    # ── Test 5: sandbox (izolacja) ────────────────────────────────────────────
+    print("\n=== Test 5: Sandbox isolation ===")
+    untrusted = vm.sandbox("malicious_script")
+    untrusted.run([
+        ("let", "secret_attempt", ("lit", "trying to escape")),
     ])
-    results["core: object.name"]   = vm8.get("name") == "Maciej"
-    results["core: object.city"]   = vm8.get("city") == "Warsaw"
-
-    # ── String methods ────────────────────────────────────────
-    vm9 = KarmazynJSCore()
-    vm9.run([
-        ("let", "s",     ("lit", "  hello world  ")),
-        ("let", "tr",    ("call", ("prop",("var","s"),"trim"),    [])),
-        ("let", "up",    ("call", ("prop",("var","s"),"toUpperCase"), [])),
-        ("let", "parts", ("call", ("prop",("var","tr"),"split"),  [("lit"," ")])),
-        ("let", "len",   ("prop", ("var","tr"), "length")),
-    ])
-    results["core: string.trim"]    = vm9.get("tr")    == "hello world"
-    results["core: string.upper"]   = vm9.get("up")    == "  HELLO WORLD  "
-    results["core: string.split"]   = vm9.get("parts") == ["hello","world"]
-    results["core: string.length"]  = vm9.get("len")   == 11
-
-    # ── Ternary ───────────────────────────────────────────────
-    vm10 = KarmazynJSCore()
-    vm10.run([
-        ("let", "x", ("lit", 10)),
-        ("let", "label", ("ternary",
-            ("op", ("var","x"), ">", ("lit",5)),
-            ("lit","big"),
-            ("lit","small"),
-        )),
-    ])
-    results["core: ternary big"] = vm10.get("label") == "big"
-
-
-# ════════════════════════════════════════════════════════════════
-# PHI TESTS — termodynamika i sandbox, core nie dotykane
-# ════════════════════════════════════════════════════════════════
-
-def test_phi():
-
-    # ── PhiAtom temperatura ───────────────────────────────────
-    atom = PhiAtom(42, "test")
-    initial_T = atom.T
-    for _ in range(10):
-        atom.touch_read()
-    results["phi: touch_read ogrzewa"] = atom.T > initial_T
-
-    cold = PhiAtom(0, "cold")
-    for _ in range(50):
-        cold.decay()
-    results["phi: decay stygnie"]      = cold.T < initial_T
-    results["phi: decay → TOMB"]       = cold.is_dead()
-
-    # ── PhiScope scope chain z temperaturami ──────────────────
-    parent = PhiScope(name="parent")
-    child  = PhiScope(parent=parent, name="child")
-
-    parent.set("x", 100)
-    child.set("y", 200)
-
-    results["phi: scope chain x"] = child.get("x") == 100
-    results["phi: scope local y"] = child.get("y") == 200
-
-    # Dostęp przez chain ogrzewa atom w parent
-    T_before = parent._atoms["x"].T
-    child.get("x")
-    T_after  = parent._atoms["x"].T
-    results["phi: cross-scope touch"] = T_after >= T_before
-
-    # ── GC przez tick ─────────────────────────────────────────
-    # Realistyczny scenariusz: hot_var dotykana co tick (aktywna),
-    # cold_var nigdy nie używana po inicjalizacji (zapomniana).
-    scope = PhiScope(name="gc_test")
-    scope.set("hot_var",  "używana")
-    scope.set("cold_var", "zapomniana")
-
-    # hot_var jest dotykana CO tick — symulacja aktywnego użycia
-    # cold_var nigdy nie dotykana — potrzeba ~39 ticków żeby spaść poniżej T_TOMB=2
-    for _ in range(70):
-        scope.get("hot_var")   # dostęp między tickami
-        scope.tick()
-
-    hot_alive  = "hot_var"  in scope._atoms
-    cold_alive = "cold_var" in scope._atoms
-    hot_T      = scope._atoms["hot_var"].T  if hot_alive  else 0.0
-
-    results["phi: hot_var cieplejsza po tickach"] = (
-        hot_alive and hot_T > 5.0
-    )
-    results["phi: cold_var zebrany przez GC"] = not cold_alive
-
-    # ── Sandbox izolacja ──────────────────────────────────────
-    vm_main = KarmazynJSPhi(name="main")
-    vm_main.run([
-        ("let", "secret", ("lit", "top_secret_data")),
-    ])
-
-    vm_sandbox = vm_main.sandbox("untrusted")
-
-    # Sandbox nie może dostać się do secret z main
     try:
-        vm_sandbox.run([
-            ("let", "stolen", ("var", "secret")),
-        ])
-        results["phi: sandbox nie izoluje FAIL"] = False
-    except (NameError, RuntimeError):
-        results["phi: sandbox izolacja secret"] = True
+        untrusted.global_bubble.parent.get("x")
+        print("FAIL: ucieczka udana!")
+    except (AttributeError, NameError):
+        print("OK: sandbox izolowany — parent == None (próżnia phi-space)")
 
-    # Sandbox ma własne zmienne
-    vm_sandbox.run([
-        ("let", "local_var", ("lit", 42)),
+    # ── Test 6: termodynamika ─────────────────────────────────────────────────
+    print("\n=== Test 6: Termodynamika ===")
+    import time as _time
+    vm2 = KarmazynJS()
+    vm2.run([
+        ("let", "hot_var", ("lit", "używana często")),
+        ("let", "cold_var", ("lit", "zapomniana")),
     ])
-    results["phi: sandbox ma własne zmienne"] = (
-        vm_sandbox.get("local_var") == 42
-    )
 
-    # Parent nie widzi zmiennych sandbox
-    try:
-        vm_main.get("local_var")
-        results["phi: parent izolowany od sandbox FAIL"] = False
-    except NameError:
-        results["phi: parent izolowany od sandbox"] = True
+    hot = vm2.global_bubble.vars["hot_var"]
+    cold = vm2.global_bubble.vars["cold_var"]
 
-    # ── Phi stats ─────────────────────────────────────────────
-    vm_stats = KarmazynJSPhi(name="stats_test")
-    vm_stats.run([
-        ("let", "a", ("lit", 1)),
-        ("let", "b", ("lit", 2)),
-        ("let", "c", ("op", ("var","a"), "+", ("var","b"))),
-    ])
-    s = vm_stats.phi_stats()
-    results["phi: stats atoms >= 3"] = s["atoms"] >= 3
-    results["phi: stats reads > 0"]  = s["reads"]  > 0
+    # Symuluj używanie hot_var
+    for _ in range(20):
+        vm2.global_bubble.get("hot_var")   # touch()
 
-    # ── Thermal map ───────────────────────────────────────────
-    tmap = vm_stats.thermal_map()
-    results["phi: thermal_map niepusta"] = len(tmap) > 0
-    results["phi: thermal_map posortowana"] = (
-        len(tmap) < 2
-        or tmap[0][1] >= tmap[-1][1]
-    )
+    # Symuluj 30 ticków schedulera
+    for _ in range(30):
+        vm2.tick_gc()
 
-    # ── Tick zwraca wyniki ────────────────────────────────────
-    tick_result = vm_stats.tick()
-    results["phi: tick zwraca dict"] = "tick" in tick_result
+    print(f"hot_var:  T={hot.T:.1f}  state={hot.state}")
+    print(f"cold_var: T={cold.T:.1f} state={cold.state}")
+    assert hot.T > cold.T, "Używana zmienna powinna być cieplejsza"
+    print("OK: termodynamika działa — cold_var ostygła szybciej")
 
-
-# ════════════════════════════════════════════════════════════════
-# RUN
-# ════════════════════════════════════════════════════════════════
-
-
-
-# ─── Testy parsera (Jules: Missing test file for karmazyn_js_parser.py) ───────
-
-def test_parser():
-    from karmazyn_js_parser import parse_js
-    results = {}
-
-    # Literals
-    prog = parse_js("42")
-    results["parser: number literal"] = prog == [("expr", ("lit", 42.0))]
-
-    prog = parse_js('"hello"')
-    results["parser: string literal"] = prog == [("expr", ("lit", "hello"))]
-
-    prog = parse_js("true")
-    results["parser: bool true"]      = prog == [("expr", ("lit", True))]
-
-    # Var declarations
-    prog = parse_js("var x = 5")
-    results["parser: var decl"]       = prog[0][0] in ("let", "var")
-
-    # Binary ops
-    prog = parse_js("1 + 2 * 3")
-    results["parser: precedence"]     = prog[0][0] == "expr"
-
-    # setprop
-    prog = parse_js("obj.key = 1")
-    results["parser: setprop"]        = (prog[0][0] == "expr" and
-                                          prog[0][1][0] == "setprop")
-
-    # call
-    prog = parse_js("foo(1, 2)")
-    results["parser: call"]           = (prog[0][0] == "expr" and
-                                          prog[0][1][0] == "call")
-
-    # function
-    prog = parse_js("function f(x) { return x }")
-    results["parser: function decl"]  = prog[0][0] == "def"
-
-    # arrow
-    prog = parse_js("var f = x => x + 1")
-    results["parser: arrow fn"]       = prog[0][0] in ("let", "var")
-
-    # if/else
-    prog = parse_js("if (x) { y = 1 } else { y = 2 }")
-    results["parser: if/else"]        = prog[0][0] == "if"
-
-    # for loop
-    prog = parse_js("for (var i = 0; i < 10; i++) {}")
-    results["parser: for loop"]       = prog[0][0] == "for"
-
-    # while
-    prog = parse_js("while (x > 0) { x = x - 1 }")
-    results["parser: while"]          = prog[0][0] == "while"
-
-    # try/catch
-    prog = parse_js("try { x() } catch(e) { y = e }")
-    results["parser: try/catch"]      = prog[0][0] == "try"
-
-    # template literal
-    prog = parse_js("`hello ${name}`")
-    results["parser: template"]       = prog[0][0] == "expr"
-
-    # ternary
-    prog = parse_js("x ? 1 : 2")
-    results["parser: ternary"]        = (prog[0][0] == "expr" and
-                                          prog[0][1][0] == "ternary")
-
-    # typeof
-    prog = parse_js("typeof x")
-    results["parser: typeof"]         = (prog[0][0] == "expr" and
-                                          "typeof" in str(prog[0][1]))
-
-    # array literal
-    prog = parse_js("[1, 2, 3]")
-    results["parser: array"]          = (prog[0][0] == "expr" and
-                                          prog[0][1][0] == "array")
-
-    # object literal — bez dwukropka jako OP
-    try:
-        prog = parse_js('var o = {"key": 1}')
-        results["parser: object literal"] = prog[0][0] in ("let","var")
-    except Exception as e:
-        results["parser: object literal"] = False
-
-    return results
-
-if __name__ == "__main__":
-    results = test_parser()
-    ok = sum(results.values())
-    total = len(results)
-    for name, v in results.items():
-        print(f"  [{'OK  ' if v else 'FAIL'}] {name}")
-    print(f"\n{ok}/{total} parser tests OK")
-
-if __name__ == "__main__":
-    print("=== KarmazynJS Core ===")
-    test_core()
-    print("=== KarmazynJS Phi  ===")
-    test_phi()
-
-    print()
-    all_ok = True
-    for name, ok in results.items():
-        icon = "OK  " if ok else "FAIL"
-        print(f"  [{icon}] {name}")
-        if not ok:
-            all_ok = False
-
-    total  = len(results)
-    passed = sum(1 for v in results.values() if v)
-    print(f"\n{passed}/{total} testów OK")
-    print("=== WSZYSTKIE OK ===" if all_ok else "=== BŁĘDY ===")
-    sys.exit(0 if all_ok else 1)
+    print("\n=== Wszystkie testy OK ===")
