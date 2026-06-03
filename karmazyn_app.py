@@ -149,6 +149,17 @@ class Workspace:
         # Współdziel phi z resztą systemu (LOGO/JS/runtime) jeśli podane,
         # inaczej utwórz własną przestrzeń.
         self.phi = phi if phi is not None else PhiSpace()
+        # Brudny stan: czy są zmiany niezapisane na dysk. System pyta o
+        # zapis tylko gdy to True (nie nęka pytaniem gdy nic się nie zmieniło).
+        self._dirty = False
+
+    def is_dirty(self) -> bool:
+        """Czy są zmiany niezapisane na dysk od ostatniego persist()."""
+        return self._dirty
+
+    def mark_dirty(self) -> None:
+        """Oznacz że informacja została przekształcona (np. przez edytor)."""
+        self._dirty = True
 
     # ── Klucze wewnętrzne ─────────────────────────────────────────────────────
 
@@ -220,6 +231,7 @@ class Workspace:
             bubble.content = ""
         bubble.add(cid)
 
+        self._dirty = True   # informacja przekształcona — system zapyta o zapis
         return Item(name, kind,
                     text=content if is_text else None,
                     data=None if is_text else raw,
@@ -333,6 +345,7 @@ class Workspace:
         b = self.phi.get_bubble(name)
         if b is not None:
             self.phi._bubbles.pop(name, None)
+        self._dirty = True
         return True
 
     def rename(self, old: str, new: str) -> bool:
@@ -362,3 +375,24 @@ class Workspace:
                           for k in ("text", "audio", "image", "binary")},
             "phi":       self.phi.snapshot(),
         }
+
+    # ── Trwałość na dysku (ukryta — deleguje do karmazyn_store) ──────────────
+
+    def persist(self, base_dir: str, confirm=None) -> dict:
+        """Zapisz dokumenty na dysk (katalog). Treść przez pole Proca (dedup,
+        pliki .pfld na fizycznym FS). Atomowo. Opcjonalny confirm(reason)->bool
+        pyta o zgodę. Po udanym zapisie czyści brudny stan."""
+        import karmazyn_store
+        stats = karmazyn_store.save_documents(self.phi, base_dir,
+                                              confirm=confirm,
+                                              reason="zapis dokumentów")
+        if not stats.get("skipped"):
+            self._dirty = False
+        return stats
+
+    def restore(self, base_dir: str) -> int:
+        """Wczytaj dokumenty z dysku (katalog). Zwraca liczbę odtworzonych atomów."""
+        import karmazyn_store
+        n = karmazyn_store.load_documents(self.phi, base_dir)
+        self._dirty = False
+        return n

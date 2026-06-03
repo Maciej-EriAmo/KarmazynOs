@@ -522,10 +522,155 @@ class BubbleEditor:
 _WS: Optional[Workspace] = None
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# Poziom 2 — Edytor jako OKNO SDL (nie konsola)
+# ═══════════════════════════════════════════════════════════════════════════════
+# W trybie okienkowym aplikacja GUI = okno, nie TUI w stdout. Edytor renderuje
+# się w ciele okna WM i czyta klawisze ze zdarzeń pygame (key_handler okna).
+# Zero sys.stdout / msvcrt / ANSI — nic nie wycieka do konsoli procesu.
+# Reużywa EditBuffer (logika) i Workspace (zapis/odczyt) — bez duplikacji.
+
+# Kolory (z motywu display, z fallbackiem gdyby się nie zaimportowały)
+try:
+    from karmazyn_display import C_BG as _C_BG, C_FG as _C_FG, C_ACCENT as _C_ACCENT
+except Exception:
+    _C_BG, _C_FG, _C_ACCENT = (18, 18, 22), (220, 220, 220), (180, 60, 60)
+_C_HEAD   = _C_ACCENT
+_C_STATUS = (160, 160, 200)
+_C_CURSOR = (255, 200, 80)
+_C_TILDE  = (90, 90, 90)
+
+
+class EditorWindow:
+    """Edytor tekstu jako okno SDL. Protokół key_handler: on_key(event).
+    Protokół draw_fn: draw(ctx). Reużywa EditBuffer + Workspace."""
+
+    def __init__(self, workspace: Workspace, name: str):
+        self.ws   = workspace
+        self.name = name
+        item = workspace.open(name)
+        if item is not None and getattr(item, "is_text", False):
+            self.buf = EditBuffer(item.text or "")
+        else:
+            self.buf = EditBuffer("")          # nowy dokument
+        self.status_msg = "nowy dokument" if item is None else "wczytano"
+        self._top   = 0
+        self._window = None                    # okno WM (ustawiane po open)
+        self._wm     = None
+
+    # ── Wejście: zdarzenia SDL (wołane przez WM dla aktywnego okna) ──────────
+    def on_key(self, event) -> None:
+        import pygame
+        if event.type != pygame.KEYDOWN:
+            return
+        key  = event.key
+        ctrl = bool(event.mod & pygame.KMOD_CTRL)
+
+        if ctrl and key == pygame.K_s:
+            self._save(); return
+        if ctrl and key == pygame.K_q:
+            self._close(); return
+        if ctrl and key == pygame.K_k:
+            self.buf.kill_line(); return
+
+        if key in (pygame.K_RETURN, pygame.K_KP_ENTER):
+            self.buf.newline(); return
+        if key == pygame.K_BACKSPACE:
+            self.buf.backspace(); return
+        if key == pygame.K_DELETE:
+            self.buf.delete(); return
+        if key == pygame.K_LEFT:
+            self.buf.move_left(); return
+        if key == pygame.K_RIGHT:
+            self.buf.move_right(); return
+        if key == pygame.K_UP:
+            self.buf.move_up(); return
+        if key == pygame.K_DOWN:
+            self.buf.move_down(); return
+        if key == pygame.K_HOME:
+            self.buf.home(); return
+        if key == pygame.K_END:
+            self.buf.end(); return
+        if key == pygame.K_TAB:
+            self.buf.insert("    "); return
+
+        ch = event.unicode
+        if ch and ch.isprintable():
+            self.buf.insert(ch)
+
+    # ── Render: w ciele okna (wołane przez WM co klatkę) ─────────────────────
+    def draw(self, ctx) -> None:
+        r      = ctx.rect
+        font   = ctx.font
+        line_h = ctx._line_h
+        ctx.clear(_C_BG, alpha=255)
+
+        # nagłówek
+        flag = " *" if self.buf.modified else ""
+        ctx.text(f"{self.name}{flag}", _C_HEAD, x=r.x + 6, y=r.y + 3)
+
+        top_y     = r.y + line_h + 4
+        status_y  = r.y + r.h - line_h - 2
+        text_rows = max(1, (status_y - top_y) // line_h)
+
+        # scroll pionowy tak, by kursor był widoczny
+        if self.buf.row < self._top:
+            self._top = self.buf.row
+        elif self.buf.row >= self._top + text_rows:
+            self._top = self.buf.row - text_rows + 1
+
+        x_base = r.x + 6
+        y = top_y
+        for i in range(text_rows):
+            li = self._top + i
+            if li < len(self.buf.lines):
+                ctx.text(self.buf.lines[li], _C_FG, x=x_base, y=y)
+            else:
+                ctx.text("~", _C_TILDE, x=x_base, y=y)
+            y += line_h
+
+        # kursor — pozycja mierzona realną szerokością tekstu (monospace/proporc.)
+        if self._top <= self.buf.row < self._top + text_rows:
+            cur_line = self.buf.lines[self.buf.row]
+            try:
+                cx = x_base + font.size(cur_line[:self.buf.col])[0]
+            except Exception:
+                cx = x_base + self.buf.col * 8
+            cy = top_y + (self.buf.row - self._top) * line_h
+            ctx.line((cx, cy + 1), (cx, cy + line_h - 2), _C_CURSOR, 2)
+
+        # pasek statusu
+        st = self.buf.stats()
+        info = (f"{st['row']}:{st['col']}  {st['lines']} lin  {st['chars']} zn  "
+                f"^S zapisz  ^Q zamknij")
+        if self.status_msg:
+            info = f"{info}   · {self.status_msg}"
+        ctx.text(info, _C_STATUS, x=x_base, y=status_y)
+
+    # ── Operacje ─────────────────────────────────────────────────────────────
+    def _save(self) -> None:
+        try:
+            self.ws.save(self.name, self.buf.get_text())
+            self.buf.modified = False
+            self.status_msg = f"zapisano '{self.name}'"
+        except Exception as e:
+            self.status_msg = f"błąd zapisu: {e}"
+
+    def _close(self) -> None:
+        if self._wm is not None and self._window is not None:
+            try:
+                self._wm.close(self._window)
+            except Exception:
+                pass
+
+
 def cmd_edit(args: List[str], phi=None) -> str:
     """
     Komenda powłoki: EDIT <nazwa>
     Współdzieli phi-space z resztą systemu jeśli podane.
+
+    Tryb okienkowy (aktywny WM): edytor otwiera się jako OKNO SDL.
+    Tryb konsolowy (brak WM): edytor ANSI w terminalu (jak dawniej).
     """
     global _WS
     if _WS is None or (phi is not None and _WS.phi is not phi):
@@ -539,6 +684,23 @@ def cmd_edit(args: List[str], phi=None) -> str:
             f"  {d['name']:20} [{d['kind']}] {d['size']}B" for d in docs)
 
     name = args[0]
+
+    # Poziom 2: jeśli pulpit okienkowy jest aktywny → okno SDL, nie konsola.
+    wm = None
+    try:
+        import karmazyn_wm
+        wm = karmazyn_wm.get_active()
+    except Exception:
+        wm = None
+
+    if wm is not None:
+        ed  = EditorWindow(_WS, name)
+        win = wm.open(f"Edytor: {name}", ed.draw, w=560, h=440, key_handler=ed)
+        ed._window = win
+        ed._wm     = wm
+        return f"Otwarto edytor '{name}' w oknie"
+
+    # Fallback: tryb konsolowy (ANSI w terminalu)
     editor = BubbleEditor(_WS, name)
     return editor.run()
 

@@ -1,39 +1,23 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
-karmazyn_logo.py — LOGO KarmazynOS v4.0
-========================================
+karmazyn_logo.py — KarmazynLOGO v4.1
+======================================
+KarmazynOS — Maciej Mazur, Warsaw 2026
+
 Interpreter LOGO z integracją phi-space i workspace SDL.
 
 Filozofia:
   LOGO jako język eksploracji przestrzeni przez żółwia.
   Każdy ruch = segment w phi-space (atom T=70).
-  Kanwa LOGO zajmuje lewy panel SDL przez claim_left().
+  Kanwa LOGO zajmuje panel/okno SDL przez claim_left().
   RESET zwalnia panel — terminal wraca do full-screen.
 
-Izomorfizm phi-space:
-  Pozycja żółwia ≡ stan atomu (gdzie jest uwaga)
-  Segment rysowany ≡ emanacja (ślad w przestrzeni)
-  Temperatura kanwy ≡ intensywność aktywności LOGO
-
-Komendy:
-  LOGO RUN <kod>     — uruchom kod LOGO
-  LOGO FILE <ścieżka>— wczytaj i uruchom plik
-  LOGO RESET         — wyczyść kanwę, zwolnij panel
-  LOGO HELP          — lista komend
-
-Składnia LOGO:
-  FD 100, BK 50     — ruch w przód/tył
-  RT 90, LT 45      — obrót w prawo/lewo
-  PU, PD            — podnieś/opuść pióro
-  REPEAT N [ ... ]  — pętla
-  TO nazwa ... END  — definicja procedury
-"""
-
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-karmazyn_logo.py — KarmazynLOGO v4.0
-======================================
-KarmazynOS — Maciej Mazur, Warsaw 2026
+Poprawki v4.1 względem v4.0:
+  - Tryb okienkowy: LOGO bez argumentów NIE uruchamia konsolowego REPL
+    (input()/print() wyciekały do konsoli procesu). Zamiast tego otwiera
+    kanwę jako okno, a komendy LOGO przychodzą przez terminal sesji.
+    REPL konsolowy zachowany jako fallback dla trybu bez SDL.
 
 Poprawki v4.0 względem v3.1:
   - Zero mock runtime — używa karmazyn_atom.Atom i karmazyn_phi.PhiSpace
@@ -848,8 +832,18 @@ class LogoShell:
             display.bind_phi(self.env.phi)
         # NIE zajmuj lewego panelu przy init — tylko gdy użytkownik uruchomi RUN
 
+    def _windowed(self) -> bool:
+        """Czy jesteśmy w trybie okienkowym (SDL/WM aktywne)?"""
+        if self._display and getattr(self._display, "available", False):
+            return True
+        try:
+            import karmazyn_wm
+            return karmazyn_wm.get_active() is not None
+        except Exception:
+            return False
+
     def _claim_workspace(self) -> None:
-        """Zajmij lewy panel dla kanwy LOGO."""
+        """Zajmij panel/okno dla kanwy LOGO."""
         d = self._display
         if d and d.available and d.renderer:
             # Zdefiniuj draw_fn czytający z logo_state (immediate mode)
@@ -864,14 +858,24 @@ class LogoShell:
             d.renderer.claim_left(_draw_logo_panel, "LOGO")
 
     def _release_workspace(self) -> None:
-        """Zwolnij lewy panel — terminal wraca do full-screen."""
+        """Zwolnij panel/okno — terminal wraca do full-screen."""
         d = self._display
         if d and d.available and d.renderer:
             d.renderer.release_left()
 
     def cmd(self, args: List[str]) -> str:
+        # Tryb okienkowy: NIE uruchamiamy konsolowego REPL — input()/print()
+        # wyciekłyby do konsoli procesu (PowerShell/terminal startowy). Kanwa
+        # to okno, a komendy LOGO przychodzą przez terminal sesji.
         if not args:
-            self._repl(); return ""
+            if self._windowed():
+                self._claim_workspace()
+                return ("KarmazynLOGO — kanwa otwarta w oknie.\n"
+                        "Komendy: LOGO RUN <kod>, LOGO FILE <plik>, LOGO RESET, "
+                        "LOGO SHOW, LOGO SAVE, LOGO LOAD, LOGO PHI\n"
+                        "Przyklad: LOGO RUN REPEAT 4 [ FD 100 RT 90 ]")
+            self._repl()
+            return ""
         sub = args[0].upper()
 
         if sub == "RUN":
@@ -890,6 +894,7 @@ class LogoShell:
                 return "LOGO FILE <ścieżka>"
             try:
                 code = open(args[1], encoding='utf-8').read()
+                self._claim_workspace()
                 self.interp.run(code)
                 if self._display and self._display.available:
                     return "OK — rysunek w oknie graficznym"

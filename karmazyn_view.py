@@ -218,6 +218,7 @@ class ImageViewer:
         self.display = display
         self.state   = ImageState()
         self._claimed = False
+        self._window  = None
 
     def library(self) -> List[dict]:
         """Lista obrazów w workspace."""
@@ -248,19 +249,42 @@ class ImageViewer:
         dims = self.state.dims
         dim_s = f"{dims[0]}×{dims[1]}px" if dims else "wymiary nieznane"
 
+        def _draw_panel(ctx):
+            draw_image(ctx, self.state)
+
+        # Tryb okienkowy: pulpit aktywny → otwórz OKNO; inaczej zajmij panel.
+        try:
+            import karmazyn_wm
+            wm = karmazyn_wm.get_active()
+        except Exception:
+            wm = None
+        if wm is not None:
+            if self._window is None or self._window not in wm.windows:
+                self._window = wm.open(f"Obraz: {name}", _draw_panel, w=500, h=440)
+            else:
+                self._window.title = f"Obraz: {name}"
+                self._window.draw_fn = _draw_panel
+                wm.focus(self._window)
+            self._claimed = True
+            return f"▦ {name}  {dim_s} — w oknie"
         if self._has_window():
-            # Wzorzec LOGO — zajmij lewy panel funkcją rysującą
-            def _draw_panel(ctx):
-                draw_image(ctx, self.state)
             self.display.renderer.claim_left(_draw_panel, f"OBRAZ: {name}")
             self._claimed = True
             return f"▦ {name}  {dim_s} — w oknie graficznym"
-        else:
-            # Tryb informacyjny — bez okna
-            return (f"▦ {name}  {dim_s}  {item.size}B "
-                    f"(podgląd wymaga okna graficznego/SDL)")
+        return (f"▦ {name}  {dim_s}  {item.size}B "
+                f"(podgląd wymaga okna graficznego/SDL)")
 
     def close(self) -> str:
+        try:
+            import karmazyn_wm
+            wm = karmazyn_wm.get_active()
+        except Exception:
+            wm = None
+        if wm is not None and self._window is not None and self._window in wm.windows:
+            wm.close(self._window)
+            self._window = None
+            self._claimed = False
+            return "Zamknięto podgląd."
         if self._claimed and self._has_window():
             self.display.renderer.release_left()
             self._claimed = False

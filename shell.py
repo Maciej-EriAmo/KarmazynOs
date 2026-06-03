@@ -15,6 +15,7 @@ import threading
 import shlex
 import json
 import importlib
+import karmazyn_wm
 from typing import Optional, Dict, Any
 
 # ── Rejestr serwisów ──────────────────────────────────────────────────────────
@@ -70,6 +71,7 @@ RADIO = None
 SCHEDULER = None
 NET = None
 BUBBLE_SYNC = None          # <--- FIX #11: globalny uchwyt dla mostka synchronizacji
+SESSIONS = None             # menedżer sesji terminala (model xterm/tmux)
 
 # ── Rejestr komend (wypełniany przez load_programs) ───────────────────────────
 _COMMANDS: Dict[str, Any] = {}
@@ -299,11 +301,23 @@ def main():
     print("  Wpisz HELP aby zobaczyć komendy\n")
 
     if DISPLAY and DISPLAY.available:
-        print("[KarmazynOS] Tryb graficzny SDL -- zamknij okno lub Ctrl+Q")
-        DISPLAY.renderer.run(
-            shell_main=shell_worker,
-            on_quit=lambda: cmd_exit([]),
-        )
+        print("[KarmazynOS] Uruchamianie Karmazyn Window Manager...")
+        # Model sesji (xterm/tmux): każde okno terminala = osobna sesja
+        # (wirtualny TTY + wątek workera), wszystkie dzielą jeden RUNTIME.
+        # Zamiast globalnego shell_worker piszącego do konsoli procesu.
+        from karmazyn_session import SessionManager, default_banner
+        from karmazyn_display import TerminalState
+        global SESSIONS
+        SESSIONS = SessionManager(dispatch=process_command)
+
+        def _spawn_terminal():
+            term = TerminalState()
+            karmazyn_wm.get_wm().open_terminal(term)   # okno na świeżym TTY
+            SESSIONS.new_session(term=term,
+                                 banner=default_banner(list(_COMMANDS.keys())))
+
+        karmazyn_wm.start_desktop(DISPLAY, spawn_terminal=_spawn_terminal)
+        DISPLAY.run(on_quit=lambda: cmd_exit([]))
         return
 
     while True:

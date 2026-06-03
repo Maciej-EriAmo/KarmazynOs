@@ -236,6 +236,7 @@ class KarmazynPaint:
         self.canvas   = CanvasState(phi)
         self._display = display
         self._claimed = False
+        self._window  = None    # okno w menedżerze (tryb okienkowy)
         # podepnij phi do display (phi-map pokaże też atomy płótna)
         if display is not None and hasattr(display, "bind_phi"):
             try:
@@ -250,9 +251,23 @@ class KarmazynPaint:
                 and getattr(d, "renderer", None) is not None)
 
     def _claim(self) -> None:
-        if self._has_window() and not self._claimed:
-            def _draw_panel(ctx):
-                draw_canvas(ctx, self.canvas)
+        if self._claimed:
+            return
+        def _draw_panel(ctx):
+            draw_canvas(ctx, self.canvas)
+        # Tryb okienkowy: jeśli pulpit (WM) aktywny — otwórz OKNO, nie zabieraj
+        # całego panelu. Inaczej (brak pulpitu) — zachowanie jak LOGO.
+        try:
+            import karmazyn_wm
+            wm = karmazyn_wm.get_active()
+        except Exception:
+            wm = None
+        if wm is not None:
+            if self._window is None or self._window not in wm.windows:
+                self._window = wm.open("Płótno", _draw_panel, w=480, h=420)
+            self._claimed = True
+            return
+        if self._has_window():
             self._display.renderer.claim_left(_draw_panel, "PŁÓTNO")
             self._claimed = True
 

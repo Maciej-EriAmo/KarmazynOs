@@ -26,7 +26,7 @@
     { "name": "STABILIZUJ", "module": "karmazyn_core_cmds", "handler": "cmd_stabilizuj", "context_kwargs": {"runtime": "$RUNTIME"}, "description": "Podnosi temperaturę", "category": "atoms" },
     { "name": "DOTKNIJ", "module": "karmazyn_core_cmds", "handler": "cmd_dotknij_pustki", "context_kwargs": {"runtime": "$RUNTIME"}, "description": "Obniża temperaturę", "category": "atoms" },
     { "name": "BUBBLE", "module": "bubble_commands", "handler": "cmd_bubble", "context_kwargs": {"runtime": "$RUNTIME", "bubbles": "$BUBBLES"}, "description": "Zarządzanie bąblami", "category": "bubbles" },
-    { "name": "EDIT", "module": "karmazyn_edit", "handler": "cmd_emanation_edit", "context_kwargs": {"runtime": "$RUNTIME", "bubbles": "$BUBBLES"}, "description": "Edytor emanacji", "category": "bubbles" },
+    { "name": "EDIT", "module": "karmazyn_edit", "handler": "cmd_edit", "context_kwargs": {"phi": "$RUNTIME"}, "description": "Edytor tekstu w bąblach", "category": "files" },
     { "name": "VIEW", "module": "bubble_commands", "handler": "cmd_view", "context_kwargs": {"runtime": "$RUNTIME", "bubbles": "$BUBBLES"}, "description": "Pokazuje aktywny bąbel", "category": "bubbles" },
     { "name": "NOOEDIT", "module": "NooEdit", "handler": "cmd_nooedit", "context_kwargs": {"runtime": "$RUNTIME"}, "description": "Edytor bąbli", "category": "programs" },
 
@@ -63,6 +63,14 @@
     { "name": "BGALLERY", "module": "karmazyn_graphics", "handler": "cmd_bgallery", "context_kwargs": {"runtime": "$RUNTIME", "bubbles": "$BUBBLES"}, "description": "Przeglądarka kolekcji (curses)", "category": "graphics" },
     { "name": "BARCHIVE", "module": "karmazyn_graphics", "handler": "cmd_barchive", "context_kwargs": {"runtime": "$RUNTIME", "bubbles": "$BUBBLES"}, "description": "Import katalogu do bąbla", "category": "graphics" },
     { "name": "BTHERMO", "module": "karmazyn_graphics", "handler": "cmd_bthermo", "context_kwargs": {"runtime": "$RUNTIME", "bubbles": "$BUBBLES"}, "description": "Termografia phi-space -> PNG", "category": "graphics" },
-    { "name": "BFIND", "module": "karmazyn_graphics", "handler": "cmd_bfind", "context_kwargs": {"runtime": "$RUNTIME", "bubbles": "$BUBBLES"}, "description": "Semantyczne wyszukiwanie obrazów", "category": "graphics" }
+    { "name": "BFIND", "module": "karmazyn_graphics", "handler": "cmd_bfind", "context_kwargs": {"runtime": "$RUNTIME", "bubbles": "$BUBBLES"}, "description": "Semantyczne wyszukiwanie obrazów", "category": "graphics" },
+    
+    { "name": "FILES", "module": "karmazyn_manager", "handler": "cmd_manager", "context_kwargs": {"phi": "$RUNTIME"}, "description": "Zarządca dokumentów", "category": "files" },
+    { "name": "PLAY", "module": "karmazyn_play", "handler": "cmd_play", "context_kwargs": {"phi": "$RUNTIME"}, "description": "Odtwarzacz audio", "category": "media" },
+
+    { "name": "PAINT", "module": "karmazyn_paint", "handler": "cmd_paint", "context_kwargs": {"phi": "$RUNTIME", "display": "$DISPLAY"}, "description": "Płótno na atomach", "category": "graphics" },
+    { "name": "IMG", "module": "karmazyn_view", "handler": "cmd_view", "context_kwargs": {"phi": "$RUNTIME", "display": "$DISPLAY"}, "description": "Przeglądarka obrazów z bąbli", "category": "graphics" },
+    { "name": "WIN", "module": "karmazyn_wm", "handler": "cmd_windows", "context_kwargs": {"display": "$DISPLAY"}, "description": "Menedżer okien", "category": "system" },
+    { "name": "STORE", "module": "karmazyn_store", "handler": "cmd_store", "context_kwargs": {"phi": "$RUNTIME"}, "description": "Zapis/odczyt dokumentów na dysk", "category": "system" }
   ]
 }

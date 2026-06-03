@@ -1,16 +1,11 @@
 #!/usr/bin/env python3
 """
-karmazyn_display.py — KarmazynOS Display v1.0.1
+karmazyn_display.py — KarmazynOS Display v1.1.1
 ================================================
 KarmazynOS — Maciej Mazur, Warsaw 2026
 
 Immediate Mode renderer na SDL2/pygame.
-Filozofia: stan żyje w phi-space i strukturach danych,
-UI to deterministyczna funkcja stanu czytana każdą klatkę.
-
-Poprawka v1.0.1:
-  - try...finally w run() dla czystego zamykania (brak KeyboardInterrupt)
-  - clock.tick() chronione przed przerwaniem
+v1.1.1: poprawki krytyczne (panel_handler init, viewport, scroll, routing, phi fade).
 """
 
 import math
@@ -22,7 +17,6 @@ import hashlib
 import random
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-# ─── Graceful degradation bez pygame ─────────────────────────────────────────
 try:
     os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
     import pygame
@@ -35,26 +29,35 @@ W, H       = 1440, 900
 FPS        = 60
 FONT_SIZE  = 20
 
-# Kolory — jeden zestaw dla całego systemu
+# ─── Kolory ──────────────────────────────────────────────────────────────────
 C_BG     = (12,  12,  20)
 C_FG     = (255, 255, 255)
-C_ACCENT = (180, 60,  60)   # karmazynowy — akcenty, prompt, obramowania
-C_HOT    = (255, 80,  40)   # czerwony — T >= 70
-C_WARM   = (60,  160, 255)  # niebieski — T 30-70
-C_COLD   = (40,  80,  140)  # ciemny — T < 30
-C_TURTLE = (100, 220, 100)  # zielony — żółw
-C_TRAIL  = (50,  120, 50)   # ciemniejszy zielony — ślad
+C_ACCENT = (180, 60,  60)
+C_HOT    = (255, 80,  40)
+C_WARM   = (60,  160, 255)
+C_COLD   = (40,  80,  140)
+C_TURTLE = (100, 220, 100)
+C_TRAIL  = (50,  120, 50)
 C_GRID   = (20,  20,  35)
-C_STATUS = (160, 160, 180)   # szarawy — komunikaty systemu
+C_STATUS = (160, 160, 180)
+
+
+# ─── Viewport ─────────────────────────────────────────────────────────────────
+class Viewport:
+    """Opisuje dostępny obszar roboczy z informacją o HUD overlay."""
+    def __init__(self, x: int, y: int, w: int, h: int, hud_height: int = 0):
+        self.x = x
+        self.y = y
+        self.w = w
+        self.h = h
+        self.hud_height = hud_height
+    
+    def to_rect(self) -> "pygame.Rect":
+        return pygame.Rect(self.x, self.y, self.w, self.h)
 
 
 # ─── TerminalState ────────────────────────────────────────────────────────────
 class TerminalState:
-    """
-    Stan terminala — żyje poza warstwą UI.
-    Shell worker modyfikuje przez append() i get_input_blocking().
-    Render czyta przez snapshot() bez blokowania.
-    """
     MAX_LINES = 500
 
     def __init__(self):
@@ -76,7 +79,6 @@ class TerminalState:
         self._shutdown = True
         self._key_queue.put("")
 
-    # ── API dla shell workera ─────────────────────────────────────────────────
     def append(self, text: str, color: Tuple[int,int,int] = C_FG) -> None:
         with self._lock:
             for line in str(text).split("\n"):
@@ -93,7 +95,6 @@ class TerminalState:
                 continue
         return ""
 
-    # ── API dla SDL event loop ────────────────────────────────────────────────
     def push_key(self, event: "pygame.event.Event") -> None:
         if not PYGAME_OK:
             return
@@ -123,7 +124,6 @@ class TerminalState:
             elif event.unicode and event.unicode.isprintable():
                 self.input_buf += event.unicode
 
-    # ── API dla renderera ─────────────────────────────────────────────────────
     def snapshot(self) -> Tuple[List[Tuple[str, Tuple]], str]:
         with self._lock:
             return list(self._lines), self.input_buf
@@ -255,7 +255,9 @@ def draw_terminal(ctx: DrawCtx, state: TerminalState, t: float) -> None:
 
     offset = getattr(state, '_scroll_offset', 0)
     total  = len(lines)
-    end    = max(visible, total - offset)
+    
+    # Poprawiony off-by-one
+    end    = max(0, min(total, total - offset))
     start  = max(0, end - visible)
     view   = lines[start:end]
 
@@ -388,12 +390,7 @@ def draw_hud(surface: "pygame.Surface", font: "pygame.font.Font",
     pygame.draw.line(surface, C_ACCENT, (0, 25), (W, 25), 1)
 
 
-def draw_dividers(surface: "pygame.Surface") -> None:
-    pygame.draw.line(surface, C_ACCENT, (W//2, 22), (W//2, H), 1)
-    pygame.draw.line(surface, (40, 20, 20), (W//2, H//2), (W, H//2), 1)
-
-
-# ─── PhiBuffer — mgła termodynamiczna ────────────────────────────────────────
+# ─── PhiBuffer — mgła termodynamiczna (zoptymalizowana) ─────────────────────
 class PhiBuffer:
     _REGIONS = {
         "shell": (0.15, 0.15), "file": (0.85, 0.15), "module": (0.50, 0.15),
@@ -412,6 +409,7 @@ class PhiBuffer:
         self._C_COLD = (100, 100, 100)
         self._fade   = pygame.Surface((width, height), pygame.SRCALPHA)
         self._fade.fill((255, 255, 255, 210))
+        self._frame_count = 0
 
     def _project(self, atom) -> tuple:
         S = None
@@ -443,7 +441,11 @@ class PhiBuffer:
 
     def sync_matrix(self, matrix) -> None:
         import math as _math
-        self.surface.blit(self._fade, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
+        self._frame_count += 1
+        
+        # Optymalizacja: full-screen fade tylko co drugą klatkę
+        if self._frame_count % 2 == 0:
+            self.surface.blit(self._fade, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
 
         if matrix is None:
             return
@@ -452,9 +454,6 @@ class PhiBuffer:
             atoms = matrix.atoms() if callable(matrix.atoms) else matrix.atoms
         except Exception:
             return
-
-        now = _math.fmod(_math.floor(_math.pi * 1e6 + id(matrix) * 1e-9)
-                         + __import__("time").monotonic(), 1e6)
 
         for atom in atoms:
             T = atom.get("T", 0) if isinstance(atom, dict) else getattr(atom, "T", 0)
@@ -491,7 +490,7 @@ class PhiBuffer:
         return self.surface
 
 
-# ─── EditorState (jak w oryginale) ─────────────────────────────────────────
+# ─── EditorState ──────────────────────────────────────────────────────────────
 class EditorState:
     INDENT = 4
 
@@ -628,6 +627,13 @@ class ImmediateRenderer:
         self._left_label:  str              = ""
         self._show_phi:    bool             = False
         self._phi_buf:     Optional[PhiBuffer] = None
+        # Inicjalizacja handlerów – KRYTYCZNE
+        self._panel_handler: Optional[Any] = None
+        self._wm_handler: Optional[Any] = None
+        # Okna otwarte przez claim_left w trybie WM (label → Window),
+        # żeby ponowne claim_left tej samej aplikacji nie mnożyło okien.
+        self._wm_app_windows: Dict[str, Any] = {}
+        self._t = 0.0
 
     def _make_ctx(self, rect):
         return DrawCtx(self.screen, self.font, rect)
@@ -637,17 +643,63 @@ class ImmediateRenderer:
             return self.phi_ref.matrix.atoms()
         return self._phi_atoms
 
-    def claim_left(self, draw_fn, label=""):
+    # ─── Metody panelu (stary tryb) ──────────────────────────────────────────
+    def claim_left(self, draw_fn, label="", handler=None):
         if not callable(draw_fn): return
+        # W trybie WM pełnoekranowym "zajęcie obszaru roboczego" = OTWARCIE OKNA.
+        # Inaczej draw_fn trafiłby do _left_draw, które render_frame w tym trybie
+        # IGNORUJE (rysuje tylko okna WM) — aplikacja byłaby niewidoczna, a jej
+        # tekst-wynik pojawiałby się tylko w terminalu. Każda aplikacja używająca
+        # claim_left (LOGO, płótno, obraz) staje się więc oknem automatycznie.
+        if self._wm_handler is not None:
+            title = label or "Aplikacja"
+            wins = getattr(self._wm_handler, "windows", [])
+            existing = self._wm_app_windows.get(title)
+            if existing is not None and existing in wins:
+                existing.draw_fn = draw_fn          # odśwież treść
+                if handler is not None and hasattr(existing, "key_handler"):
+                    existing.key_handler = handler
+                try: self._wm_handler.focus(existing)
+                except Exception: pass
+            else:
+                try:
+                    win = self._wm_handler.open(title, draw_fn, key_handler=handler)
+                    self._wm_app_windows[title] = win
+                except Exception:
+                    # awaryjnie stary tryb
+                    self._left_draw = draw_fn; self._left_label = label
+                    self._layout = "split"; self._panel_handler = handler
+            return
         self._left_draw  = draw_fn
         self._left_label = label
         self._layout     = "split"
+        self._panel_handler = handler
 
     def release_left(self):
-        self._left_draw  = None
-        self._left_label = ""
-        self._layout     = "solo"
-        self._editor     = None
+        # W trybie WM: zamknij okna otwarte przez claim_left
+        if self._wm_handler is not None and self._wm_app_windows:
+            for _title, win in list(self._wm_app_windows.items()):
+                try: self._wm_handler.close(win)
+                except Exception: pass
+            self._wm_app_windows.clear()
+        self._left_draw   = None
+        self._left_label  = ""
+        self._layout      = "solo" if self._wm_handler is None else "wm"
+        self._panel_handler = None
+        self._editor      = None
+
+    # ─── NOWE: WM pełnoekranowy ───────────────────────────────────────────────
+    def claim_fullscreen(self, wm) -> None:
+        self._wm_handler = wm
+        self._layout = "wm"
+
+    def release_fullscreen(self) -> None:
+        self._wm_handler = None
+        self._layout = "solo"
+
+    def _work_viewport(self) -> Viewport:
+        """Zwraca Viewport z informacją o HUD overlay."""
+        return Viewport(0, self.HUD_H, W, H - self.HUD_H, hud_height=self.HUD_H)
 
     def set_editor(self, state):
         self._editor = state
@@ -662,6 +714,7 @@ class ImmediateRenderer:
         return {"HOT": 0, "WARM": 0, "COLD": 0, "TOMB": 0}
 
     def render_frame(self, t: float) -> None:
+        self._t = t
         if self._phi_buf is None:
             self._phi_buf = PhiBuffer(W, H)
         if self._tick_fn and t - self._last_phys >= 1.0:
@@ -677,62 +730,112 @@ class ImmediateRenderer:
         else:
             s.fill(C_BG)
 
-        hud_offset = self.HUD_H
-        self.logo_state.flush_segments()
-        available_h = H - hud_offset
+        # HUD zawsze na wierzchu
+        draw_hud(s, self.font, self._phi_stats(), t)
 
-        if self._layout == "split" and self._left_draw:
+        work = self._work_viewport()
+
+        # ─── WM pełnoekranowy ─────────────────────────────────────────────
+        if self._wm_handler is not None:
+            self._wm_handler._t = t
+            ctx = self._make_ctx(work.to_rect())
+            # WM dostaje viewport z informacją o HUD
+            self._wm_handler._draw_all(ctx)
+        # ─── Tryb split (stary) ──────────────────────────────────────────
+        elif self._layout == "split" and self._left_draw:
             left_w  = W // 2
             right_x = left_w
             right_w = W - left_w
-            left_ctx = self._make_ctx(pygame.Rect(0, hud_offset, left_w, available_h))
+            left_ctx = self._make_ctx(pygame.Rect(0, self.HUD_H, left_w, H - self.HUD_H))
             self._left_draw(left_ctx)
+
+            if self._show_phi and self._get_atoms():
+                phi_h  = int((H - self.HUD_H) * 0.25)
+                term_y = self.HUD_H + phi_h
+                term_h = H - self.HUD_H - phi_h
+                draw_phi_map(
+                    self._make_ctx(pygame.Rect(right_x, self.HUD_H, right_w, phi_h)),
+                    self._get_atoms(), self._highlight)
+            else:
+                term_y = self.HUD_H
+                term_h = H - self.HUD_H
+            draw_terminal(
+                self._make_ctx(pygame.Rect(right_x, term_y, right_w, term_h)),
+                self.term_state, t)
+        # ─── Tryb solo (tylko terminal) ──────────────────────────────────
         else:
-            right_x = 0
-            right_w = W
+            if self._show_phi and self._get_atoms():
+                phi_h  = int((H - self.HUD_H) * 0.25)
+                term_y = self.HUD_H + phi_h
+                term_h = H - self.HUD_H - phi_h
+                draw_phi_map(
+                    self._make_ctx(pygame.Rect(0, self.HUD_H, W, phi_h)),
+                    self._get_atoms(), self._highlight)
+            else:
+                term_y = self.HUD_H
+                term_h = H - self.HUD_H
+            draw_terminal(
+                self._make_ctx(pygame.Rect(0, term_y, W, term_h)),
+                self.term_state, t)
 
-        if self._show_phi and self._get_atoms():
-            phi_h  = int(available_h * 0.25)
-            term_y = hud_offset + phi_h
-            term_h = available_h - phi_h
-            draw_phi_map(
-                self._make_ctx(pygame.Rect(right_x, hud_offset, right_w, phi_h)),
-                self._get_atoms(), self._highlight)
-        else:
-            term_y = hud_offset
-            term_h = available_h
-
-        draw_terminal(
-            self._make_ctx(pygame.Rect(right_x, term_y, right_w, term_h)),
-            self.term_state, t)
-
-        if self._layout == "split":
-            pygame.draw.line(s, C_ACCENT, (W//2, hud_offset), (W//2, H), 1)
-
-        draw_hud(s, self.font, self._phi_stats(), t)
-        if self._layout == 'split':
-            draw_dividers(s)
         pygame.display.flip()
 
     def _handle_event(self, event) -> bool:
         if event.type == pygame.QUIT:
             return False
+
+        # ─── WM pełnoekranowy – routing myszy ─────────────────────────────
+        if self._wm_handler is not None:
+            if event.type in (pygame.MOUSEBUTTONDOWN, pygame.MOUSEBUTTONUP, pygame.MOUSEMOTION):
+                consumed = self._wm_handler.on_mouse(event, self._work_viewport().to_rect())
+                if consumed:
+                    return True
+
+        # ─── Panel handler (split) – routing myszy ────────────────────────
+        if self._panel_handler is not None and self._layout == "split":
+            if event.type in (pygame.MOUSEBUTTONDOWN, pygame.MOUSEBUTTONUP, pygame.MOUSEMOTION):
+                panel_rect = pygame.Rect(0, self.HUD_H, W // 2, H - self.HUD_H)
+                consumed = self._panel_handler.on_mouse(event, panel_rect)
+                if consumed:
+                    return True
+
         if event.type == pygame.KEYDOWN:
+            # Globalne skróty (zawsze aktywne, nawet w WM)
             if event.key == pygame.K_ESCAPE and not self._editor:
                 return False
             ctrl = event.mod & pygame.KMOD_CTRL
             if ctrl and event.key == pygame.K_q and not self._editor:
                 return False
             if event.key == pygame.K_F1 and not self._editor:
-                self.release_left()
+                if self._wm_handler:
+                    self.release_fullscreen()
+                else:
+                    self.release_left()
                 return True
             if event.key == pygame.K_F2 and not self._editor:
                 self.toggle_phi()
                 return True
+
+            # WM pełnoekranowy – klawisze (jeśli WM chce je przejąć)
+            if self._wm_handler is not None and self._wm_handler.wants_keys():
+                self._wm_handler.on_key(event)
+                return True   # konsumujemy, nie idą do terminala
+
+            # Panel handler – klawisze
+            if self._panel_handler is not None and self._panel_handler.wants_keys():
+                self._panel_handler.on_key(event)
+                return True
+
+            # Edytor
             if self._editor is not None:
                 self._editor.push_key(event)
                 return True
+
+            # Terminal (fallback)
             self.term_state.push_key(event)
+            return True
+
+        # Kliknięcia myszy poza oknami (gdy WM nie skonsumował) – scroll, klikanie linków itp.
         if event.type == pygame.MOUSEBUTTONDOWN:
             if self.CLOSE_BTN_RECT.collidepoint(event.pos):
                 return False
@@ -745,6 +848,7 @@ class ImmediateRenderer:
                 self.term_state.scroll(-3)
             elif event.button == 5:
                 self.term_state.scroll(3)
+            return True   # konsumujemy, żeby nie propagować dalej
         return True
 
     def _handle_click(self, pos):
@@ -837,10 +941,6 @@ class ImmediateRenderer:
     def run(self,
             shell_main: Optional[Callable] = None,
             on_quit:    Optional[Callable] = None) -> None:
-        """
-        Główna pętla. Blokuje main thread (wymóg SDL2).
-        shell_main uruchamiany w daemon thread.
-        """
         if shell_main:
             t = threading.Thread(
                 target=shell_main,
@@ -892,7 +992,7 @@ class KarmazynDisplay:
             pygame.display.set_caption(title)
 
             try:
-                font = pygame.font.SysFont("monospace", FONT_SIZE)
+                font = pygame.font.SysFont("monospace", FONT_SIZE, bold=True)
             except Exception:
                 font = pygame.font.Font(None, FONT_SIZE)
 
@@ -902,7 +1002,7 @@ class KarmazynDisplay:
             self._renderer = ImmediateRenderer(screen, font, self.term_state, self.logo_state)
             self.available = True
             return True
-        except Exception as e:
+        except Exception:
             self.available = False
             return False
 
