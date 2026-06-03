@@ -71,7 +71,7 @@ RADIO = None
 SCHEDULER = None
 NET = None
 BUBBLE_SYNC = None          # <--- FIX #11: globalny uchwyt dla mostka synchronizacji
-SESSIONS = None             # menedżer sesji terminala (model xterm/tmux)
+PROCS = None                # tablica procesów (warstwa procesów KarmazynOS)
 
 # ── Rejestr komend (wypełniany przez load_programs) ───────────────────────────
 _COMMANDS: Dict[str, Any] = {}
@@ -250,9 +250,34 @@ def print_hud():
     except Exception:
         pass
 
+def cmd_ps(args):
+    """Lista procesów KarmazynOS."""
+    import karmazyn_process
+    t = karmazyn_process.get_table()
+    if t is None:
+        return "Brak tablicy procesów (tryb konsolowy)"
+    return t.ps()
+
+def cmd_kill(args):
+    """Zakończ proces po PID."""
+    import karmazyn_process
+    t = karmazyn_process.get_table()
+    if t is None:
+        return "Brak tablicy procesów (tryb konsolowy)"
+    if not args:
+        return "KILL <pid>"
+    try:
+        pid = int(args[0])
+    except ValueError:
+        return "PID musi być liczbą"
+    return f"Zakończono proces {pid}" if t.kill(pid) else f"Brak procesu {pid}"
+
 def cmd_exit(args):
     global _observer_running
     _observer_running = False
+    if PROCS:
+        try: PROCS.close_all()      # zakończ wszystkie procesy KarmazynOS
+        except: pass
     if SCHEDULER:
         try: SCHEDULER.save(); SCHEDULER.stop()
         except: pass
@@ -284,6 +309,10 @@ def main():
     # Wczytaj programy z JSON (to rejestruje wszystkie komendy)
     load_programs()
 
+    # Komendy warstwy procesów (PS/KILL) — wgląd systemu we własne procesy
+    reg("PS",   cmd_ps,   "Lista procesów", "system")
+    reg("KILL", cmd_kill, "Zakończ proces (KILL <pid>)", "system")
+
     # Rejestracja KarminDB (KQL, INDEX, SEARCH)
     try:
         from karmazyn_karmindb import register_karmindb
@@ -302,19 +331,25 @@ def main():
 
     if DISPLAY and DISPLAY.available:
         print("[KarmazynOS] Uruchamianie Karmazyn Window Manager...")
-        # Model sesji (xterm/tmux): każde okno terminala = osobna sesja
-        # (wirtualny TTY + wątek workera), wszystkie dzielą jeden RUNTIME.
-        # Zamiast globalnego shell_worker piszącego do konsoli procesu.
-        from karmazyn_session import SessionManager, default_banner
+        # Warstwa procesów: każde okno terminala = proces powłoki (wątek OS +
+        # własny TTY + atom w phi). Wszystkie dzielą jeden RUNTIME/kernel.
+        # Sesja terminala to po prostu proces, którego target=terminal_main.
+        from karmazyn_process import (ProcessTable, terminal_main,
+                                      default_banner, set_table)
         from karmazyn_display import TerminalState
-        global SESSIONS
-        SESSIONS = SessionManager(dispatch=process_command)
+        global PROCS
+        PROCS = ProcessTable(kernel=RUNTIME)
+        set_table(PROCS)   # rejestr globalny — PS/KILL i aplikacje go widzą
 
         def _spawn_terminal():
             term = TerminalState()
             karmazyn_wm.get_wm().open_terminal(term)   # okno na świeżym TTY
-            SESSIONS.new_session(term=term,
-                                 banner=default_banner(list(_COMMANDS.keys())))
+            PROCS.spawn(
+                "ksh",
+                terminal_main(process_command,
+                              banner=default_banner("ksh", list(_COMMANDS.keys()))),
+                tty=term,
+            )
 
         karmazyn_wm.start_desktop(DISPLAY, spawn_terminal=_spawn_terminal)
         DISPLAY.run(on_quit=lambda: cmd_exit([]))
