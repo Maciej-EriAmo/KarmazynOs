@@ -77,9 +77,74 @@ PROCS = None                # tablica procesów (warstwa procesów KarmazynOS)
 _COMMANDS: Dict[str, Any] = {}
 
 def reg(name: str, handler, desc: str = "", category: str = "system") -> None:
-    """Rejestruje komendę w shellu."""
+    """Rejestruje komendę w shellu ORAZ jako atom w phi (program żyje w phi-space)."""
     _COMMANDS[name.upper()] = handler
     REGISTRY.register(f"cmd.{name.lower()}", ServiceStatus.OK, description=desc[:60])
+    _register_program_atom(name.upper(), desc)
+
+def _register_program_atom(name: str, desc: str = "") -> None:
+    """
+    Program istnieje w phi jako atom prog::<NAZWA> (S="program"), zgrupowany
+    w bąblu systemowym 'sys::programs'. Logika systemu: PROGRAM = zainstalowany,
+    nieaktywny → COLD (T niskie); uruchomiony PROCES → HOT (proc::<pid>).
+    Atomy nie stygną same (PhiSpace nie tika automatycznie), więc program
+    persystuje aż do jawnego usunięcia.
+    """
+    try:
+        aid = f"prog::{name}"
+        RUNTIME.create_atom(aid, "program", desc or name, 20.0)   # COLD = zainstalowany
+        bub = RUNTIME.get_bubble("sys::programs")
+        if bub is None:
+            bub = RUNTIME.create_bubble("sys::programs")
+        bub.add(aid)
+    except Exception:
+        pass   # phi-rejestracja jest dodatkiem, nie może zablokować rejestracji komendy
+
+
+def _boot_ontology(runtime, data_dir: str = None) -> bool:
+    """
+    Boot warstwy holograficznej (opcja A — jeden root-sekret).
+
+    Genom ontologii jest WYPROWADZONY z kanonicznej tożsamości systemu
+    (phi._p2s w identity.bin, zarządzanej przez soul_store) — nie jest nowym,
+    osobnym sekretem, więc nie dubluje istniejącego modelu klucza ani nie
+    tworzy nowego artefaktu trwałości.
+
+    Pierwszy start (lub brak identity.bin): geneza tożsamości (os.urandom) i
+    zapis przez soul_store. identity.bin jest zaciemniony fingerprintem maszyny,
+    więc sam plik przeniesiony gdzie indziej zwróci złe p2s → genom nieodtwarzalny
+    poza pełnym klonem migawki na tej maszynie.
+
+    Gdy HRR/numpy niedostępne — HRR pozostaje wyłączony, system boot-uje normalnie
+    (zachowanie identyczne jak bez warstwy holograficznej).
+    """
+    import os
+    from karmazyn_phi import derive_genome
+    data_dir = data_dir or os.environ.get("KARMAZYN_DATA", "./karmazyn_data")
+    p2s = None
+    try:
+        import soul_store
+        p2s = soul_store.load_identity(data_dir)
+    except Exception:
+        pass
+    if p2s is None:
+        # Pierwszy start (lub inna maszyna) — geneza tożsamości systemu
+        p2s = os.urandom(32)
+        try:
+            import soul_store
+            soul_store.save_identity(p2s, data_dir)
+        except Exception:
+            pass   # bez soul_store genom działa w tej sesji, po prostu nie persystuje
+    try:
+        runtime.enable_hrr(genome=derive_genome(p2s))
+        if runtime._hrr is not None:
+            REGISTRY.log("INFO", "ontology",
+                         "Warstwa holograficzna aktywna (genom z tożsamości systemu)")
+            return True
+        REGISTRY.log("WARN", "ontology", "HRR niedostępny (brak numpy/karmazyn_hrr)")
+    except Exception as e:
+        REGISTRY.log("WARN", "ontology", f"HRR nieaktywne: {e}")
+    return False
 
 # ── Loader programów z JSON ───────────────────────────────────────────────────
 def load_programs(config_path: str = "karmazyn_programs.json") -> int:
@@ -272,7 +337,11 @@ def cmd_kill(args):
         return "PID musi być liczbą"
     return f"Zakończono proces {pid}" if t.kill(pid) else f"Brak procesu {pid}"
 
-def cmd_exit(args):
+def _shutdown_system():
+    """
+    PEŁNE zamknięcie systemu — TYLKO przy zamknięciu pulpitu (QUIT) lub w trybie
+    konsoli. Kończy wszystkie procesy i kończy proces Pythona.
+    """
     global _observer_running
     _observer_running = False
     if PROCS:
@@ -286,12 +355,57 @@ def cmd_exit(args):
         except: pass
     if DISPLAY and DISPLAY.available and DISPLAY.renderer:
         DISPLAY.renderer.term_state.shutdown()
-    REGISTRY.log("INFO", "shell", f"Shell zamkniety")
+    REGISTRY.log("INFO", "shell", "System zamkniety")
     sys.exit(0)
+
+
+def cmd_exit(args):
+    """
+    EXIT kończy BIEŻĄCY program (to okno): zapis pracy (przez store) + koniec
+    tylko TEGO procesu i jego okna. Inne okna/procesy i cały system żyją dalej.
+
+    Cały system gaśnie wyłącznie przy zamknięciu pulpitu (QUIT → _shutdown_system)
+    albo w trybie konsoli (brak procesu/WM).
+    """
+    try:
+        from karmazyn_process import current_process
+        p = current_process()
+    except Exception:
+        p = None
+
+    if p is None:
+        # tryb konsoli / brak procesu-właściciela → pełne zamknięcie
+        _shutdown_system()
+        return
+
+    win = getattr(p.ctx, "window", None)
+    wm  = None
+    if DISPLAY is not None:
+        try:    wm = karmazyn_wm.get_active() or karmazyn_wm.get_wm()
+        except Exception: wm = None
+
+    if win is not None and wm is not None:
+        # zamknięcie okna uruchomi on_close = zapis pracy + koniec tego procesu
+        try:
+            wm.close(win)
+            return "Zamykanie okna…"
+        except Exception:
+            pass
+
+    # brak okna → zapis pracy i koniec tylko tego procesu
+    try: p.ctx.save_work()
+    except Exception: pass
+    p.request_stop()
+    return "Zamykanie programu…"
 
 # ── Główna pętla ─────────────────────────────────────────────────────────────
 def main():
     global DISPLAY, LOGO, LUNETA_INST, RADIO, SCHEDULER, NET
+
+    # Boot warstwy holograficznej PRZED tworzeniem atomów/programów — genom
+    # ontologii z tożsamości systemu (opcja A). Dzięki temu programy rodzą się
+    # już ze współrzędną holograficzną vector = bind(onto(S), val(E)).
+    _boot_ontology(RUNTIME)
 
     # Inicjalizacja podsystemów
     if DISPLAY_LOADED:
@@ -341,18 +455,35 @@ def main():
         PROCS = ProcessTable(kernel=RUNTIME)
         set_table(PROCS)   # rejestr globalny — PS/KILL i aplikacje go widzą
 
+        def _save_terminal_work(ctx, term):
+            # Realny zapis pracy terminala: transcript sesji → store (bąbel
+            # keyowany hologramem programu, trwałość przez Proca — atomowo).
+            try:
+                lines = getattr(term, "_lines", None) or []
+                text  = "\n".join(getattr(l, "text", str(l)) for l in lines)
+                if text.strip():
+                    ctx.store(f"session::{ctx.pid}", text, S="terminal:transcript")
+            except Exception:
+                pass
+
         def _spawn_terminal():
             term = TerminalState()
-            karmazyn_wm.get_wm().open_terminal(term)   # okno na świeżym TTY
-            PROCS.spawn(
+            win  = karmazyn_wm.get_wm().open_terminal(term)   # okno na świeżym TTY
+            proc = PROCS.spawn(
                 "ksh",
                 terminal_main(process_command,
                               banner=default_banner("ksh", list(_COMMANDS.keys()))),
                 tty=term,
             )
+            # Powiązanie okno ↔ proces: zamknięcie okna zapisuje pracę i kończy
+            # TYLKO ten proces (nie cały system). EXIT robi to samo przez okno.
+            proc.ctx.window  = win
+            proc.ctx.on_save = lambda c=proc.ctx, t=term: _save_terminal_work(c, t)
+            if win is not None:
+                win.on_close = lambda p=proc: (p.ctx.save_work(), PROCS.kill(p.pid))
 
         karmazyn_wm.start_desktop(DISPLAY, spawn_terminal=_spawn_terminal)
-        DISPLAY.run(on_quit=lambda: cmd_exit([]))
+        DISPLAY.run(on_quit=lambda: _shutdown_system())
         return
 
     while True:

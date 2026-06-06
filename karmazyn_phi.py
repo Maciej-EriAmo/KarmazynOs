@@ -170,6 +170,24 @@ class PhiHologram:
         return f"PhiHologram({self.id!r}, topic={self.topic!r}, generators={len(self.generator_ids)})"
 
 
+# ─── Genom ontologii (opcja A: jeden root-sekret) ──────────────────────────────
+
+def derive_genome(system_secret: bytes,
+                  info: bytes = b"karmazyn:ontology",
+                  length: int = 32) -> bytes:
+    """
+    Wyprowadza genom ontologii z istniejącego sekretu instancji (np. _system_phi
+    z phi_store, przekazany jako bajty) przez HKDF-SHA256. Opcja A: jeden
+    root-sekret, bez dublowania — nie rozmydla istniejącego modelu klucza.
+    Genom zalążkuje hologramy ontologiczne; jedyny atak to klon pełnej migawki.
+    """
+    import hmac, hashlib
+    salt = b"\x00" * hashlib.sha256().digest_size
+    prk  = hmac.new(salt, system_secret, hashlib.sha256).digest()      # HKDF-Extract
+    okm  = hmac.new(prk, info + b"\x01", hashlib.sha256).digest()      # HKDF-Expand (1 blok)
+    return okm[:length]
+
+
 # ─── PhiSpace ─────────────────────────────────────────────────────────────────
 
 class PhiSpace:
@@ -189,6 +207,8 @@ class PhiSpace:
         self._holos:   Dict[str, PhiHologram] = {}
         self.events    = EventBus()
         self._hrr      = None   # opcjonalny — aktywowany przez enable_hrr()
+        self._genome     = b""  # sekret instancji (zalążek ontologii); pusty = ontologia publiczna (back-compat)
+        self._genome_hex = ""
         self._tick_n   = 0
         self._started  = time.monotonic()
 
@@ -205,13 +225,15 @@ class PhiSpace:
                 a.heat(T - a.T)
             else:
                 a.cool(a.T - T)
+            if self._hrr is not None:
+                a.vector = self._bind_phi(S, E)   # S/E zmienione → przelicz współrzędną holograficzną
             return a
         a = self.matrix.create(id, S, E, T, **kwargs)
         # Podepnij callback do EventBus
         a.on_state_change(lambda atom: self._on_state_change(atom))
-        # Opcjonalnie: generuj wektor HRR
+        # Opcjonalnie: współrzędna holograficzna = bind(onto(S), val(E))
         if self._hrr is not None:
-            a.vector = self._hrr.atom_vector(id)
+            a.vector = self._bind_phi(S, E)
         self.events.emit("atom_created", a)
         return a
 
@@ -473,19 +495,90 @@ class PhiSpace:
 
     # ── HRR (opcjonalna warstwa wektorowa) ───────────────────────────────────
 
-    def enable_hrr(self, D: int = 2048) -> None:
+    # ── Współrzędne holograficzne (onto ⊛ wartość) ──────────────────────────
+    def _holo(self, kind: str, text: str):
         """
-        Aktywuje osadzenia HRR dla atomów.
-        Po aktywacji: każdy nowy atom dostaje wektor.
-        Istniejące atomy dostają wektory retroaktywnie.
+        Hologram zalążkowany genomem instancji.
+          kind='onto' → hologram ontologiczny (rola, czym rzecz JEST = S)
+          kind='val'  → hologram zadaniowy (wartość, treść = E)
+        Cache w HRROperations._vectors działa jak rejestr pamięci ontologicznej:
+        ten sam (genom, kind, text) → ten sam wektor. Bez genomu (genome_hex='')
+        hologramy są publiczne — zgodność wsteczna.
+        """
+        name = f"{self._genome_hex}|{kind}|{text}"
+        return self._hrr.atom_vector(name)
+
+    def _bind_phi(self, S: str, E: str):
+        """vector = bind(onto(S), val(E)) — matematyczne odwzorowanie hologramu."""
+        onto = self._holo("onto", S or "")    # hologram ontologiczny (rola)
+        val  = self._holo("val",  E or "")    # hologram zadaniowy (wartość)
+        return self._hrr.bind(onto, val)
+
+    # ── Bąble-wyniki (punkt dostępu keyowany hologramem programu) ────────────
+    def result_bubble_label(self, program_name: str) -> str:
+        """
+        Etykieta bąbla-wyniku keyowana hologramem ontologicznym programu
+        (genom-sealed). Tylko ktoś, kto potrafi policzyć onto(program:<name>)
+        — czyli zna genom instancji — wyprowadzi tę etykietę i dotrze do bąbla.
+        Bez HRR (genom off): fallback po nazwie — działa, bez izolacji geometrycznej.
+        """
+        if self._hrr is not None:
+            onto = self._holo("onto", f"program:{program_name}")
+            return "res::" + hashlib.sha256(onto.tobytes()).hexdigest()[:16]
+        return f"res::{program_name}"
+
+    def open_result_bubble(self, program_name: str, create: bool = False):
+        """
+        Punkt dostępu do wyników programu. Zwraca bąbel-wynik (lub None).
+        Wymaga genomu (przez result_bubble_label); bez niego etykieta jest
+        nieobliczalna → bąbel geometrycznie nieosiągalny, nawet dla twórcy.
+        Dostęp po nazwie (Workspace) i globalne atoms() pozostają nietknięte —
+        to jest DODATKOWA ścieżka dostępu (addytywny scoping).
+        """
+        label = self.result_bubble_label(program_name)
+        b = self.get_bubble(label)
+        if b is None and create:
+            b = self.create_bubble(label)
+        return b
+
+    def scoped_atoms(self, program_name: str) -> list:
+        """
+        Widok scoped hologramem: atomy w przestrzeni danego programu (jego
+        bąbel-wynik keyowany hologramem). Wymaga genomu do policzenia etykiety —
+        bez właściwego hologramu zwraca pustkę (przestrzeń nieosiągalna).
+
+        ADDYTYWNE: globalne matrix.atoms() i dostęp po nazwie są nietknięte;
+        to jest dodatkowa, zawężona ścieżka odczytu (izolacja, nie semantyka).
+        """
+        bub = self.open_result_bubble(program_name)
+        if bub is None:
+            return []
+        out = []
+        for ref in bub.atoms():
+            a = self.matrix.get(ref) if isinstance(ref, str) else ref
+            if a is not None:
+                out.append(a)
+        return out
+
+    def enable_hrr(self, D: int = 2048, genome: bytes = None) -> None:
+        """
+        Aktywuje współrzędne holograficzne HRR dla atomów.
+
+        genome — sekret instancji (zalążek ontologii). Gdy podany, hologram
+                 ontologiczny onto(S) jest nieodtwarzalny bez genomu (model
+                 'ontologia = klucz'; jedyny atak = klon migawki z genomem).
+                 Gdy None — ontologia publiczna (zgodność wsteczna).
+
+        Po aktywacji każdy atom (nowy i istniejący): vector = bind(onto(S), val(E)).
         """
         try:
             from karmazyn_hrr import HRROperations
             self._hrr = HRROperations(D)
-            # Retroaktywnie
+            self._genome     = genome or b""
+            self._genome_hex = self._genome.hex()
+            # Retroaktywnie: nadaj wszystkim atomom współrzędną holograficzną
             for atom in self.matrix.atoms():
-                if atom.vector is None:
-                    atom.vector = self._hrr.atom_vector(atom.id)
+                atom.vector = self._bind_phi(atom.S, atom.E)
         except ImportError:
             pass
 

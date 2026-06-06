@@ -59,6 +59,14 @@ T_PROC_RUN = 85.0
 # Domyślny czas oczekiwania na zakończenie wątku przy kill
 KILL_JOIN_TIMEOUT = 1.0
 
+# Bieżący proces w wątku — pozwala komendzie EXIT zakończyć WŁASNY proces
+# (to okno), zamiast kłaść cały system.
+_CURRENT = threading.local()
+
+def current_process() -> Optional["Process"]:
+    """Proces wykonujący się w bieżącym wątku, lub None (np. wątek główny/konsola)."""
+    return getattr(_CURRENT, "proc", None)
+
 
 def _now() -> float:
     return time.time()
@@ -88,6 +96,7 @@ class ProcessContext:
         self.window   = window
         self._alive   = True
         self._process: Optional["Process"] = None   # uchwyt do właściciela
+        self.on_save: Optional[Callable] = None      # hak: zapis pracy przy zakończeniu (przez store)
 
     # stdout
     def write(self, text: Any, color: Color = C_OUT) -> None:
@@ -118,6 +127,64 @@ class ProcessContext:
             raise RuntimeError("ProcessContext bez ProcessTable")
         kw.setdefault("parent", self.pid)
         return self.table.spawn(name, target, **kw)
+
+    # ── Zapis WYNIKU (trwały) — ODRĘBNY od write() (ekran/TTY) ───────────────
+    def store(self, key: str, content: Any, S: str = "result",
+              T: float = 45.0, program: str = None):
+        """
+        Zapisuje wynik programu do bąbla-wyniku keyowanego hologramem programu.
+
+        ODRĘBNE od write(): write() idzie na ekran/TTY i jest ULOTNE; store()
+        zapisuje trwały wynik w nieśmiertelnym magazynie phi.
+
+        Reguła dostępu (zgodnie z logiką systemu): wynik istnieje tylko w bąblu;
+        bąbel jest osiągalny wyłącznie dla programu z właściwym hologramem (genom).
+        Atom poza bąblem nie miałby punktu dostępu — byłby geometrycznie nieistotny.
+
+        Trwałość na dysk rideuje tę samą ścieżkę co dokumenty Workspace
+        (karmazyn_store → Pole Proca, dedup + szyfrowanie) — bąbel-wynik to
+        zwykły bąbel phi, więc save_documents go persystuje. Bez nowej ścieżki.
+        """
+        phi = self.kernel
+        if phi is None:
+            return None
+        prog = program or self.name
+        bub  = phi.open_result_bubble(prog, create=True)
+        aid  = f"res::{prog}::{key}"
+        txt  = content if isinstance(content, str) else ""
+        phi.create_atom(aid, S=S, E=txt, T=T)   # atom dostaje też vector = bind(onto(S),val(E))
+        bub.add(aid)
+        if txt:
+            bub.content = txt
+        return bub
+
+    # ── Odczyt WYNIKÓW (punkt dostępu przez hologram programu) ───────────────
+    def results(self, program: str = None):
+        """
+        Bąbel-wynik programu — osiągalny tylko z właściwym hologramem (genom).
+        Bez genomu etykieta jest nieobliczalna → None.
+        """
+        phi = self.kernel
+        if phi is None:
+            return None
+        return phi.open_result_bubble(program or self.name)
+
+    # ── Zapis PRACY przy zakończeniu (realny, atomowy — przez store) ─────────
+    def save_work(self) -> bool:
+        """
+        Woła hak on_save (jeśli ustawiony) — program zapisuje swoją pracę przez
+        store() PRZED zakończeniem. Wołane przy zamknięciu okna i przy EXIT.
+        Zwraca True jeśli zapis się wykonał. Idempotentne i bezpieczne (wyjątki
+        nie blokują zakończenia procesu).
+        """
+        cb = self.on_save
+        if cb is None:
+            return False
+        try:
+            cb()
+            return True
+        except Exception:
+            return False
 
 
 # ─── Process — jednostka wykonania ───────────────────────────────────────────
@@ -150,6 +217,7 @@ class Process:
         return self
 
     def _run(self) -> None:
+        _CURRENT.proc = self
         try:
             if callable(self.target):
                 self.target(self.ctx)
@@ -158,6 +226,7 @@ class Process:
         except Exception as e:
             self.ctx.write(f"[proc {self.name} BLAD] {e}", C_ERR)
         finally:
+            _CURRENT.proc = None
             self.table._on_exit(self)
 
     def request_stop(self) -> None:

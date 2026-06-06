@@ -46,6 +46,7 @@ class Window:
         self.closable    = closable
         self.z           = self.id
         self.on_body_click: Optional[Callable] = None
+        self.on_close: Optional[Callable] = None   # wołane przy zamknięciu okna (zapis pracy + koniec procesu)
         self.modal       = False
 
     # ── geometria (współrzędne lokalne pulpitu) ────────────────────────────
@@ -133,9 +134,6 @@ class WindowManager:
 
         import threading
         self._lock = threading.RLock()
-        # Fabryka nowych terminali (sesja + okno). Ustawiana przez
-        # start_desktop. None → stary tryb (jeden term_state na display).
-        self._spawn_terminal = None
 
     # ── Cykl życia okien ──────────────────────────────────────────────────
 
@@ -166,6 +164,7 @@ class WindowManager:
         return win
 
     def close(self, win: Window) -> None:
+        cb = getattr(win, "on_close", None)
         with self._lock:
             if win in self.windows:
                 self.windows.remove(win)
@@ -175,6 +174,12 @@ class WindowManager:
                 self._drag = None
             if self._resize is win:
                 self._resize = None
+        # on_close POZA blokadą — może zapisać pracę i zakończyć proces (operacje WM/phi)
+        if cb is not None:
+            try:
+                cb()
+            except Exception:
+                pass
 
     def close_by_title(self, title: str) -> bool:
         with self._lock:
@@ -556,27 +561,12 @@ def get_active() -> Optional[WindowManager]:
     return _ACTIVE
 
 
-def start_desktop(display, spawn_terminal=None) -> Optional[WindowManager]:
-    """Uruchom tryb okienkowy Openbox‑style (pełny ekran) i otwórz terminal.
-
-    spawn_terminal — opcjonalna fabryka (callable() -> None) tworząca nową
-    SESJĘ + okno terminala (model xterm/tmux). Gdy podana, pierwszy terminal
-    i WIN TERM idą przez nią (osobny TTY + worker na sesję). Gdy None — stary
-    tryb (jeden wspólny term_state).
-
-    Idempotentne: ponowne wywołanie (np. z komendy WIN) nie zeruje fabryki
-    ani nie tworzy drugiego pierwszego terminala."""
+def start_desktop(display) -> Optional[WindowManager]:
+    """Uruchom tryb okienkowy Openbox‑style (pełny ekran) i otwórz terminal."""
     wm = get_wm()
     if display is not None and getattr(display, "available", False):
         wm.attach_fullscreen(display)
-        if spawn_terminal is not None:
-            wm._spawn_terminal = spawn_terminal     # ustaw TYLKO gdy podano
-        has_term = any(getattr(w, "title", "") == "ksh" for w in wm.windows)
-        if not has_term:                            # pierwszy terminal raz
-            if wm._spawn_terminal is not None:
-                wm._spawn_terminal()
-            else:
-                wm.open_terminal(display.term_state)
+        wm.open_terminal(display.term_state)
     set_active(wm)
     return wm
 
@@ -605,12 +595,9 @@ def cmd_windows(args: List[str], display=None) -> str:
         title = " ".join(args[1:])
         return f"Zamknięto '{title}'" if wm.close_by_title(title) else f"Brak okna '{title}'"
     if args[0].upper() == "TERM":
-        if wm._spawn_terminal is not None:
-            wm._spawn_terminal()                  # nowa sesja + okno (model sesji)
-            return "Otwarto nowy terminal (nowa sesja)"
         if display and hasattr(display, 'term_state'):
             wm.open_terminal(display.term_state)
         else:
-            wm.open_terminal(None)
+            wm.open_terminal(None)   # otworzy okno bez działającego terminala
         return "Otwarto nowy terminal"
     return "Użycie: WIN | WIN CLOSE <tytuł> | WIN TERM"
