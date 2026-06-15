@@ -1,524 +1,616 @@
 """
-karmazyn_js_web.py — JS Web Bridge dla Lunety v1.0
-====================================================
+karmazyn_js_phi.py — KarmazynJS Phi Layer v1.1
+================================================
 KarmazynOS — Maciej Mazur, Warsaw 2026
 
-Most między silnikiem JS a przeglądarką Luneta.
-Trzy zadania:
+Warstwa phi-space nad czystym interpreterem JS.
+Dodaje termodynamikę, GC, sandbox i anomaly detection
+bez dotykania interpretera.
 
-  1. SemanticNode → LiveDOM
-     Konwersja sparsowanego drzewa HTML na żywe węzły DOM
-     które JS może mutować.
+Jedna zasada: KarmazynJSCore nie wie że istnieje phi-space.
+KarmazynJSPhi nie wie jak interpretować JS.
 
-  2. Script extraction + execution (stub → pełne gdy będzie parser)
-     Wyciąga <script> tagi ze strony i uruchamia je na LiveDOM.
-     Teraz: stub (skrypt logowany, nie wykonywany).
-     Gdy będzie parser tekstu: jeden wiersz do odkomentowania.
+Warstwa phi-space:
+  PhiScope  — Scope z temperaturą atomów
+  PhiAtom   — wartość JS jako atom phi-space
+  KarmazynJSPhi — Core + phi-space
 
-  3. Browser API
-     window, navigator, location, history wstrzyknięte do VM.
-     Bez document.write, bez XMLHttpRequest.
-
-Pipeline w Lunecie:
-  HTML → SemanticHTMLParser → SemanticNode
-      → SemanticToLive (tu) → LiveDOM
-      → JSBridge.run_scripts() → mutacje DOM
-      → LiveToChunks (tu) → TextChunks
-      → ParsedPage.lines() → terminal
-
-Brakujący krok (poza tym modułem):
-  Parser JS text → AST
-  Gdy będzie: JSBridge.run_scripts() odkomentuje jedną linię.
+Zmiany v1.1:
+  - FIX: override _call() → PhiScope zamiast Scope (Bug 1)
+  - FIX: _prune_dead_children() w tick — czyszczenie martwych scope'ów (Bug 5)
+  - NEW: PhiScope.scope_name, .depth — metadane śledzenia
+  - NEW: scope_tree() — pełne drzewo scope'ów dla debugowania
+  - NEW: cmd_js TREE — komenda shella
+  - NEW: phi_stats() zawiera scope_count i scope_depth
 """
 
-import re
 import time
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
-from karmazyn_js_phi import KarmazynJSPhi, cmd_js
-from karmazyn_live_dom import LiveDOM, LiveNode, bind_live_dom
-from karmazyn_live_dom import NODE_BLOCK, NODE_TEXT
-
-# NodeType z browser — opcjonalne
-try:
-    from karmazyn_browser import NodeType, SemanticNode, TextChunk
-    HAS_BROWSER = True
-except ImportError:
-    HAS_BROWSER = False
+from karmazyn_js_core import (
+    KarmazynJSCore, Scope, Function,
+    _Return, _Break, _Continue, _Throw,
+)
 
 
-# ─── Konwersja SemanticNode → LiveDOM ────────────────────────────────────────
+# ─── PhiAtom ─────────────────────────────────────────────────────────────────
 
-def semantic_to_live(node: Any, doc: LiveDOM,
-                     depth: int = 0,
-                     max_depth: int = 50) -> Optional[LiveNode]:
+class PhiAtom:
     """
-    Konwertuje SemanticNode (ze sparsowanego HTML) na LiveNode.
-    Buduje żywe drzewo DOM które JS może mutować.
+    Wartość JS jako atom phi-space.
 
-    Głębokość ograniczona — zapobiega stack overflow na
-    patologicznie zagnieżdżonych stronach.
-    """
-    if node is None or depth > max_depth:
-        return None
+    T (temperatura) = częstotliwość dostępu.
+    Gorący atom = używany często = trzymaj w RAM.
+    Zimny atom = zapomniany = kandydat GC.
 
-    typ = getattr(node, "typ", -1)
-    tag = getattr(node, "tag", "")
-
-    # Węzeł tekstowy
-    if typ == NODE_TEXT or typ == 8:
-        text = getattr(node, "text", "")
-        if not text or not text.strip():
-            return None
-        return doc.createTextNode(text)
-
-    # Węzeł DOCUMENT — specjalny przypadek, wróć body
-    if typ == 0 or tag == "document":
-        for child in getattr(node, "children", []):
-            _populate_body(child, doc, depth + 1, max_depth)
-        return doc.body
-
-    # Element normalny
-    live = doc.createElement(tag or "div")
-
-    # Kopiuj atrybuty
-    for k, v in getattr(node, "attrs", {}).items():
-        live.setAttribute(k, str(v))
-
-    # Rekurencja po dzieciach
-    for child in getattr(node, "children", []):
-        live_child = semantic_to_live(child, doc, depth + 1, max_depth)
-        if live_child is not None:
-            live.children.append(live_child)
-            live_child.parent = live
-
-    return live
-
-
-def _populate_body(node: Any, doc: LiveDOM,
-                   depth: int, max_depth: int) -> None:
-    """Wypełnia doc.body węzłami z drzewa SemanticNode."""
-    tag = getattr(node, "tag", "")
-    if tag in ("html", "body", "document"):
-        for child in getattr(node, "children", []):
-            _populate_body(child, doc, depth + 1, max_depth)
-        return
-    live = semantic_to_live(node, doc, depth, max_depth)
-    if live is not None and live is not doc.body:
-        doc.body.children.append(live)
-        live.parent = doc.body
-
-
-def build_live_dom(page: Any, runtime: Any,
-                   vm: KarmazynJSPhi) -> LiveDOM:
-    """
-    Buduje LiveDOM ze strony Lunety (ParsedPage).
-    Punkt wejścia dla JSBridge.
-    """
-    doc = bind_live_dom(vm, runtime, prefix=_url_prefix(page.url))
-    doc.title = page.title
-
-    if page.semantic_tree is not None:
-        _populate_body(page.semantic_tree, doc, 0, 50)
-
-    doc.flush()
-    return doc
-
-
-# ─── Ekstrakcja skryptów ──────────────────────────────────────────────────────
-
-def extract_scripts(html: str) -> List[Tuple[str, str]]:
-    """
-    Wyciąga skrypty z HTML.
-    Zwraca [(typ, kod), ...] gdzie typ = "inline" | "external".
-    Skrypty zewnętrzne (src=) zwracają (external, url).
-    """
-    scripts = []
-    pattern = re.compile(
-        r'<script([^>]*)>(.*?)</script>',
-        re.DOTALL | re.IGNORECASE,
-    )
-    src_pattern = re.compile(r'src=["\']([^"\']+)["\']', re.IGNORECASE)
-    type_pattern = re.compile(r'type=["\']([^"\']+)["\']', re.IGNORECASE)
-
-    for m in pattern.finditer(html):
-        attrs_raw = m.group(1)
-        code      = m.group(2).strip()
-
-        # Pomiń type="module", type="text/template" itp.
-        type_m = type_pattern.search(attrs_raw)
-        if type_m:
-            t = type_m.group(1).lower()
-            if t not in ("text/javascript", "application/javascript", ""):
-                continue
-
-        src_m = src_pattern.search(attrs_raw)
-        if src_m:
-            scripts.append(("external", src_m.group(1)))
-        elif code:
-            scripts.append(("inline", code))
-
-    return scripts
-
-
-# ─── JSBridge — główna klasa ──────────────────────────────────────────────────
-
-class JSBridge:
-    """
-    Most JS dla Lunety.
-
-    Tworzy izolowany KarmazynJSPhi dla każdej strony.
-    Każda strona dostaje własny phi-space — sandbox strukturalny.
-
-    Użycie:
-        bridge = JSBridge(runtime)
-        bridge.attach(page)           # buduje LiveDOM ze strony
-        bridge.run_scripts(page)      # uruchamia skrypty (gdy parser gotowy)
-        chunks = bridge.live_chunks() # TextChunki po mutacjach JS
+    To jest JIT profiling za darmo — silnik wie które zmienne
+    są hot path bez osobnego profilera.
     """
 
-    def __init__(self, runtime):
-        self.runtime = runtime
-        self._vm:   Optional[KarmazynJSPhi] = None
-        self._doc:  Optional[LiveDOM]       = None
-        self._page_url: str = ""
-        self._scripts_run   = 0
-        self._mutations     = 0
-        self._active        = False
+    T_INIT  = 50.0    # temperatura startowa (WARM)
+    T_MAX   = 100.0
+    T_HEAT  = 15.0    # przyrost przy dostępie
+    T_DECAY = 0.92    # mnożnik przy tick
+    T_TOMB  = 2.0     # próg GC
 
-    # ── Attach / detach ───────────────────────────────────────────────────────
+    __slots__ = ("value", "name", "T", "state", "_reads", "_writes", "_born")
 
-    def attach(self, page: Any) -> None:
+    def __init__(self, value: Any, name: str = ""):
+        self.value   = value
+        self.name    = name
+        self.T       = self.T_INIT
+        self.state   = "WARM"
+        self._reads  = 0
+        self._writes = 0
+        self._born   = time.monotonic()
+
+    def touch_read(self) -> None:
+        self._reads += 1
+        self.T = min(self.T_MAX, self.T + self.T_HEAT)
+        self._sync_state()
+
+    def touch_write(self) -> None:
+        self._writes += 1
+        self.T = min(self.T_MAX, self.T + self.T_HEAT * 0.5)
+        self._sync_state()
+
+    def decay(self) -> None:
+        self.T *= self.T_DECAY
+        self._sync_state()
+
+    def _sync_state(self) -> None:
+        if   self.T >= 70: self.state = "HOT"
+        elif self.T >= 30: self.state = "WARM"
+        elif self.T >= self.T_TOMB: self.state = "COLD"
+        else: self.state = "TOMB"
+
+    def is_dead(self) -> bool:
+        return self.T < self.T_TOMB
+
+    def age(self) -> float:
+        return time.monotonic() - self._born
+
+    def __repr__(self) -> str:
+        return (f"PhiAtom({self.name!r}={self.value!r}, "
+                f"T={self.T:.1f}, {self.state})")
+
+
+# ─── PhiScope ─────────────────────────────────────────────────────────────────
+
+class PhiScope(Scope):
+    """
+    Scope z termodynamiką i śledzeniem dzieci.
+    Każda zmienna to PhiAtom — dostęp ogrzewa, brak dostępu stygnie.
+
+    Śledzenie drzewa scope'ów:
+      scope_name  — nazwa czytelna (fn_counter, for_body, if_then)
+      depth       — głębokość zagnieżdżenia (global=0)
+      children    — lista żywych dzieci (przycinana w tick)
+      _born       — czas utworzenia (monotonic)
+
+    Rozszerza Scope z Core — Core nie wie o temperaturach.
+    """
+
+    def __init__(self, parent: Optional["PhiScope"] = None,
+                 scope_name: str = ""):
+        super().__init__(parent)
+        self._atoms: Dict[str, PhiAtom] = {}
+        self.children: List["PhiScope"] = []
+        self.scope_name = scope_name
+        self.depth      = (parent.depth + 1) if isinstance(parent, PhiScope) else 0
+        self._born      = time.monotonic()
+        if parent is not None and isinstance(parent, PhiScope):
+            parent.children.append(self)
+
+    def get(self, name: str) -> Any:
+        if name in self._atoms:
+            atom = self._atoms[name]
+            atom.touch_read()
+            return atom.value
+        if name in self.vars:
+            return self.vars[name]
+        if self.parent is not None:
+            return self.parent.get(name)
+        raise NameError(f"'{name}' is not defined")
+
+    def set(self, name: str, value: Any) -> None:
+        """Tworzy zmienną w bieżącym scope jako PhiAtom."""
+        if name in self._atoms:
+            atom = self._atoms[name]
+            atom.value = value
+            atom.touch_write()
+        else:
+            self._atoms[name] = PhiAtom(value, name)
+
+    def assign(self, name: str, value: Any) -> None:
+        """Przypisanie do istniejącej zmiennej przez scope chain."""
+        if name in self._atoms:
+            atom = self._atoms[name]
+            atom.value = value
+            atom.touch_write()
+            return
+        if name in self.vars:
+            self.vars[name] = value
+            return
+        if self.parent is not None:
+            self.parent.assign(name, value)
+            return
+        raise NameError(f"'{name}' is not defined")
+
+    def child(self, name: str = "") -> "PhiScope":
+        """Zwraca nowy PhiScope zagnieżdżony w bieżącym."""
+        return PhiScope(parent=self, scope_name=name)
+
+    def detach_child(self, child_scope: "PhiScope") -> None:
+        """Odłącza dziecko z listy children."""
+        if child_scope in self.children:
+            self.children.remove(child_scope)
+
+    # ── Termodynamika ─────────────────────────────────────────────────────────
+
+    def tick(self) -> List[str]:
         """
-        Dołącza do nowej strony.
-        Tworzy izolowany VM i buduje LiveDOM.
+        Decay wszystkich atomów w tym scope. Zwraca nazwy martwych.
+        Nie chodzi rekurencyjnie — _tick_scope w VM robi to.
         """
-        # Sandbox: każda strona = osobny phi-space
-        self._vm = KarmazynJSPhi(
-            runtime=self.runtime,
-            name=_url_prefix(getattr(page, "url", "page")),
+        dead = []
+        for name, atom in list(self._atoms.items()):
+            atom.decay()
+            if atom.is_dead():
+                dead.append(name)
+        return dead
+
+    def gc(self, dead_names: List[str]) -> int:
+        """Usuwa martwe atomy. Zwraca liczbę usuniętych."""
+        count = 0
+        for name in dead_names:
+            if name in self._atoms:
+                del self._atoms[name]
+                count += 1
+        return count
+
+    def is_empty(self) -> bool:
+        """Scope bez atomów i bez dzieci — kandydat do przycinania."""
+        return len(self._atoms) == 0 and len(self.children) == 0
+
+    def age(self) -> float:
+        """Wiek scope'a w sekundach."""
+        return time.monotonic() - self._born
+
+    # ── Inspekcja ─────────────────────────────────────────────────────────────
+
+    def atom_count(self) -> int:
+        return len(self._atoms)
+
+    def total_atom_count(self) -> int:
+        """Atomy w tym scope + wszystkich potomkach."""
+        total = len(self._atoms)
+        for c in self.children:
+            if isinstance(c, PhiScope):
+                total += c.total_atom_count()
+        return total
+
+    def total_scope_count(self) -> int:
+        """Liczba scope'ów w poddrzewie (włącznie z self)."""
+        total = 1
+        for c in self.children:
+            if isinstance(c, PhiScope):
+                total += c.total_scope_count()
+        return total
+
+    def max_depth(self) -> int:
+        """Najgłębsze zagnieżdżenie w poddrzewie."""
+        if not self.children:
+            return self.depth
+        return max(
+            (c.max_depth() for c in self.children if isinstance(c, PhiScope)),
+            default=self.depth
         )
-        self._inject_browser_api(page)
-        self._doc = build_live_dom(page, self.runtime, self._vm)
-        self._doc.on_mutate(lambda: self._on_mutation())
-        self._page_url   = getattr(page, "url", "")
-        self._scripts_run = 0
-        self._mutations   = 0
-        self._active      = True
 
-    def detach(self) -> None:
-        """Odłącza od strony — VM i LiveDOM są zwalniane."""
-        self._vm     = None
-        self._doc    = None
-        self._active = False
+    def hot_atoms(self) -> List[PhiAtom]:
+        return [a for a in self._atoms.values() if a.state == "HOT"]
 
-    # ── Uruchamianie skryptów ─────────────────────────────────────────────────
+    def cold_atoms(self) -> List[PhiAtom]:
+        return [a for a in self._atoms.values() if a.state == "COLD"]
 
-    def run_scripts(self, page: Any) -> Dict[str, Any]:
+    def thermal_map(self) -> Dict[str, Dict[str, Any]]:
+        """Mapa temperatur zmiennych w tym scope + potomkach."""
+        result = {}
+        self._collect_thermal(result, "")
+        return result
+
+    def _collect_thermal(self, out: dict, prefix: str) -> None:
+        for name, atom in self._atoms.items():
+            key = f"{prefix}{name}" if prefix else name
+            out[key] = {
+                "T":      round(atom.T, 1),
+                "state":  atom.state,
+                "reads":  atom._reads,
+                "writes": atom._writes,
+                "age":    round(atom.age(), 1),
+                "scope":  self.scope_name or "(global)",
+                "depth":  self.depth,
+            }
+        for c in self.children:
+            if isinstance(c, PhiScope):
+                child_prefix = f"{prefix}{c.scope_name}." if c.scope_name else prefix
+                c._collect_thermal(out, child_prefix)
+
+    def scope_tree(self, indent: int = 0) -> str:
+        """Tekstowa reprezentacja drzewa scope'ów."""
+        pad   = "  " * indent
+        label = self.scope_name or "(global)"
+        atoms = len(self._atoms)
+        kids  = len(self.children)
+        line  = f"{pad}[d{self.depth}] {label}  atoms={atoms} children={kids}"
+        if self._atoms:
+            names = ", ".join(sorted(self._atoms.keys())[:5])
+            if len(self._atoms) > 5:
+                names += f", ...+{len(self._atoms)-5}"
+            line += f"  ({names})"
+        lines = [line]
+        for c in self.children:
+            if isinstance(c, PhiScope):
+                lines.append(c.scope_tree(indent + 1))
+        return "\n".join(lines)
+
+
+# ─── KarmazynJSPhi ───────────────────────────────────────────────────────────
+
+class KarmazynJSPhi(KarmazynJSCore):
+    """
+    Interpreter JS z phi-space.
+    Dziedziczy Core i zastępuje jedną rzecz: Scope → PhiScope.
+
+    Core nie wie że istnieje PhiScope.
+    PhiScope nie wie jak interpretować JS.
+    Separation of concerns jest formalny.
+
+    v1.1: override _call() — scope funkcji jako PhiScope, nie Scope.
+    v1.1: _prune_dead_children() — czyszczenie pustych scope'ów w tick.
+    """
+
+    def __init__(self, runtime=None, context: str = "global",
+                 name: str = None):
+        super().__init__()
+        # Zamień global_scope na PhiScope
+        old_vars = self.global_scope.vars.copy()
+        self.global_scope = PhiScope(scope_name=name or context)
+        # Przenieś builtiny do nowego scope (jako zwykłe vars, nie atoms)
+        self.global_scope.vars.update(old_vars)
+
+        self._runtime = runtime
+        self._context = name or context
+        self._tick_n  = 0
+        self._total_gc = 0
+        self._pruned_scopes = 0
+
+    # ── FIX Bug 1: override _call() — PhiScope zamiast Scope ─────────────────
+
+    def _call(self, fn: Any, args: List[Any],
+              this: Any = None) -> Any:
         """
-        Wyciąga i uruchamia skrypty inline ze strony.
-
-        TERAZ:
-          Skrypty są wyciągane i logowane.
-          Nie uruchamiane — brak parsera tekstu → AST.
-
-        GDY BĘDZIE PARSER:
-          Odkomentuj jedną linię w _run_inline().
-          Reszta jest gotowa.
+        Override _call z Core — tworzy PhiScope zamiast Scope.
+        Dzięki temu scope'y funkcji są widoczne w drzewie phi-space,
+        ich zmienne podlegają termodynamice i GC.
         """
-        if not self._active or self._vm is None:
-            return {"ok": False, "reason": "bridge not attached"}
-
-        scripts = extract_scripts(getattr(page, "raw_html", ""))
-        results = {"ok": True, "inline": 0, "external": 0,
-                   "errors": [], "skipped": 0}
-
-        for typ, content in scripts:
-            if typ == "inline":
-                ok, err = self._run_inline(content)
-                if ok:
-                    results["inline"] += 1
-                    self._scripts_run += 1
-                else:
-                    results["skipped"] += 1
-                    results["errors"].append(err)
+        # Rozpakowywanie spread (skopiowane z Core)
+        expanded = []
+        for a in args:
+            if isinstance(a, tuple) and len(a) == 2 and a[0] == "__spread__":
+                expanded.extend(a[1] if isinstance(a[1], list) else [a[1]])
             else:
-                results["external"] += 1  # TODO: fetch + run
+                expanded.append(a)
+        args = expanded
 
-        if self._doc:
-            self._doc.flush()
+        if isinstance(fn, Function):
+            # PhiScope zamiast Scope — to jest cały fix
+            closure = fn.closure
+            if isinstance(closure, PhiScope):
+                local = PhiScope(parent=closure,
+                                 scope_name=f"fn_{fn.name}")
+            else:
+                local = PhiScope(scope_name=f"fn_{fn.name}")
+                local.parent = closure
+            for p, a in zip(fn.params, args):
+                local.set(p, a)
+            for p in fn.params[len(args):]:
+                local.set(p, None)
+            if this is not None:
+                local.vars["this"] = this  # this jako raw var, nie atom
+            try:
+                return self.exec(fn.body, local)
+            except _Return as r:
+                return r.value
 
-        return results
+        if callable(fn):
+            try:
+                return fn(*args)
+            except Exception as e:
+                raise _Throw(str(e))
 
-    def _run_inline(self, source: str) -> Tuple[bool, str]:
-        """Uruchamia skrypt inline przez karmazyn_js_parser."""
-        try:
-            from karmazyn_js_parser import parse_js
-            prog = parse_js(source)
-            self._vm.run(prog)
-            if self._doc:
-                self._doc.flush()
-            return True, ""
-        except Exception as e:
-            return False, str(e)[:120]
+        raise TypeError(f"'{fn!r}' is not a function")
 
-
-    def run_ast(self, program: list) -> Tuple[bool, Any]:
-        """
-        Uruchamia program (AST) na LiveDOM aktualnej strony.
-        Używane przez BROWSE JS dla ręcznego testowania.
-        """
-        if not self._active or self._vm is None:
-            return False, "bridge not attached"
-        try:
-            result = self._vm.run(program)
-            if self._doc:
-                self._doc.flush()
-            return True, result
-        except Exception as e:
-            return False, str(e)
-
-    # ── Renderowanie po mutacjach ─────────────────────────────────────────────
-
-    def live_chunks(self) -> List[Any]:
-        """
-        Konwertuje LiveDOM → TextChunki dla Lunety.
-        Wywoływane gdy JS zmutował DOM i trzeba przerenderować.
-        """
-        if not self._active or self._doc is None:
-            return []
-        return _live_to_chunks(self._doc.body)
-
-    def has_mutations(self) -> bool:
-        return self._mutations > 0
-
-    def reset_mutations(self) -> None:
-        self._mutations = 0
-
-    # ── Tick schedulera ───────────────────────────────────────────────────────
+    # ── Tick — stygnięcie + GC + pruning ──────────────────────────────────────
 
     def tick(self) -> Dict[str, Any]:
-        """Tick GC/termodynamiki dla VM kontekstu JS tej strony."""
-        if self._vm is None:
-            return {}
-        return self._vm.tick()
+        """
+        Jeden tick termodynamiczny: decay + GC + prune w całym drzewie scope.
+        Wywoływany przez scheduler lub ręcznie (JS TICK).
+        """
+        self._tick_n += 1
+        collected = self._tick_scope(self.global_scope)
+        pruned    = self._prune_dead_children(self.global_scope)
+        self._total_gc      += collected
+        self._pruned_scopes += pruned
+        return {
+            "tick":      self._tick_n,
+            "collected": collected,
+            "pruned":    pruned,
+            "total_gc":  self._total_gc,
+        }
 
-    # ── Phi-space stats ───────────────────────────────────────────────────────
-
-    def status(self) -> Dict[str, Any]:
-        if not self._active or self._vm is None:
-            return {"active": False}
-        s = self._vm.phi_stats()
-        s["active"]       = True
-        s["mutations"]    = self._mutations
-        s["scripts_run"]  = self._scripts_run
-        s["dom_nodes"]    = self._count_nodes(self._doc.body) if self._doc else 0
-        s["url"]          = self._page_url
-        return s
-
-    # ── Helpers ───────────────────────────────────────────────────────────────
-
-    def _inject_browser_api(self, page: Any) -> None:
-        """Wstrzykuje browser API do VM (bez document — to robi bind_live_dom)."""
-        url  = getattr(page, "url", "")
-        vm   = self._vm
-
-        vm.set_global("navigator", {
-            "userAgent":  "KarmazynBrowser/4.4 KarmazynOS",
-            "language":   "pl-PL",
-            "onLine":     True,
-            "platform":   "KarmazynOS",
-        })
-        vm.set_global("location", {
-            "href":     url,
-            "pathname": _url_pathname(url),
-            "search":   _url_search(url),
-            "hash":     "",
-            "hostname": _url_hostname(url),
-            "reload":   lambda: None,
-            "assign":   lambda u: None,
-        })
-        vm.set_global("history", {
-            "pushState":    lambda *a: None,
-            "replaceState": lambda *a: None,
-            "back":         lambda: None,
-            "forward":      lambda: None,
-            "length":       1,
-        })
-        vm.set_global("screen",  {"width": 80, "height": 24})
-        vm.set_global("JSON", {
-            "parse":     __import__("json").loads,
-            "stringify": __import__("json").dumps,
-        })
-        vm.set_global("encodeURIComponent",
-                      __import__("urllib.parse", fromlist=["quote"]).quote)
-        vm.set_global("decodeURIComponent",
-                      __import__("urllib.parse", fromlist=["unquote"]).unquote)
-
-    def _on_mutation(self) -> None:
-        self._mutations += 1
-
-    def _count_nodes(self, node: LiveNode) -> int:
-        if node is None:
+    def _tick_scope(self, scope) -> int:
+        """Rekurencyjny tick przez drzewo scope."""
+        if not isinstance(scope, PhiScope):
             return 0
-        return 1 + sum(self._count_nodes(c) for c in node.children)
+        dead = scope.tick()
+        collected = scope.gc(dead)
+        for child in list(scope.children):
+            collected += self._tick_scope(child)
+        return collected
 
+    def _prune_dead_children(self, scope) -> int:
+        """
+        FIX Bug 5: Usuwa puste scope'y-dzieci (brak atomów + brak potomków).
+        Rekurencyjne: najpierw prune wnuki, potem dzieci.
+        Scope z atomami lub żywymi potomkami przeżywa.
+        """
+        if not isinstance(scope, PhiScope):
+            return 0
+        pruned = 0
+        # Najpierw prune wnuków (bottom-up)
+        for child in list(scope.children):
+            pruned += self._prune_dead_children(child)
+        # Potem prune dzieci tego scope'a
+        alive = []
+        for child in scope.children:
+            if isinstance(child, PhiScope) and child.is_empty():
+                pruned += 1  # puste — wycinamy
+            else:
+                alive.append(child)
+        scope.children = alive
+        return pruned
 
-# ─── LiveDOM → TextChunki ─────────────────────────────────────────────────────
+    # ── Profiling ─────────────────────────────────────────────────────────────
 
-def _live_to_chunks(node: LiveNode) -> List[Any]:
-    """
-    Konwertuje LiveDOM → TextChunki kompatybilne z ParsedPage.
-    Wywoływane gdy JS zmutował DOM — przerenderuj stronę.
-    """
-    chunks = []
-    _node_to_chunks(node, chunks)
-    return chunks
+    def thermal_map(self) -> Dict[str, Dict[str, Any]]:
+        """Pełna mapa temperatur — global scope + potomkowie."""
+        if isinstance(self.global_scope, PhiScope):
+            return self.global_scope.thermal_map()
+        return {}
 
+    def scope_tree(self) -> str:
+        """Drzewo scope'ów jako tekst."""
+        if isinstance(self.global_scope, PhiScope):
+            return self.global_scope.scope_tree()
+        return "(no phi-space)"
 
-def _node_to_chunks(node: LiveNode, out: list, depth: int = 0) -> None:
-    """Rekurencja LiveNode → TextChunk."""
-    if node is None:
-        return
+    def anomaly_score(self) -> float:
+        """
+        Detekcja anomalii — darmowa z termodynamiki.
 
-    try:
-        from karmazyn_browser import TextChunk
-    except ImportError:
-        class TextChunk:
-            def __init__(self, text, preformatted=False):
-                self.text = text
-                self.preformatted = preformatted
+        Wysoki score = podejrzany kod:
+          - Dużo odczytów, mało zapisów → szpieg
+          - Wszystkie atomy HOT → infinite loop candidate
+          - Dużo martwych atomów → memory leak
+        """
+        if not isinstance(self.global_scope, PhiScope):
+            return 0.0
 
-    tag = node.tag
+        atoms = list(self.global_scope._atoms.values())
+        if not atoms:
+            return 0.0
 
-    # Węzeł tekstowy
-    if node.typ == NODE_TEXT:
-        if node.text and node.text.strip():
-            out.append(TextChunk(text=node.text))
-        return
+        total_reads  = sum(a._reads for a in atoms)
+        total_writes = sum(a._writes for a in atoms)
+        hot_ratio    = sum(1 for a in atoms if a.state == "HOT") / len(atoms)
 
-    # Separatory
-    if tag == "hr":
-        out.append(TextChunk(text="\n" + "─" * 78 + "\n"))
-        return
+        rw_imbalance = 0.0
+        if total_writes > 0:
+            rw_imbalance = max(0.0, (total_reads / total_writes - 5.0) / 10.0)
+        elif total_reads > 10:
+            rw_imbalance = 1.0
 
-    # Bloki — dodaj newline przed i po
-    block_tags = {"p","div","article","section","main","header",
-                  "footer","nav","aside","li","tr","td","th"}
-    is_block = tag in block_tags
+        hot_anomaly = max(0.0, hot_ratio - 0.8) * 5.0
+        gc_pressure = min(1.0, self._total_gc / max(1, len(atoms) * 2))
 
-    if is_block:
-        out.append(TextChunk(text="\n"))
+        return min(1.0, rw_imbalance * 0.4 + hot_anomaly * 0.4 + gc_pressure * 0.2)
 
-    # Nagłówki
-    if tag in ("h1","h2","h3","h4","h5","h6"):
-        level  = int(tag[1])
-        text   = "".join(c.text for c in node.children
-                         if c.typ == NODE_TEXT and c.text)
-        if text:
-            prefix = "#" * level + " "
-            line   = prefix + text
-            sep    = ("═" if level == 1 else "─") * min(len(line), 78)
-            out.append(TextChunk(text=f"\n{line}\n{sep}\n"))
-        return
+    def phi_stats(self) -> Dict[str, Any]:
+        """Statystyki phi-space kontekstu JS."""
+        gs = self.global_scope
+        if isinstance(gs, PhiScope):
+            atoms = list(gs._atoms.values())
+            scope_count = gs.total_scope_count()
+            scope_depth = gs.max_depth()
+            total_atoms = gs.total_atom_count()
+        else:
+            atoms = []
+            scope_count = 1
+            scope_depth = 0
+            total_atoms = 0
+        return {
+            "context":       self._context,
+            "atoms":         len(atoms),
+            "total_atoms":   total_atoms,
+            "hot":           sum(1 for a in atoms if a.state == "HOT"),
+            "warm":          sum(1 for a in atoms if a.state == "WARM"),
+            "cold":          sum(1 for a in atoms if a.state == "COLD"),
+            "tomb":          sum(1 for a in atoms if a.state == "TOMB"),
+            "tick_n":        self._tick_n,
+            "total_gc":      self._total_gc,
+            "pruned_scopes": self._pruned_scopes,
+            "scope_count":   scope_count,
+            "scope_depth":   scope_depth,
+            "op_count":      self._op_count,
+            "max_ops":       self.MAX_OPS,
+            "anomaly":       self.anomaly_score(),
+            "reads":         sum(a._reads for a in atoms),
+            "writes":        sum(a._writes for a in atoms),
+        }
 
-    # Pre/code
-    if tag in ("pre", "code"):
-        text = "".join(c.text for c in node.children if c.typ == NODE_TEXT)
-        if text:
-            out.append(TextChunk(text=text, preformatted=True))
-        return
+    # ── Sandbox ───────────────────────────────────────────────────────────────
 
-    # Rekurencja
-    for child in node.children:
-        _node_to_chunks(child, out, depth + 1)
+    def sandbox(self, context: str = "sandbox") -> "KarmazynJSPhi":
+        """
+        Tworzy izolowany interpreter bez referencji do rodzica.
+        Parent == None to próżnia — brak referencji do phi-space systemu.
+        """
+        return KarmazynJSPhi(runtime=None, context=context)
 
-    if is_block:
-        out.append(TextChunk(text="\n"))
+    # ── Runtime integration ───────────────────────────────────────────────────
 
+    def expose_atom(self, js_name: str, atom_id: str) -> bool:
+        if self._runtime is None:
+            return False
+        try:
+            atom = self._runtime.get_atom(atom_id)
+            if atom is None:
+                return False
+            self.global_scope.vars[js_name] = atom.E
+            return True
+        except Exception:
+            return False
 
-# ─── URL helpers ─────────────────────────────────────────────────────────────
+    def expose_bubble(self, js_name: str, bubble_label: str) -> bool:
+        if self._runtime is None:
+            return False
+        try:
+            bubble = self._runtime.get_bubble(bubble_label)
+            if bubble is None:
+                return False
+            obj = {}
+            for atom in getattr(bubble, "atoms", []):
+                obj[getattr(atom, "id", str(atom))] = getattr(atom, "E", None)
+            self.global_scope.vars[js_name] = obj
+            return True
+        except Exception:
+            return False
 
-def _url_prefix(url: str) -> str:
-    import re
-    return re.sub(r"[^a-z0-9]", "_",
-                  url.lower().replace("https://","").replace("http://",""))[:16]
+    # ── Override run ──────────────────────────────────────────────────────────
 
-def _url_pathname(url: str) -> str:
-    try:
-        import urllib.parse
-        return urllib.parse.urlparse(url).path or "/"
-    except Exception:
-        return "/"
-
-def _url_search(url: str) -> str:
-    try:
-        import urllib.parse
-        q = urllib.parse.urlparse(url).query
-        return f"?{q}" if q else ""
-    except Exception:
-        return ""
-
-def _url_hostname(url: str) -> str:
-    try:
-        import urllib.parse
-        return urllib.parse.urlparse(url).hostname or ""
-    except Exception:
-        return ""
+    def run(self, program: list) -> Any:
+        """Uruchamia program w global scope z resetem op_count."""
+        self._op_count = 0
+        try:
+            return self.exec(program, self.global_scope)
+        except _Return as r:
+            return r.value
+        except _Throw as t:
+            raise RuntimeError(f"Uncaught: {t.value}")
 
 
 # ─── Komenda shella ───────────────────────────────────────────────────────────
 
-def cmd_js_bridge(args: list, bridge: JSBridge) -> str:
+def cmd_js(args, vm: KarmazynJSPhi) -> str:
     """
-    Dostępne przez BROWSE JS lub JS w shellu:
-
-    JS STATUS            — statystyki phi-space VM
-    JS THERMAL           — mapa temperatur zmiennych JS
-    JS TICK              — ręczny tick GC
-    JS DOM               — struktura LiveDOM (render tekst)
-    JS RUN <expr>        — wykonaj wyrażenie (Python AST jako eval)
+    JS STATUS         — statystyki phi-space kontekstu
+    JS THERMAL        — mapa temperatur zmiennych (+ potomkowie)
+    JS TICK [n]       — ręczny tick GC
+    JS TREE           — drzewo scope'ów
+    JS SANDBOX <name> — stwórz izolowany kontekst
+    JS STATS          — szczegółowe statystyki
     """
-    if not bridge._active:
-        return "JS Bridge nieaktywny. Najpierw otwórz stronę: LUNETA <url>"
-
     if not args or args[0].upper() == "STATUS":
-        s = bridge.status()
+        s = vm.phi_stats()
         lines = [
-            f"Aktywny:    {s['active']}",
-            f"URL:        {s.get('url','?')[:50]}",
-            f"Węzły DOM:  {s.get('dom_nodes',0)}",
-            f"Mutacje:    {s.get('mutations',0)}",
-            f"Skrypty:    {s.get('scripts_run',0)}",
-            f"Atomy JS:   {s.get('atoms',0)}  HOT:{s.get('hot',0)}",
-            f"Operacje:   {s.get('op_count',0)}/{s.get('max_ops',0)}",
+            f"Kontekst: {s['context']}",
+            f"Atomy:    {s['atoms']} (global) / {s['total_atoms']} (drzewo)  "
+            f"HOT:{s['hot']}  COLD:{s['cold']}",
+            f"Scope'y:  {s['scope_count']}  depth={s['scope_depth']}  "
+            f"pruned={s['pruned_scopes']}",
+            f"Ticki:    {s['tick_n']}  GC:{s['total_gc']}",
+            f"Operacje: {s['op_count']}/{s['max_ops']}",
+            f"Anomalia: {s['anomaly']:.2f}",
+            f"R/W:      {s['reads']}/{s['writes']}",
         ]
         return "\n".join(lines)
 
     sub = args[0].upper()
 
-    if sub == "THERMAL" and bridge._vm:
-        return cmd_js(["THERMAL"], bridge._vm)
+    if sub == "THERMAL":
+        tmap = vm.thermal_map()
+        if not tmap:
+            return "Brak atomów JS w phi-space."
+        lines = ["Mapa temperatur JS:"]
+        for name, info in sorted(tmap.items(), key=lambda x: -x[1]["T"]):
+            scope_tag = f"@{info['scope']}" if info.get("scope") else ""
+            lines.append(
+                f"  [{info['state'][0]}] T={info['T']:5.1f}  "
+                f"R:{info['reads']:3}  W:{info['writes']:3}  "
+                f"d{info.get('depth',0)}  {name} {scope_tag}"
+            )
+        return "\n".join(lines)
 
-    if sub == "TICK" and bridge._vm:
-        r = bridge.tick()
-        return f"Tick #{r.get('tick','?')}: GC={r.get('collected',0)} anomalia={r.get('anomaly',0):.2f}"
+    if sub == "TICK":
+        n = int(args[1]) if len(args) > 1 else 1
+        total_collected = 0
+        total_pruned    = 0
+        for _ in range(n):
+            result = vm.tick()
+            total_collected += result["collected"]
+            total_pruned    += result["pruned"]
+        return (f"Tick x{n}: zebrano {total_collected} atomów, "
+                f"przycięto {total_pruned} scope'ów, "
+                f"łącznie GC: {vm._total_gc}")
 
-    if sub == "DOM" and bridge._doc:
-        return bridge._doc.render_text()
+    if sub == "TREE":
+        tree = vm.scope_tree()
+        return f"Drzewo scope'ów:\n{tree}"
 
-    if sub == "RUN" and len(args) > 1:
-        # Ręczne wykonanie wyrażenia — tylko do testów/debug
-        # Przyjmuje Python-style AST jako string eval (niebezpieczne w produkcji)
-        expr_str = " ".join(args[1:])
-        try:
-            # SECURITY: eval usunięty — używaj karmazyn_js_parser.parse()
-            from karmazyn_js_parser import KarmazynParser as _P
-            ast_prog = _P().parse(expr_str)
-            ok, result = bridge.run_ast(ast_prog if isinstance(ast_prog, list)
-                                        else [("expr", ast_prog)])
-            return f"{'OK' if ok else 'ERR'}: {result}"
-        except Exception as e:
-            return f"Błąd parsowania wyrażenia: {e}"
+    if sub == "SANDBOX":
+        name = args[1] if len(args) > 1 else "sandbox"
+        sb = vm.sandbox(context=name)
+        return f"Sandbox '{name}' utworzony (izolowany phi-space, 0 atomów)"
 
-    return cmd_js_bridge([], bridge)
+    if sub == "STATS":
+        s = vm.phi_stats()
+        lines = [
+            f"=== KarmazynJS Phi Stats ===",
+            f"Kontekst:      {s['context']}",
+            f"Atomy global:  {s['atoms']} (HOT:{s['hot']} WARM:{s['warm']} "
+            f"COLD:{s['cold']} TOMB:{s['tomb']})",
+            f"Atomy drzewo:  {s['total_atoms']}",
+            f"Scope'y:       {s['scope_count']}  max depth={s['scope_depth']}",
+            f"Pruned scopes: {s['pruned_scopes']}",
+            f"Ticki:         {s['tick_n']}",
+            f"GC total:      {s['total_gc']}",
+            f"Operacje:      {s['op_count']}/{s['max_ops']}",
+            f"Anomalia:      {s['anomaly']:.3f}",
+            f"R/W:           {s['reads']}/{s['writes']}",
+        ]
+        return "\n".join(lines)
+
+    return f"Nieznana subkomenda JS: {args[0]}. Dostępne: STATUS THERMAL TICK TREE SANDBOX STATS"
