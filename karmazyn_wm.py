@@ -121,6 +121,7 @@ class WindowManager:
         self._cascade_n = 0
         self._panel = None          # ostatni znany panel_rect (pygame.Rect)
         self._t = 0.0               # czas do kursora terminala
+        self._spawn_terminal = None # callback tworzący terminal jako PROCES (wstrzykiwany)
 
         # ── resize ────────────────────────────────────────────────────────
         self._resize: Optional[Window] = None
@@ -561,12 +562,24 @@ def get_active() -> Optional[WindowManager]:
     return _ACTIVE
 
 
-def start_desktop(display) -> Optional[WindowManager]:
-    """Uruchom tryb okienkowy Openbox‑style (pełny ekran) i otwórz terminal."""
+def start_desktop(display, spawn_terminal=None) -> Optional[WindowManager]:
+    """Uruchom tryb okienkowy Openbox‑style (pełny ekran) i otwórz terminal.
+
+    spawn_terminal: opcjonalny callback tworzący terminal jako PROCES (okno +
+    proces + powiązanie on_close = zapis pracy + koniec procesu). Gdy podany,
+    zapamiętywany na WM i używany też przez 'WIN TERM'. Gdy None — fallback do
+    wm.open_terminal (samo okno, bez procesu) dla zgodności wstecznej.
+    """
     wm = get_wm()
+    if spawn_terminal is not None:
+        wm._spawn_terminal = spawn_terminal
     if display is not None and getattr(display, "available", False):
         wm.attach_fullscreen(display)
-        wm.open_terminal(display.term_state)
+        if not wm.windows:                       # pierwszy terminal tylko gdy pulpit pusty
+            if wm._spawn_terminal is not None:
+                wm._spawn_terminal()             # terminal jako proces
+            else:
+                wm.open_terminal(display.term_state)
     set_active(wm)
     return wm
 
@@ -595,7 +608,9 @@ def cmd_windows(args: List[str], display=None) -> str:
         title = " ".join(args[1:])
         return f"Zamknięto '{title}'" if wm.close_by_title(title) else f"Brak okna '{title}'"
     if args[0].upper() == "TERM":
-        if display and hasattr(display, 'term_state'):
+        if wm._spawn_terminal is not None:
+            wm._spawn_terminal()                 # nowy terminal jako PROCES
+        elif display and hasattr(display, 'term_state'):
             wm.open_terminal(display.term_state)
         else:
             wm.open_terminal(None)   # otworzy okno bez działającego terminala

@@ -166,6 +166,29 @@ class BubbleStore:
             if bid in self._rev: self._rev.remove(bid)
             return True
         return False
+    def remove_bubbles(self, labels):
+        """
+        Zbiorcze usuwanie bąbli — jedna operacja zamiast N pojedynczych
+        wywołań remove_bubble w pętli (batch API z jednym podsumowaniem
+        zamiast N komunikatów; jedno set-difference na _rev zamiast N remove).
+        Nieśmiertelne pomijane. Zwraca (usuniete: list, odmowa: list).
+        """
+        removed, refused = [], []
+        removed_bids = set()
+        for label in labels:
+            bid = self._idx.get(label)
+            if not bid or bid not in self._b:
+                continue
+            if self._b[bid].immortal:
+                refused.append(label)
+                continue
+            del self._b[bid]
+            del self._idx[label]
+            removed_bids.add(bid)
+            removed.append(label)
+        if removed_bids:
+            self._rev.difference_update(removed_bids)   # _rev to set → różnica zbiorów
+        return removed, refused
     @property
     def count(self): return len(self._b) - len(self._rev)
     @property
@@ -535,8 +558,11 @@ class KarmazynOS:
         )
         print(f"  [IDEA] Utworzono '{hid}' z {len(labels)} bąbli")
         if remove_originals:
-            for lbl in labels: self.bubbles.remove_bubble(lbl)
-            print("  [IDEA] Usunięto oryginalne bąble")
+            removed, refused = self.bubbles.remove_bubbles(labels)
+            msg = f"  [IDEA] Usunięto {len(removed)} oryginalnych bąbli"
+            if refused:
+                msg += f" (pominięto nieśmiertelne: {len(refused)})"
+            print(msg)
         return hid
     def recall_from_hologram(self, hologram_id, cue, k=3):
         h = self.holograms.get(hologram_id)
