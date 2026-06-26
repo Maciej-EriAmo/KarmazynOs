@@ -1,0 +1,3 @@
+#!/bin/sh
+# karmazyn — runtime jako komenda. Importy: PYTHONPATH=kernel:software.
+exec python3 "${KARMAZYN_HOME:-/opt/karmazyn/software}/karmazyn_boot.py" "$@"
