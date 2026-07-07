@@ -164,6 +164,16 @@ Crimson Loop               ⏳  introspekcja — ostatnia warstwa
 
 ---
 
+## Licencja
+
+Kod źródłowy w tym repozytorium jest na licencji **[MIT](LICENSE)**.
+
+Wcześniej GPL-3.0; relicencja na MIT od 2026-07-07. Forki sprzed tej daty mogą pozostać na GPL według decyzji maintainerów.
+
+Publikacje naukowe i wpisy Zenodo zachowują oryginalne licencje (patrz DOI powyżej). Projekt pokrewny: [Cynober DB / DBase](https://github.com/Maciej-EriAmo/DBase) (MIT).
+
+---
+
 ## Autor
 
 **Maciej Mazur** — niezależny badacz AI, Warszawa
