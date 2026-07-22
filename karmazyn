@@ -1,3 +1,14 @@
 #!/bin/sh
-# karmazyn — runtime jako komenda. Importy: PYTHONPATH=kernel:software.
-exec python3 "${KARMAZYN_HOME:-/opt/karmazyn/software}/karmazyn_boot.py" "$@"
+# karmazyn — lokalny launcher (Kernel Karmazyn)
+# Preferuje uklad kernel/ + software/ (jak Docker); fallback: katalog plaski.
+set -e
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
+if [ -d "$SCRIPT_DIR/kernel" ] && [ -d "$SCRIPT_DIR/software" ]; then
+  export PYTHONPATH="$SCRIPT_DIR/kernel:$SCRIPT_DIR/software${PYTHONPATH:+:$PYTHONPATH}"
+  BOOT="$SCRIPT_DIR/software/karmazyn_boot.py"
+else
+  ROOT="${KARMAZYN_HOME:-$SCRIPT_DIR}"
+  export PYTHONPATH="${ROOT}${PYTHONPATH:+:$PYTHONPATH}"
+  BOOT="$ROOT/karmazyn_boot.py"
+fi
+exec python3 "$BOOT" "$@"

@@ -1,0 +1,30 @@
+KarmazynOS Kernel — jedna wersja kanoniczna
+==========================================
+Zsynchronizowane: 2026-07-22 (promocja lustra root → kernel/ + software/)
+Wersja jadra (karmazyn_kernel.__version__): 1.1.0  (FIX v1.1 + v1.2)
+
+Jadro (kernel/) — ZRODLO PRAWDY:
+  karmazyn_atom.py
+  karmazyn_atomstore.py
+  karmazyn_hrr.py
+  karmazyn_substrate.py
+  karmazyn_kernel.py
+  kernel_boundary.py   (kopia narzedzia w katalogu jadra)
+
+Oprogramowanie minimalne (software/) — ZRODLO PRAWDY:
+  karmazyn_boot.py
+  karmazyn_exec.py
+  karmazyn_phi.py
+
+Narzedzia (root):
+  kernel_boundary.py  — straznik granicy jadro/oprogramowanie (CI/Docker)
+  bin/karmazyn        — launcher w obrazie
+  karmazyn / karmazyn.cmd — launcher lokalny
+  test_substrate.py   — testy silnika (uruchamiaj z PYTHONPATH=kernel:software)
+
+Pliki w katalogu glownym (karmazyn_*.py) to LUSTRO kernel/ + software/
+dla wygodnego `python karmazyn_boot.py` bez PYTHONPATH. Nie edytuj ich
+osobno — zrodlem prawdy sa kernel/ i software/. Po zmianie w kernel/
+lub software/ skopiuj z powrotem do root (albo odwrotnie jednym skryptem).
+
+osobno/ — kopia archiwalna; zrodlem prawdy dla phi jest software/karmazyn_phi.py

@@ -1,0 +1,5 @@
+#!/bin/sh
+# Runtime w obrazie Docker: jadro RO + oprogramowanie.
+export PYTHONPATH="${PYTHONPATH:-/opt/karmazyn/kernel:/opt/karmazyn/software}"
+export KARMAZYN_HOME="${KARMAZYN_HOME:-/opt/karmazyn/software}"
+exec python3 "${KARMAZYN_HOME}/karmazyn_boot.py" "$@"
