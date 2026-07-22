@@ -248,6 +248,7 @@ class AtomRegistry:
     def __init__(self):
         self._atoms: Dict[str, Atom] = {}
         self._generation: int = 0
+        self._atoms_wrapper: Optional["AtomsWrapper"] = None  # cache — reużycie AtomsWrapper
 
     def create(self, id: str, S: str = "", E: str = "",
                T: float = T_INIT, **kwargs) -> Atom:
@@ -274,8 +275,14 @@ class AtomRegistry:
 
     @property
     def atoms_wrapper(self) -> "AtomsWrapper":
-        """Zwraca AtomsWrapper — wspiera atoms() i iterację."""
-        return AtomsWrapper(self)
+        """Zwraca AtomsWrapper — wspiera atoms() i iterację.
+
+        Jeden współdzielony wrapper: każdy odczyt property nie tworzy nowego
+        obiektu (inaczej cache generacyjny AtomsWrapper nigdy nie jest reużywany).
+        """
+        if self._atoms_wrapper is None:
+            self._atoms_wrapper = AtomsWrapper(self)
+        return self._atoms_wrapper
 
     def atoms(self) -> List[Atom]:
         """Zwraca listę wszystkich żywych atomów."""
