@@ -1,30 +1,32 @@
-KarmazynOS Kernel — jedna wersja kanoniczna
+KarmazynOS Kernel - jedna wersja kanoniczna
 ==========================================
-Zsynchronizowane: 2026-07-22 (promocja lustra root → kernel/ + software/)
-Wersja jadra (karmazyn_kernel.__version__): 1.1.0  (FIX v1.1 + v1.2)
+Zsynchronizowane: 2026-07-24 (zgodnosc Kernel Karmazyn + DBase + monorepo KarmazynOs)
+Wersja jadra (karmazyn_kernel.__version__): 1.1.0  (FIX v1.1 + v1.2 + S15 dual-emit/snapshot)
 
-Jadro (kernel/) — ZRODLO PRAWDY:
+Jadro (kernel/) - ZRODLO PRAWDY:
   karmazyn_atom.py
   karmazyn_atomstore.py
   karmazyn_hrr.py
   karmazyn_substrate.py
   karmazyn_kernel.py
-  kernel_boundary.py   (kopia narzedzia w katalogu jadra)
+  kernel_boundary.py
 
-Oprogramowanie minimalne (software/) — ZRODLO PRAWDY:
+Oprogramowanie minimalne (software/) - ZRODLO PRAWDY:
   karmazyn_boot.py
   karmazyn_exec.py
   karmazyn_phi.py
 
 Narzedzia (root):
-  kernel_boundary.py  — straznik granicy jadro/oprogramowanie (CI/Docker)
-  bin/karmazyn        — launcher w obrazie
-  karmazyn / karmazyn.cmd — launcher lokalny
-  test_substrate.py   — testy silnika (uruchamiaj z PYTHONPATH=kernel:software)
+  kernel_boundary.py
+  bin/karmazyn
+  karmazyn / karmazyn.cmd
+  test_substrate.py
+  test_hrr.py
 
 Pliki w katalogu glownym (karmazyn_*.py) to LUSTRO kernel/ + software/
-dla wygodnego `python karmazyn_boot.py` bez PYTHONPATH. Nie edytuj ich
-osobno — zrodlem prawdy sa kernel/ i software/. Po zmianie w kernel/
-lub software/ skopiuj z powrotem do root (albo odwrotnie jednym skryptem).
+dla wygodnego importu bez PYTHONPATH.
 
-osobno/ — kopia archiwalna; zrodlem prawdy dla phi jest software/karmazyn_phi.py
+API silnika (S15, zgodne z Cynober/DBase):
+  tick_event_mode: batch | per_atom | both (domyslnie both)
+  sync_id_counter(), snapshot_atoms(), restore_atoms()
+  zagniezdzony tick() = no-op; reaped tylko po skutecznym delete

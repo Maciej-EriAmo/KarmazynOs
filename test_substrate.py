@@ -20,7 +20,7 @@ Pokrycie (numeracja z rejestru ryzyk audytu):
   S4/S14 (v1.2) — retained_tomb kanon + alias archived / _archived
   S5            — import_to_bubble: kolizja E nadpisuje (udokumentowane)
   S8   (v1.2)   — invalidacja cache wektora po zmianie E (HRR)
-  S12  (v1.2)   — tick_batch (1/tick) vs tryb per_atom
+  S12/S15 (v1.2) — tick: batch | per_atom | both (domyślnie both); zagnieżdżony tick=no-op
   v1.1          — lock, sentinel value w create_atom, świeży stats,
                   ramka-korzeń (współpraca z exec), clamp T
 """
@@ -440,7 +440,8 @@ class TestS4RetainedTomb(unittest.TestCase):
 
 class TestS12TickEvents(unittest.TestCase):
 
-    def test_batch_mode_default(self):
+    def test_both_mode_default(self):
+        # Domyślnie dual-emit (okres przejściowy S12/S15): per-atom + batch
         s = Store()
         batches, per_atom = [], []
         s.events.on("tick_batch", batches.append)
@@ -448,7 +449,19 @@ class TestS12TickEvents(unittest.TestCase):
         for _ in range(5):
             s.atom_new("var", "e")
         s.tick()
-        self.assertEqual(len(batches), 1)                  # JEDEN event / tick
+        self.assertEqual(len(batches), 1)
+        self.assertEqual(len(per_atom), 5)
+        self.assertEqual(batches[0]["atoms"], 5)
+
+    def test_batch_mode_only(self):
+        s = Store(tick_event_mode="batch")
+        batches, per_atom = [], []
+        s.events.on("tick_batch", batches.append)
+        s.events.on("tick", per_atom.append)
+        for _ in range(5):
+            s.atom_new("var", "e")
+        s.tick()
+        self.assertEqual(len(batches), 1)
         self.assertEqual(len(per_atom), 0)
         self.assertEqual(batches[0]["atoms"], 5)
 
@@ -467,8 +480,27 @@ class TestS12TickEvents(unittest.TestCase):
         with self.assertRaises(ValueError):
             Store(tick_event_mode="cokolwiek")
 
-    def test_batch_reports_reaped(self):
+    def test_nested_tick_is_noop(self):
+        # S15: handler vacuum_decay → tick() nie rekurencyjnie zawyża reaped
         s = Store()
+        s.events.on("vacuum_decay", lambda _a: s.tick())
+        s.atom_new("var", "orphan", T=1.0)
+        s.tick()
+        self.assertEqual(s.reaped, 1)
+
+    def test_snapshot_restore_atoms(self):
+        s = Store(thermal=False)
+        s.create_atom("a0", "S", "E", value=1)
+        snap = s.snapshot_atoms()
+        temps = {aid: a.T for aid, a in snap.items()}
+        s.create_atom("a1", "S", "E2", value=2)
+        self.assertTrue(s.has_atom("a1"))
+        s.restore_atoms(snap, temps)
+        self.assertTrue(s.has_atom("a0"))
+        self.assertFalse(s.has_atom("a1"))
+
+    def test_batch_reports_reaped(self):
+        s = Store(tick_event_mode="batch")
         got = []
         s.events.on("tick_batch", got.append)
         s.atom_new("var", "sierota")

@@ -37,6 +37,7 @@ Powierzchnia zgodna z evaluatorem referencji (drop-in):
 
 Dodatkowo adapter AtomStore (kontrakt aplikacji):
   create_atom · has_atom · create_bubble · import_to_bubble · get_bubble
+DBase/KAFD: sync_id_counter() po wczytaniu jawnych id aN.
 
 UWAGA GC dla AtomStore (S3): create_bubble("box") + import_to_bubble(...)
 NIE chroni atomów przed GC. Bąbel-worek nie jest korzeniem — atomy w nim
@@ -71,10 +72,12 @@ FIX v1.2 (runda S1→S13, audyt powtórzony 2026-07-22):
   S12/S13  Jeden walk na tick (dowód: GC usuwa wyłącznie atomy spoza reach,
       więc ich krawędzie nie były częścią walka — `seen` pozostaje poprawne
       dla prune). Strażnik: bąble utworzone PODCZAS ticka (przez handlery
-      zdarzeń) są zachowane do następnego ticka. Eventy: domyślnie JEDEN
-      `tick_batch` per tick (payload: atoms/reaped/retained); tryb per-atom
-      `emit("tick", atom)` dostępny przez Store(tick_event_mode="per_atom")
-      dla istniejących słuchaczy progowych (THRESHOLD).
+      zdarzeń) są zachowane do następnego ticka. Eventy tick:
+        "batch"    — tylko tick_batch (1/tick),
+        "per_atom" — tylko emit("tick", atom) per atom,
+        "both"     — dual-emit (okres przejściowy; DOMYŚLNE) — batch + per-atom.
+  S15  Zagnieżdżony tick() (np. z vacuum_decay) jest no-op; reaped rośnie
+      tylko gdy delete faktycznie usunął atom.
 """
 
 import threading
@@ -185,13 +188,14 @@ class Store:
     _reg_warned = False     # jednorazowe ostrzeżenie dostępu do reg (S2)
 
     def __init__(self, thermal=True, env_of=None, decay=DECAY, extra_reach=None,
-                 tick_event_mode="batch"):
-        """tick_event_mode (S12, v1.2):
-          "batch"    — JEDEN emit("tick_batch", {...}) na tick (domyślne),
-          "per_atom" — emit("tick", atom) dla każdego atomu (tryb wsteczny
-                       dla słuchaczy progowych THRESHOLD)."""
-        if tick_event_mode not in ("batch", "per_atom"):
-            raise ValueError("tick_event_mode: 'batch' albo 'per_atom'")
+                 tick_event_mode="both"):
+        """tick_event_mode (S12/S15, v1.2):
+          "batch"    — JEDEN emit("tick_batch", {...}) na tick,
+          "per_atom" — emit("tick", atom) dla każdego atomu (THRESHOLD),
+          "both"     — dual-emit: per-atom + batch (okres przejściowy, domyślne).
+        Zagnieżdżony tick (handler pod RLock) jest no-op (S15)."""
+        if tick_event_mode not in ("batch", "per_atom", "both"):
+            raise ValueError("tick_event_mode: 'batch', 'per_atom' albo 'both'")
         self.lock = threading.RLock()        # FIX v1.1: jedna brama do stanu
         self._reg = ka.AtomRegistry()        # kanoniczny rejestr + FSM atomu (S2: wewnętrzny)
         self.bubbles = []
@@ -207,6 +211,7 @@ class Store:
         self.reaped = 0
         self._retained_tomb = set()          # S4/S14: kanon — retencja TOMB pod reach (RAM, bez thaw)
         self._tick_event_mode = tick_event_mode
+        self._ticking = False                # S15: strażnik reentrancy tick()
         self.events = EventBus()             # silnik = źródło zdarzeń termicznych
 
     # ── enkapsulacja rejestru (S2) ────────────────────────────────────────────
@@ -242,6 +247,18 @@ class Store:
             atom.on_state_change(self._announce) # atom sam ogłosi przejście stanu
         self.events.emit("atom_created", atom)
         return atom
+
+    def sync_id_counter(self) -> int:
+        """Po wczytaniu .kafd (reg.create z jawnym id) podnieś _n ponad max aN."""
+        with self.lock:
+            max_n = -1
+            for atom in self._reg.atoms():
+                aid = atom.id
+                if len(aid) > 1 and aid[0] == "a" and aid[1:].isdigit():
+                    max_n = max(max_n, int(aid[1:]))
+            if max_n >= 0:
+                self._n = max(self._n, max_n + 1)
+            return self._n
 
     def _announce(self, atom):
         # Przekroczenie progu FSM — zawsze state_changed.
@@ -318,6 +335,27 @@ class Store:
             self._reg.delete(aid)
         self.events.emit("atom_deleted", atom)
         return True
+
+    def snapshot_atoms(self):
+        """Płytka kopia mapy id→Atom (transakcje / rollback). Atomy współdzielone."""
+        with self.lock:
+            return dict(self._reg._atoms)
+
+    def restore_atoms(self, atoms, temperatures=None):
+        """Przywróć rejestr z snapshotu (rollback transakcji).
+
+        atoms: dict id→Atom (jak z snapshot_atoms).
+        temperatures: opcjonalnie {id: T} — przywraca T i FSM po restarcie stanu.
+        """
+        with self.lock:
+            self._reg._atoms = dict(atoms)
+            self._reg._generation += 1
+            if temperatures:
+                for aid, T in temperatures.items():
+                    a = self._reg.get(aid)
+                    if a is not None:
+                        a.T = float(T)
+                        a._update_state()
 
     def _purge_bindings(self, aid):
         """Usuń wszystkie name→aid w znanym inwentarzu bąbli (anty-dangling)."""
@@ -472,51 +510,64 @@ class Store:
             return
         # FIX v1.1: cały tick pod lockiem — walk→decay→GC→prune atomowo
         # względem mutacji z innych wątków (boot: scheduler w tle).
+        # S15: zagnieżdżony tick (handler vacuum_decay/state_changed) → no-op.
         with self.lock:
-            reach, seen = self._walk_bubbles()
-            # S13 (v1.2): JEDEN walk na tick. Dowód redundancji drugiego:
-            # GC usuwa wyłącznie atomy SPOZA reach — ich krawędzie env_of
-            # nigdy nie były częścią walka, a purge zdejmuje tylko bindy
-            # wskazujące na martwe atomy, co nie zmienia osiągalności bąbli.
-            # Strażnik: bąble utworzone PODCZAS ticka (przez handlery
-            # state_changed/vacuum_decay) zachowujemy do następnego ticka.
-            n_bubbles_before = len(self.bubbles)
-            per_atom = (self._tick_event_mode == "per_atom")
-            for atom in self._reg.atoms():
-                atom.decay(self._decay)          # hak atomu → state_changed
-                if per_atom:
-                    self.events.emit("tick", atom)   # tryb wsteczny (THRESHOLD)
-            reaped_now = 0
-            retained_now = 0
-            # atoms() już zwraca list() — snapshot potrzebny (delete w pętli),
-            # zewnętrzne list() byłoby podwójną alokacją.
-            for atom in self._reg.atoms():
-                if atom.is_dead():                   # zimny (T < T_TOMB)
-                    if atom.id in reach:
-                        # osiągalny → retencja TOMB pod korzeniem (bez
-                        # kompresji/thaw — retained tomb ids, S4/S14)
-                        self._retained_tomb.add(atom.id)
-                        retained_now += 1
-                    else:
-                        self.events.emit("vacuum_decay", atom)  # realne GC
-                        aid = atom.id
-                        self._purge_bindings(aid)    # zero dangling name→id
-                        self._reg.delete(aid)
+            if self._ticking:
+                return
+            self._ticking = True
+            try:
+                self._tick_body()
+            finally:
+                self._ticking = False
+
+    def _tick_body(self):
+        """Ciało ticka — wołane wyłącznie pod lockiem z _ticking=True."""
+        reach, seen = self._walk_bubbles()
+        # S13 (v1.2): JEDEN walk na tick. Dowód redundancji drugiego:
+        # GC usuwa wyłącznie atomy SPOZA reach — ich krawędzie env_of
+        # nigdy nie były częścią walka, a purge zdejmuje tylko bindy
+        # wskazujące na martwe atomy, co nie zmienia osiągalności bąbli.
+        # Strażnik: bąble utworzone PODCZAS ticka (przez handlery
+        # state_changed/vacuum_decay) zachowujemy do następnego ticka.
+        n_bubbles_before = len(self.bubbles)
+        mode = self._tick_event_mode
+        emit_per_atom = mode in ("per_atom", "both")
+        emit_batch = mode in ("batch", "both")
+        for atom in self._reg.atoms():
+            atom.decay(self._decay)          # hak atomu → state_changed
+            if emit_per_atom:
+                self.events.emit("tick", atom)   # THRESHOLD / dual-emit
+        reaped_now = 0
+        retained_now = 0
+        # atoms() już zwraca list() — snapshot na czas delete; bez podwójnego list().
+        for atom in self._reg.atoms():
+            if atom.is_dead():                   # zimny (T < T_TOMB)
+                if atom.id in reach:
+                    # osiągalny → retencja TOMB pod korzeniem (bez
+                    # kompresji/thaw — retained tomb ids, S4/S14)
+                    self._retained_tomb.add(atom.id)
+                    retained_now += 1
+                else:
+                    self.events.emit("vacuum_decay", atom)  # realne GC
+                    aid = atom.id
+                    self._purge_bindings(aid)    # zero dangling name→id
+                    # S15: reaped tylko gdy delete faktycznie usunął
+                    if self._reg.delete(aid):
                         self._retained_tomb.discard(aid)
                         self.reaped += 1
                         reaped_now += 1
-                else:
-                    self._retained_tomb.discard(atom.id)  # ożywiony (T≥TOMB) → poza retencją
-            # prune na `seen` z jedynego walka + strażnik nowych bąbli
-            live = seen | {id(b) for b in self.bubbles[n_bubbles_before:]}
-            self._prune_bubbles(live)
-            if not per_atom:
-                # S12 (v1.2): jeden zbiorczy event zamiast N callbacków
-                self.events.emit("tick_batch", {
-                    "atoms": len(self._reg),
-                    "reaped": reaped_now,
-                    "retained": retained_now,
-                })
+            else:
+                self._retained_tomb.discard(atom.id)  # ożywiony (T≥TOMB) → poza retencją
+        # prune na `seen` z jedynego walka + strażnik nowych bąbli
+        live = seen | {id(b) for b in self.bubbles[n_bubbles_before:]}
+        self._prune_bubbles(live)
+        if emit_batch:
+            # S12 (v1.2): zbiorczy event (sam albo dual z per-atom)
+            self.events.emit("tick_batch", {
+                "atoms": len(self._reg),
+                "reaped": reaped_now,
+                "retained": retained_now,
+            })
 
     def settle(self, n):
         # Bez locka na całość: każdy tick bierze go sam — między tickami
