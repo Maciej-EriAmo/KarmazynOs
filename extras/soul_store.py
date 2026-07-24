@@ -186,7 +186,8 @@ def load_soul(karmazyn_os, path: str = "./karmazyn_data") -> bool:
     str_map = {}   # label → (S, T)
 
     if os.path.exists(npz_path):
-        npz = np.load(npz_path, allow_pickle=True)
+        # allow_pickle=False: wektory float + etykiety jako unicode arrays (bez object).
+        npz = np.load(npz_path, allow_pickle=False)
         keys = list(npz.files)
 
         sem_keys = [k for k in keys if k.startswith("sem__") and not k.endswith("__lbl")]

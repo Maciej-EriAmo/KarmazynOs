@@ -418,9 +418,10 @@ def _load_legacy_npz(npz_path: str, p2s: Optional[bytes]):
             key_msg = _LEGACY_SVEC_MAGIC + b":" + salt.hex().encode()
             key     = _hmac.new(p2s, key_msg, "sha256").digest()
             npz_data = _AESGCM(key).decrypt(nonce, ct, _LEGACY_SVEC_MAGIC)
-        npz = np.load(io.BytesIO(npz_data), allow_pickle=True)
+        # allow_pickle=False: wektory float + etykiety unicode (bez object arrays / RCE).
+        npz = np.load(io.BytesIO(npz_data), allow_pickle=False)
     else:
-        npz = np.load(npz_path, allow_pickle=True)
+        npz = np.load(npz_path, allow_pickle=False)
 
     sem_map = {}
     str_map = {}

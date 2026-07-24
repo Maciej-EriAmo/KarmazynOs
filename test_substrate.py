@@ -30,8 +30,8 @@ import unittest
 import warnings
 
 from karmazyn_kernel import (
-    Store, Bubble, Atom, conforms, kernel_info,
-    T_INIT, T_MAX, T_TOMB, HAS_HRR,
+    Store, Bubble, Atom, conforms, capabilities, kernel_info, state_for_T,
+    T_INIT, T_MAX, T_HOT, T_WARM, T_TOMB, HAS_HRR,
 )
 
 # Z T=50 i decay=0.92 atom przekracza T_TOMB=2 po 39 tickach;
@@ -56,6 +56,38 @@ def _env_of_deep(v):
     if isinstance(v, (list, tuple)):
         return [x.env for x in v if isinstance(x, _Clo)]
     return None
+
+
+# ─── state_for_T — mapowanie progów termodynamicznych ────────────────────────
+
+class TestStateForT(unittest.TestCase):
+    """Granice: T>=HOT→HOT, T>=WARM→WARM, T>=TOMB→COLD, T<TOMB→TOMB."""
+
+    def test_hot_range(self):
+        self.assertEqual(state_for_T(T_HOT), "HOT")
+        self.assertEqual(state_for_T(T_HOT + 1), "HOT")
+        self.assertEqual(state_for_T(T_MAX), "HOT")
+
+    def test_warm_range(self):
+        self.assertEqual(state_for_T(T_WARM), "WARM")
+        self.assertEqual(state_for_T(T_INIT), "WARM")       # T_INIT=50
+        self.assertEqual(state_for_T(T_HOT - 0.001), "WARM")
+
+    def test_cold_range(self):
+        self.assertEqual(state_for_T(T_TOMB), "COLD")       # ==T_TOMB jeszcze żywy
+        self.assertEqual(state_for_T(T_WARM - 0.001), "COLD")
+        self.assertEqual(state_for_T((T_TOMB + T_WARM) / 2), "COLD")
+
+    def test_tomb_range(self):
+        self.assertEqual(state_for_T(T_TOMB - 0.001), "TOMB")
+        self.assertEqual(state_for_T(0.0), "TOMB")
+        self.assertEqual(state_for_T(-1.0), "TOMB")
+
+    def test_boundaries_exclusive_upper(self):
+        # tuż poniżej każdego progu — niższy stan
+        self.assertEqual(state_for_T(T_HOT - 1e-9), "WARM")
+        self.assertEqual(state_for_T(T_WARM - 1e-9), "COLD")
+        self.assertEqual(state_for_T(T_TOMB - 1e-9), "TOMB")
 
 
 # ─── Prawo T × reach ─────────────────────────────────────────────────────────
@@ -265,6 +297,47 @@ class TestAtomStoreAdapter(unittest.TestCase):
 
     def test_conforms(self):
         self.assertEqual(conforms(Store()), [])
+
+    def test_capabilities_empty_store(self):
+        # Brak metod rozszerzeń → wszystkie flagi False
+        cap = capabilities(object())
+        self.assertEqual(set(cap), {
+            "semantic", "tinted", "hrr", "hologram",
+            "consolidate", "delete", "reach_gc",
+        })
+        self.assertFalse(any(cap.values()))
+
+    def test_capabilities_selective_methods(self):
+        class Partial:
+            def find_resonating(self): pass
+            def delete_atom(self): pass
+            def tick(self): pass
+            # brak set_root → reach_gc False mimo tick
+        cap = capabilities(Partial())
+        self.assertTrue(cap["semantic"])
+        self.assertTrue(cap["delete"])
+        self.assertFalse(cap["reach_gc"])
+        self.assertFalse(cap["hrr"])
+        self.assertFalse(cap["tinted"])
+        self.assertFalse(cap["hologram"])
+        self.assertFalse(cap["consolidate"])
+
+    def test_capabilities_reach_gc_needs_tick_and_set_root(self):
+        class ReachOnly:
+            def tick(self): pass
+            def set_root(self): pass
+        self.assertTrue(capabilities(ReachOnly())["reach_gc"])
+
+    def test_capabilities_store_engine(self):
+        # Kanoniczny Store: delete + reach-GC; HRR przez resonance()
+        cap = capabilities(Store())
+        self.assertTrue(cap["delete"])
+        self.assertTrue(cap["reach_gc"])
+        self.assertTrue(cap["hrr"])            # Store.resonance
+        self.assertFalse(cap["semantic"])      # brak find_resonating
+        self.assertFalse(cap["tinted"])
+        self.assertFalse(cap["hologram"])
+        self.assertFalse(cap["consolidate"])
 
     def test_duplicate_id_raises_and_generator_catches_up(self):
         s = Store()

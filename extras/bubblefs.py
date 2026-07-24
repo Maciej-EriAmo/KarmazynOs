@@ -360,15 +360,17 @@ def import_(karmazyn_os, path: str, shared_secret: Optional[bytes] = None,
     # ── Wektory Φ ─────────────────────────────────────────────────────────────
     sem_path = os.path.join(pdir, "sem_vectors.npz")
     if os.path.exists(sem_path):
-        sem_data = np.load(sem_path, allow_pickle=True)
+        # allow_pickle=False: npz trzyma same tablice numeryczne (bez object arrays).
+        # True = RCE przy złośliwym pliku; archiwum/bubblefs już ładuje bezpiecznie.
+        sem_data = np.load(sem_path, allow_pickle=False)
         for k in sem_data.files:
             ko.phi._sem[k] = sem_data[k]
 
     str_path  = os.path.join(pdir, "structural.npz")
     temp_path = os.path.join(pdir, "temperatures.npz")
     if os.path.exists(str_path) and os.path.exists(temp_path):
-        str_data  = np.load(str_path,  allow_pickle=True)
-        temp_data = np.load(temp_path, allow_pickle=True)
+        str_data  = np.load(str_path,  allow_pickle=False)
+        temp_data = np.load(temp_path, allow_pickle=False)
         existing_labels = {a['label'] for a in ko.phi._mx.atoms}
         for lbl in str_data.files:
             if lbl not in existing_labels:
