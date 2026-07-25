@@ -42,3 +42,41 @@ Phi → konsolidacja → Bąbel → archiwizacja → Hologram → generacja → 
 - **Strukturalny**: wektor losowy z ziarnem MD5.
 - **Semantyczny**: analiza tokenów i bigramów z globalnym ważeniem IDF.
 - Ostateczne podobieństwo: `sim = α * dot(q_struct, S_struct) + (1-α) * dot(q_sem, S_sem)`
+
+---
+
+## 5. Runtime monorepo (2026) — jadro, szwy, goście
+
+Osobny przewodnik: **[runtime_pl.md](runtime_pl.md)**.
+
+### 5.1 Warstwy
+
+| Warstwa | Implementacja | Uwagi |
+|---------|---------------|--------|
+| Fasada | `karmazyn_kernel` | jedyne API dla oprogramowania |
+| Substrat | Python `Store` **lub** Rust `native/` | to samo prawo T×reach |
+| Gość | Lua (`LUA/`) / mini-Lisp (`karmazyn_exec`) | `eval_line`; nie zna wnętrza GC |
+| Boot | `karmazyn_boot` | montaż + REPL + scheduler |
+| HSS w Linux | `holo/*.c` LSM | czysty transport upcall; semantyka poza jądrem OS |
+
+### 5.2 Prawo reach-GC (kanon substratu)
+
+```
+temperatura  →  KIEDY atom może stać się kandydatem do GC
+osiągalność  →  CZY wolno go usunąć
+  zimny + nieosiągalny  →  vacuum (reap)
+  zimny + osiągalny     →  retained TOMB
+```
+
+Osiągalność: korzenie (`set_root`) + łańcuch `parent` bąbli + haki  
+`register_env_of` (domknięcia/tabele) + `register_extra_reach` (ramki).
+
+### 5.3 Przełączniki
+
+- **Gość:** `KARMAZYN_GUEST`, `--lua`/`--lisp`, REPL `:guest`
+- **Substrat (testy):** `KARMAZYN_SUBSTRATE`, `open_store(backend=…)`  
+  Boot domyślnie: Python Store; Rust — golden tests i migracja.
+
+### 5.4 Granica jadro ↛ oprogramowanie
+
+`kernel_boundary.py` — jadro nie importuje software (twardy fail w CI/build).

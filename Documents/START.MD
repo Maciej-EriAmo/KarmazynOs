@@ -1,31 +1,38 @@
 # KarmazynOS — Quick Start
 
-**Time to read: 5 minutes**
-**Requirements: Python 3.10+, numpy, 10 MB disk space**
+**Time to read: ~5 minutes**  
+**Requirements: Python 3.10+** (optional `numpy` for HRR)
+
+Full runtime guide: **[runtime_en.md](runtime_en.md)** · PL: **[runtime_pl.md](runtime_pl.md)** / **[START.PL.MD](START.PL.MD)**.
 
 ---
 
-## Installation (2 minutes)
+## Installation
 
 ```bash
-# 1. Clone the repository
 git clone https://github.com/Maciej-EriAmo/KarmazynOs
 cd KarmazynOs
-
-# 2. Install dependencies
-pip install numpy --break-system-packages
-
-# 3. Launch the shell
-python shell.py
+pip install numpy          # optional
 ```
 
-You should see:
+---
 
+## Canonical run (2026)
+
+```bash
+python karmazyn_boot.py                 # live interpreter (Lua guest)
+python karmazyn_boot.py --demo
+python karmazyn_boot.py --lisp          # mini-Lisp guest
 ```
-Karmazyn Shell v1.1.0 | KarmazynOS v1.1.1
-Type 'help' to see available commands, 'exit' to quit.
-ksh>
+
+```text
+karmazyn> x = 10
+karmazyn> return x * 2
+20
+karmazyn> :guest exec
 ```
+
+Legacy ksh (`shell.py`, write/recall) → `archiwum/`.
 
 ---
 

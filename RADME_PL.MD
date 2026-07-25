@@ -96,21 +96,26 @@ Pełna specyfikacja: [HSS Paper v2.6.0](https://doi.org/10.5281/zenodo.19548693)
 
 ---
 
-## Pliki w repozytorium
+## Runtime (kanon 2026)
 
-| Plik | Opis |
+```
+kernel/     jadro Python (atomy, Store, fasada) — domyślny boot
+software/   boot, mini-Lisp, phi
+LUA/        gość Lua (język narzędzi)
+native/     substrat Rust (reach-GC + C ABI; testy / migracja)
+holo/       HSS LSM (C) — most Linux, opcjonalny
+archiwum/   stary monolit (shell/studio)
+```
+
+| Ścieżka | Rola |
 |---|---|
-| `karmazyn.py` | Termodynamiczne jądro pamięci v1.1.1 — Φ, bąble, hologramy |
-| `hss_demo.py` | HSSDaemon — zarządzanie sesjami Ring-LWE |
-| `hss_karmazyn_matrix.py` | Macierz atomów z termodynamicznym rozpadem |
-| `shell.py` | Karmazyn Shell (ksh) v1.1.0 |
-| `studio.py` | KarmazynOS Studio v1.1.0 — lokalne środowisko HTTP |
-| `soul_store.py` | Format persystencji JSONL (.soul) |
-| `bubblefs.py` | BubbleFS — przenośny format wymiany bąbli |
-| `karmazyn_comm.py` | Termodynamiczny menadżer komunikacji (SMS/połączenia, Termux) |
-| `karmazyn_ui/` | Design Language — tokeny, stany, renderer (STC-Φ-001) |
-| `static/` | Wygenerowany CSS i tokeny JS |
-| `how_to.md` / `how_to_en.md` | Podręcznik użytkownika (PL/EN) |
+| `karmazyn_boot.py` | Żywy REPL — domyślnie **Lua** na Store |
+| `karmazyn_kernel.py` | Fasada jadra (jedyna dla oprogramowania) |
+| `karmazyn_backend.py` | Przełącznik substratu: `python` \| `native` |
+| `test_substrate_compat.py` | Zgodność prawa Python ↔ Rust |
+| `Documents/runtime_pl.md` | Pełny przewodnik runtime |
+
+**Prawo jadra:** temperatura mówi *kiedy*, osiągalność mówi *czy* (Vacuum Decay vs retained TOMB).
 
 ---
 
@@ -119,19 +124,32 @@ Pełna specyfikacja: [HSS Paper v2.6.0](https://doi.org/10.5281/zenodo.19548693)
 ```bash
 git clone https://github.com/Maciej-EriAmo/KarmazynOs
 cd KarmazynOs
-pip install numpy --break-system-packages
+pip install numpy          # opcjonalnie (HRR)
 
-# Interaktywna powłoka
-python shell.py
+python karmazyn_boot.py              # aktywny interpreter (Lua)
+python karmazyn_boot.py --demo
+python karmazyn_boot.py --lisp       # mini-Lisp
 
-# Studio webowe (otwórz http://localhost:8080)
-python studio.py
+# REPL: :guest lua | :guest exec
+# Env:  KARMAZYN_GUEST=lua|exec
 ```
 
-Na Termux (Android):
+```text
+karmazyn> x = 10
+karmazyn> return x * 2
+20
+```
+
+### Testy / native
+
 ```bash
-termux-open-url http://localhost:8080
+python -m unittest test_substrate -q
+python test_substrate_compat.py -v
+cd native/karmazyn_substrate && cargo test && cargo build --release
 ```
+
+Szczegóły: [Documents/runtime_pl.md](Documents/runtime_pl.md) · [native/README.md](native/README.md).  
+Stary UX `shell.py` / Studio → katalog **`archiwum/`**.
 
 ---
 
@@ -151,15 +169,15 @@ termux-open-url http://localhost:8080
 ## Status
 
 ```
-karmazyn.py v1.1.1         ✅  jądro, persystencja kluczy naprawiona
-shell.py v1.1.0            ✅  interaktywna powłoka
-studio.py v1.1.0           ✅  Studio webowe z Design Language
-soul_store.py v1.0.0       ✅  format .soul, 9/9 testów
-hss_karmazyn_matrix.py     ✅  bez pickle, stabilna serializacja
-bubblefs.py v1.0.0         ✅  przenośny format wymiany
-karmazyn_ui/ v0.1.0        ✅  Design Language STC-Φ-001
-Implementacja referencyjna  ⏳  atom.py + memory.py + cold_store.py
-Crimson Loop               ⏳  introspekcja — ostatnia warstwa
+karmazyn_kernel v1.1.0     ✅  fasada + Store reach-GC (Python domyślnie)
+karmazyn_boot v0.5         ✅  żywy REPL, gość Lua, :guest
+LUA/                       ✅  język narzędzi
+native (Rust)              ✅  prawo GC + ABI + testy zgodności
+rejestr haków              ✅  env_of / extra_reach
+holo/ HSS LSM              ✅  źródła mostu Linux
+archiwum shell/studio      📦  legacy
+Boot w pełni na Rust       ⏳  faza 2–3
+Crimson Loop               ⏳  warstwa introspekcji
 ```
 
 ---

@@ -88,11 +88,18 @@ The core never interprets Lua/Python values — only calls host hooks.
 
 | Phase | Status |
 |-------|--------|
-| 0. Rust core + C ABI + unit tests (law) | **this tree** |
-| 1. Build on CI; golden tests vs Python `test_substrate` | next |
+| 0. Rust core + C ABI + unit tests (law) | **done** |
+| 1. Golden tests vs Python (`test_substrate_compat`) | **done** |
 | 2. PyO3 / full `Store` drop-in (events, `metadata["v"]`, HRR optional) | next |
-| 3. Boot flag `KARMAZYN_SUBSTRATE=native` | next |
+| 3. Boot flag `KARMAZYN_SUBSTRATE=native` end-to-end | next |
 | 4. Pure-Python substrate as reference / fallback only | later |
 
 Until phase 2–3, **production boot still uses Python `karmazyn_substrate`**.  
-Native is the new **source of truth for the law**, growing behind the same seams.
+Native is a **source of truth for the GC law**, growing behind the same seams.
+
+## Docs
+
+- PL: [../Documents/runtime_pl.md](../Documents/runtime_pl.md)
+- EN: [../Documents/runtime_en.md](../Documents/runtime_en.md)
+- Architecture: [../Documents/ARCHITECTURE.pl.md](../Documents/ARCHITECTURE.pl.md) §5
+

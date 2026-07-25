@@ -1,9 +1,11 @@
 KarmazynOS Kernel - jedna wersja kanoniczna
 ==========================================
-Zsynchronizowane: 2026-07-24 (zgodnosc Kernel Karmazyn + DBase + monorepo KarmazynOs)
+Zsynchronizowane: 2026-07-25
 Wersja jadra (karmazyn_kernel.__version__): 1.1.0  (FIX v1.1 + v1.2 + S15 dual-emit/snapshot)
+Boot: karmazyn_boot v0.5 (gość Lua domyślnie; :guest / --lisp)
+Native substrate (Rust): 0.1.0-karmazyn-substrate (faza 0/1)
 
-Jadro (kernel/) - ZRODLO PRAWDY (Python, nadal domyslne w boot):
+Jadro (kernel/) - ZRODLO PRAWDY (Python, domyslne w boot):
   karmazyn_atom.py
   karmazyn_atomstore.py
   karmazyn_hrr.py
@@ -11,22 +13,34 @@ Jadro (kernel/) - ZRODLO PRAWDY (Python, nadal domyslne w boot):
   karmazyn_kernel.py
   kernel_boundary.py
 
-Native substrate (Rust) - prawo reach-GC + C ABI (faza 0/1):
-  native/karmazyn_substrate/   cargo test && cargo build --release
+Native substrate (Rust) - prawo reach-GC + C ABI:
+  native/karmazyn_substrate/     cargo test && cargo build --release
   native/karmazyn_substrate_native.py
   native/README.md
-  Boot nadal Python Store; podmiana za szwem = nastepna faza.
+  karmazyn_backend.py            open_store / KARMAZYN_SUBSTRATE
+  test_substrate_compat.py       zgodność Python ↔ Rust
+  Boot nadal Python Store; pełny drop-in native = faza 2–3
 
 Oprogramowanie minimalne (software/) - ZRODLO PRAWDY:
   karmazyn_boot.py
-  karmazyn_exec.py
+  karmazyn_exec.py               mini-Lisp (gość)
   karmazyn_phi.py
+
+Gość Lua (vendored):
+  LUA/                           karmazyn_lua (lib, evaluator, …)
+
+Dokumentacja runtime:
+  Documents/runtime_pl.md
+  Documents/runtime_en.md
+  Documents/START.PL.MD
+  README.md / RADME_PL.MD
 
 Narzedzia (root):
   kernel_boundary.py
   bin/karmazyn
   karmazyn / karmazyn.cmd
   test_substrate.py
+  test_substrate_compat.py
   test_hrr.py
 
 Pliki w katalogu glownym (karmazyn_*.py) to LUSTRO kernel/ + software/
@@ -36,3 +50,9 @@ API silnika (S15, zgodne z Cynober/DBase):
   tick_event_mode: batch | per_atom | both (domyslnie both)
   sync_id_counter(), snapshot_atoms(), restore_atoms()
   zagniezdzony tick() = no-op; reaped tylko po skutecznym delete
+  register_env_of / register_extra_reach / hook_names (rejestr haków)
+
+Przelaczniki:
+  KARMAZYN_GUEST=lua|exec     gość REPL
+  KARMAZYN_SUBSTRATE=python|native|both   substrat (testy / open_store)
+  KARMAZYN_LUA=…              ścieżka pakietu Lua

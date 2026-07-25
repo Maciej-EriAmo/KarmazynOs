@@ -1,7 +1,18 @@
 
 # 📘 KarmazynOS — User Guide
 
-**Version 1.0.0**
+**Version 1.0.0** (classic Φ write/recall model)  
+**Runtime 2026 (boot + Lua):** → **[runtime_en.md](runtime_en.md)**
+
+```bash
+# Canonical 2026 — live interpreter
+python karmazyn_boot.py
+python karmazyn_boot.py --demo
+```
+
+Below: classic ksh guide (`write` / `recall`) — legacy under `archiwum/` in the monorepo.
+
+---
 
 KarmazynOS is a thermodynamic memory kernel — a system that remembers, recalls, forgets, and creates new ideas. It operates across three layers:
 
@@ -11,13 +22,13 @@ KarmazynOS is a thermodynamic memory kernel — a system that remembers, recalls
 | **Bubble**    | Solid          | Persistent memory — data is stored faithfully, but may gradually "fade" over time. |
 | **Hologram**  | Field          | Idea — does not store specifics, but generates new variants. |
 
-You control everything through the **Karmazyn Shell (ksh)**.
+Classic UX: **Karmazyn Shell (ksh)** (archive). Runtime 2026: **`karmazyn_boot`** + Lua.
 
 ---
 
-## 🚀 Getting Started
+## 🚀 Getting Started (classic ksh)
 
-Launch the shell:
+Launch the shell (if present in your install / archive):
 
 ```bash
 python shell.py

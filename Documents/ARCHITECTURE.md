@@ -40,3 +40,21 @@ Phi → consolidate → Bubble → archive → Hologram → generate → Phi
 - **Structural**: MD5‑seeded random vector.
 - **Semantic**: token + bigram analysis with global IDF weighting.
 - Final similarity: `sim = α * dot(q_struct, S_struct) + (1-α) * dot(q_sem, S_sem)`
+
+---
+
+## 5. Monorepo runtime (2026)
+
+See **[runtime_en.md](runtime_en.md)** for the full guide.
+
+| Layer | Implementation | Notes |
+|-------|----------------|--------|
+| Facade | `karmazyn_kernel` | sole software entry |
+| Substrate | Python `Store` or Rust `native/` | same T×reach law |
+| Guest | Lua / mini-Lisp | `eval_line`; no GC internals |
+| Boot | `karmazyn_boot` | mount + REPL + thermal scheduler |
+| Linux HSS | `holo/*.c` LSM | upcall transport only |
+
+**Law:** temperature = *when*, reachability = *whether* (vacuum vs retained TOMB).  
+Hooks: `register_env_of`, `register_extra_reach`, roots.  
+Guest switch: `KARMAZYN_GUEST` / `:guest`. Substrate switch (tests): `KARMAZYN_SUBSTRATE` / `open_store`.

@@ -1,6 +1,17 @@
 # 📘 KarmazynOS — Przewodnik użytkownika
 
-**Wersja 1.0.0**
+**Wersja 1.0.0** (warstwa Φ write/recall — model klasyczny)  
+**Runtime 2026 (boot + Lua):** → **[runtime_pl.md](runtime_pl.md)** · **[START.PL.MD](START.PL.MD)**
+
+```bash
+# Kanon 2026 — żywy interpreter
+python karmazyn_boot.py
+python karmazyn_boot.py --demo
+```
+
+Poniżej: klasyczny przewodnik ksh (`write` / `recall`) — historycznie w `archiwum/` / starszych skryptach.
+
+---
 
 KarmazynOS to termodynamiczne jądro pamięci — system, który zapamiętuje, przypomina, zapomina i tworzy nowe idee. Pracuje w trzech warstwach:
 
@@ -10,13 +21,13 @@ KarmazynOS to termodynamiczne jądro pamięci — system, który zapamiętuje, p
 | **Bąbel**     | ciało stałe   | Pamięć trwała — dane przechowywane wiernie, ale z czasem mogą „cichnąć”. |
 | **Hologram**  | pole          | Idea — nie przechowuje konkretów, tylko generuje nowe warianty. |
 
-Wszystkim sterujesz przez **Karmazyn Shell (ksh)**.
+Klasyczny UX: **Karmazyn Shell (ksh)** (archiwum). Runtime 2026: **`karmazyn_boot`** + Lua.
 
 ---
 
-## 🚀 Pierwsze kroki
+## 🚀 Pierwsze kroki (klasyczny ksh)
 
-Uruchom powłokę:
+Uruchom powłokę (jeśli dostępna w Twojej instalacji / archiwum):
 
 ```bash
 python shell.py

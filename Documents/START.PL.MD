@@ -1,37 +1,83 @@
 # KarmazynOS — Szybki Start
 
-**Czas czytania: 5 minut**
-**Potrzebujesz: Python 3.10+, numpy, 10 MB miejsca**
+**Czas czytania: ~5 minut**  
+**Potrzebujesz: Python 3.10+** (opcjonalnie `numpy` dla HRR)
+
+Pełny opis runtime, szwów i native: **[runtime_pl.md](runtime_pl.md)**.
 
 ---
 
-## Instalacja (2 minuty)
+## Instalacja
 
 ```bash
-# 1. Sklonuj repozytorium
 git clone https://github.com/Maciej-EriAmo/KarmazynOs
 cd KarmazynOs
-
-# 2. Zainstaluj zależności
-pip install numpy --break-system-packages
-
-# 3. Uruchom powłokę
-python shell.py
-```
-
-Powinieneś zobaczyć:
-
-```
-Karmazyn Shell v1.1.0 | KarmazynOS v1.1.1
-Wpisz 'help' aby zobaczyć komendy, 'exit' aby wyjść.
-ksh>
+pip install numpy          # opcjonalne — bez numpy jadro też wstanie
 ```
 
 ---
 
-## Pierwsze kroki (3 minuty)
+## Uruchomienie (kanoniczne — 2026)
 
-### 1. Zapisz myśl
+```bash
+# Żywy interpreter (domyślnie Lua na substracie)
+python karmazyn_boot.py
+
+# Skrypt demo
+python karmazyn_boot.py --demo
+
+# Mini-Lisp zamiast Lua
+python karmazyn_boot.py --lisp
+```
+
+Po starcie:
+
+```text
+KarmazynOS — sekwencja startowa
+  [ OK ] fasada jadra — v1.1.0 …
+  [ OK ] warstwa wykonawcza — gosc=lua, korzen=tak
+karmazyn>
+```
+
+### Pierwsze linie (Lua)
+
+```text
+karmazyn> x = 10
+karmazyn> return x * 2
+20
+karmazyn> :help
+karmazyn> :stats
+karmazyn> :guest exec
+karmazyn> (+ 1 2)
+3
+```
+
+To **aktywny interpreter** na żywym Store (tick w tle, reach-GC) — nie jednorazowy skrypt.
+
+---
+
+## Testy (opcjonalnie)
+
+```bash
+python -m unittest test_substrate -q
+python test_substrate_compat.py -v    # Python ↔ Rust (po cargo build --release)
+```
+
+---
+
+## Archiwum / stary shell
+
+Historyczny `shell.py` / `studio.py` (ksh, write/recall) leży w **`archiwum/`**.  
+Nowy kanon to `karmazyn_boot.py` + `kernel/` + `LUA/`.
+
+---
+
+## Starszy przewodnik (Φ write/recall)
+
+Poniżej zachowany skrót mentalnego modelu „write / recall / bąbel” (archiwalny UX).  
+Dla aktualnego REPL użyj sekcji powyżej i [runtime_pl.md](runtime_pl.md).
+
+### 1. Zapisz myśl (model archiwalny)
 
 ```
 ksh> write "Python jest językiem wysokiego poziomu"

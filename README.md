@@ -96,21 +96,32 @@ Full specification: [HSS Paper v2.6.0](https://doi.org/10.5281/zenodo.19548693).
 
 ---
 
-## Repository files
+## Runtime layout (canonical 2026)
 
-| File | Description |
+```
+kernel/          Python kernel (atoms, substrate, facade) — default boot Store
+software/        boot, mini-Lisp guest, phi
+LUA/             Lua guest (tools language)
+native/          Rust substrate (reach-GC + C ABI; tests / migration)
+holo/            Linux HSS LSM (C) — security bridge, optional
+archiwum/        legacy monolit (old shell/studio)
+```
+
+| Path | Role |
 |---|---|
-| `karmazyn.py` | Thermodynamic Memory Kernel v1.1.1 — Φ, bubbles, holograms |
-| `hss_demo.py` | HSSDaemon — Ring-LWE session management |
-| `hss_karmazyn_matrix.py` | Atom matrix with thermodynamic decay |
-| `shell.py` | Karmazyn Shell (ksh) v1.1.0 |
-| `studio.py` | KarmazynOS Studio v1.1.0 — local HTTP development environment |
-| `soul_store.py` | JSONL persistence format (.soul) |
-| `bubblefs.py` | BubbleFS — portable bubble exchange format |
-| `karmazyn_comm.py` | Thermodynamic communication manager (SMS/calls via Termux) |
-| `karmazyn_ui/` | Design Language — tokens, states, renderer (STC-Φ-001) |
-| `static/` | Generated CSS and JS tokens |
-| `how_to.md` / `how_to_en.md` | User guide (PL/EN) |
+| `karmazyn_boot.py` | Live REPL — default **Lua** on Store (thermal tick) |
+| `karmazyn_kernel.py` | Public kernel facade (only entry for software) |
+| `karmazyn_backend.py` | Substrate switch: `python` \| `native` (tests / `open_store`) |
+| `LUA/` | `karmazyn_lua` guest |
+| `native/karmazyn_substrate/` | Rust Store + `ksub_*` C ABI |
+| `test_substrate.py` | Python law tests |
+| `test_substrate_compat.py` | Python ↔ Rust golden law |
+| `Documents/runtime_en.md` | Runtime guide (EN) |
+| `Documents/runtime_pl.md` | Runtime guide (PL) |
+| `holo/` | HSS LSM sources |
+| `archiwum/` | Historical shell/studio and older modules |
+
+**Kernel law:** temperature says *when*, reachability says *whether* (vacuum GC vs retained TOMB).
 
 ---
 
@@ -119,19 +130,44 @@ Full specification: [HSS Paper v2.6.0](https://doi.org/10.5281/zenodo.19548693).
 ```bash
 git clone https://github.com/Maciej-EriAmo/KarmazynOs
 cd KarmazynOs
-pip install numpy --break-system-packages
+pip install numpy          # optional; HRR degrades without it
 
-# Interactive shell
-python shell.py
+# Live interpreter (Lua guest on substrate)
+python karmazyn_boot.py
+python karmazyn_boot.py --demo
+python karmazyn_boot.py --lisp --demo   # mini-Lisp guest
 
-# Web-based Studio (open http://localhost:8080)
-python studio.py
+# Guest switch in REPL:  :guest lua | :guest exec
+# Env: KARMAZYN_GUEST=lua|exec
 ```
 
-On Termux (Android):
+```text
+karmazyn> x = 10
+karmazyn> return x * 2
+20
+```
+
+### Tests
+
 ```bash
-termux-open-url http://localhost:8080
+python -m unittest test_substrate -q
+python test_substrate_compat.py -v          # needs: cargo build --release
+python kernel_boundary.py kernel/ software/
 ```
+
+### Native substrate (Rust)
+
+```bash
+cd native/karmazyn_substrate
+cargo test && cargo build --release
+cd ../..
+python native/karmazyn_substrate_native.py
+# KARMAZYN_SUBSTRATE=native  /  open_store(backend="native")
+```
+
+Details: [native/README.md](native/README.md) · [Documents/runtime_en.md](Documents/runtime_en.md).
+
+Legacy `shell.py` / Studio UX (write/recall) live under **`archiwum/`**.
 
 ---
 
@@ -151,15 +187,15 @@ termux-open-url http://localhost:8080
 ## Status
 
 ```
-karmazyn.py v1.1.1         ✅  core kernel, persistence fixed
-shell.py v1.1.0            ✅  interactive shell
-studio.py v1.1.0           ✅  web Studio with Design Language
-soul_store.py v1.0.0       ✅  .soul format, 9/9 tests passing
-hss_karmazyn_matrix.py     ✅  no pickle, stable serialization
-bubblefs.py v1.0.0         ✅  portable exchange format
-karmazyn_ui/ v0.1.0        ✅  Design Language STC-Φ-001
-Reference implementation   ⏳  atom.py + memory.py + cold_store.py
-Crimson Loop               ⏳  introspection — final layer
+karmazyn_kernel v1.1.0     ✅  facade + reach-GC Store (Python default)
+karmazyn_boot v0.5         ✅  live REPL, Lua guest, :guest switch
+LUA/                       ✅  tools language on substrate
+native substrate (Rust)    ✅  law + C ABI + compat tests (boot still Python)
+hook registry              ✅  register_env_of / extra_reach
+holo/ HSS LSM              ✅  Linux kernel bridge sources
+archiwum/ shell+studio     📦  legacy
+Full native boot drop-in   ⏳  phase 2–3
+Crimson Loop               ⏳  introspection layer
 ```
 
 ---
