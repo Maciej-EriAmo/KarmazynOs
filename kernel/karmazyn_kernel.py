@@ -134,6 +134,9 @@ def kernel_info() -> dict:
                 "snapshot_atoms", "restore_atoms",
                 "bubble_new", "set_root", "unset_root",
                 "tick", "settle", "resonance", "stats",
+                # rejestr haków reach (szew językowy)
+                "register_env_of", "unregister_env_of",
+                "register_extra_reach", "unregister_extra_reach", "hook_names",
                 # adapter AtomStore (te same instancje Store)
                 "create_atom", "create_bubble", "import_to_bubble", "get_bubble",
             ],
@@ -144,6 +147,10 @@ def kernel_info() -> dict:
             # S1 (v1.1.0): deep reach po stronie frontu
             "env_of": "env_of(v) -> Bubble | iterowalne[Bubble] | None; "
                       "wartosci zlozone SPLASZCZA FRONT (albo extra_reach)",
+            # Rejestr haków (szew językowy) — zamiast ręcznego store._env_of =
+            "hooks": "register_env_of(fn, name=)/unregister_env_of; "
+                     "register_extra_reach(fn, name=)/unregister_extra_reach; "
+                     "hook_names(); ta sama name = zamiana (switch gościa)",
             # S3: ochrona GC w adapterze AtomStore
             "atomstore_gc": "create_bubble(label, root=True) albo set_root/"
                             "extra_reach — worek bez roota NIE chroni przed GC",

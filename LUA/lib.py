@@ -138,20 +138,13 @@ def _default_libs():
 
 
 def install_env_of(store):
-    prev = getattr(store, "_env_of", None)
-
-    def _env_of(v):
-        r = lua_env_of(v)
-        if r is not None:
-            return r
-        if prev is not None and prev is not _env_of:
-            try:
-                return prev(v)
-            except Exception:
-                return None
-        return None
-
-    store._env_of = _env_of
+    """Zarejestruj hak env_of Lua w rejestrze substratu (name='guest')."""
+    reg = getattr(store, "register_env_of", None)
+    if reg is not None:
+        reg(lua_env_of, name="guest")
+    else:
+        # stary Store bez rejestru — fallback
+        store._env_of = lua_env_of
     return store
 
 

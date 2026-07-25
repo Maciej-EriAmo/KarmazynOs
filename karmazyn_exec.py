@@ -112,9 +112,16 @@ class Evaluator:
         self.store = store
         self.env = store.bubble_new(env_label)
         store.set_root(self.env)             # globalne zmienne osiagalne
-        # KURACJA P6 DLA CLOSURE: ucz rdzen, jak czytac osiagalnosc z wartosci.
-        # Rdzen sam nie zna jezyka; podajemy mu hook (udokumentowany punkt rozszerzen).
-        store._env_of = lambda v: v.env if isinstance(v, Closure) else None
+        # KURACJA P6: hak env_of w rejestrze substratu (name='guest').
+        def _exec_env_of(v):
+            return v.env if isinstance(v, Closure) else None
+        if hasattr(store, "register_env_of"):
+            store.register_env_of(_exec_env_of, name="guest")
+            # Lua zostawia extra_reach ramek — mini-Lisp uzywa temp-root w _apply
+            if hasattr(store, "unregister_extra_reach"):
+                store.unregister_extra_reach("guest")
+        else:
+            store._env_of = _exec_env_of
         self._builtins = {
             "+": lambda *a: _fold(lambda x, y: x + y, a),
             "-": lambda *a: (-a[0] if len(a) == 1 else _fold(lambda x, y: x - y, a)),

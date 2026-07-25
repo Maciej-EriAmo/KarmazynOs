@@ -201,11 +201,17 @@ class Store:
         self.bubbles = []
         self.roots = []
         self.thermal = thermal
-        self._env_of = env_of or (lambda v: None)   # rdzeń nie zna języka
-        # extra_reach: dostawca dodatkowych osiągalnych id atomów dla front-endów
-        # o płaskim członkostwie (np. Luneta: atomy trzymane przez bąble-kontenery).
-        # Scheme go nie używa (osiągalność idzie przez korzenie leksykalne + env_of).
-        self._extra_reach = extra_reach or (lambda: ())
+        # Rejestr haków językowych (szew reach-GC). Gość NIE przypisuje
+        # _env_of/_extra_reach ręcznie — register_* / unregister_*.
+        # Ta sama nazwa = zamiana (switch lua↔exec bez piętrowania).
+        self._env_of_hooks = []              # [(name, fn), ...] — pierwsze non-None wygrywa
+        self._extra_reach_hooks = []         # [(name, fn), ...] — suma id
+        self._env_of = self._dispatch_env_of
+        self._extra_reach = self._dispatch_extra_reach
+        if env_of is not None:
+            self.register_env_of(env_of, name="init")
+        if extra_reach is not None:
+            self.register_extra_reach(extra_reach, name="init")
         self._decay = decay
         self._n = 0
         self.reaped = 0
@@ -213,6 +219,74 @@ class Store:
         self._tick_event_mode = tick_event_mode
         self._ticking = False                # S15: strażnik reentrancy tick()
         self.events = EventBus()             # silnik = źródło zdarzeń termicznych
+
+    # ── rejestr haków reach (szew językowy) ───────────────────────────────────
+    def _dispatch_env_of(self, v):
+        """Wywołanie zarejestrowanych env_of — pierwsze non-None wygrywa."""
+        for _name, fn in self._env_of_hooks:
+            try:
+                r = fn(v)
+            except Exception:
+                continue
+            if r is not None:
+                return r
+        return None
+
+    def _dispatch_extra_reach(self):
+        """Suma id z wszystkich zarejestrowanych extra_reach."""
+        ids = []
+        for _name, fn in self._extra_reach_hooks:
+            try:
+                part = fn()
+            except Exception:
+                continue
+            if part:
+                ids.extend(part)
+        return ids
+
+    def register_env_of(self, fn, *, name="guest"):
+        """Zarejestruj hak env_of(v)->Bubble|iter|None. Ta sama name = zamiana.
+
+        Kolejność: nowy hak na początku listy (gość ma pierwszeństwo przed
+        host/init). Rdzeń nie zna języka — tylko woła zarejestrowane haki.
+        """
+        if not callable(fn):
+            raise TypeError("register_env_of: fn musi być wołalne")
+        with self.lock:
+            rest = [(n, f) for n, f in self._env_of_hooks if n != name]
+            self._env_of_hooks = [(name, fn)] + rest
+        return self
+
+    def unregister_env_of(self, name="guest"):
+        """Usuń hak env_of o danej nazwie."""
+        with self.lock:
+            self._env_of_hooks = [(n, f) for n, f in self._env_of_hooks if n != name]
+        return self
+
+    def register_extra_reach(self, fn, *, name="guest"):
+        """Zarejestruj dostawcę dodatkowych id atomów (ramki, kontenery)."""
+        if not callable(fn):
+            raise TypeError("register_extra_reach: fn musi być wołalne")
+        with self.lock:
+            rest = [(n, f) for n, f in self._extra_reach_hooks if n != name]
+            self._extra_reach_hooks = [(name, fn)] + rest
+        return self
+
+    def unregister_extra_reach(self, name="guest"):
+        """Usuń hak extra_reach o danej nazwie."""
+        with self.lock:
+            self._extra_reach_hooks = [
+                (n, f) for n, f in self._extra_reach_hooks if n != name
+            ]
+        return self
+
+    def hook_names(self):
+        """Diagnostyka: nazwy zarejestrowanych haków reach."""
+        with self.lock:
+            return {
+                "env_of": [n for n, _ in self._env_of_hooks],
+                "extra_reach": [n for n, _ in self._extra_reach_hooks],
+            }
 
     # ── enkapsulacja rejestru (S2) ────────────────────────────────────────────
     @property

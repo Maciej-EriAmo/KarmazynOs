@@ -158,16 +158,29 @@ def _tools_dir():
     return cand if os.path.isdir(cand) else None
 
 
-def mount_evaluator(store):
+def _normalize_guest(kind):
+    """Znormalizuj etykiete gosci: lua | exec. None/'' = z env / domyslnie lua."""
+    if kind is None or kind == "":
+        kind = os.environ.get("KARMAZYN_GUEST") or "lua"
+    k = str(kind).strip().lower()
+    if k in ("exec", "lisp", "scheme", "karmazyn_exec", "mini-lisp", "minilisp"):
+        return "exec"
+    if k in ("lua", "karmazyn_lua"):
+        return "lua"
+    raise ValueError(f"nieznany gosc: {kind!r}  (lua|exec)")
+
+
+def mount_evaluator(store, kind=None):
     """Montuje warstwe wykonawcza na Store.
 
-    Domyslnie karmazyn_lua (jezyk narzedzi). Fallback: karmazyn_exec (mini-Lisp).
-    Wymus: KARMAZYN_GUEST=lua|exec
+    Domyslnie karmazyn_lua. Alternatywa: karmazyn_exec (mini-Lisp).
+    Wymus: kind= | KARMAZYN_GUEST=lua|exec | CLI --lua / --lisp
     Kontrakt: eval_line(str)->str, .env = Bubble korzenia (reach-GC).
+    Haki reach: register_env_of / register_extra_reach (name='guest').
     """
     global _GUEST_KIND
-    prefer = (os.environ.get("KARMAZYN_GUEST") or "lua").strip().lower()
-    if prefer in ("exec", "lisp", "scheme", "karmazyn_exec"):
+    prefer = _normalize_guest(kind)
+    if prefer == "exec":
         import karmazyn_exec
         _GUEST_KIND = "exec"
         return karmazyn_exec.Evaluator(store, env_label="repl")
@@ -181,12 +194,11 @@ def mount_evaluator(store):
         _GUEST_KIND = "lua"
         return ev
     except Exception as e:
-        if prefer in ("lua", "karmazyn_lua"):
-            # jawnie chcieli Lua — nie ukrywaj awarii
+        # prefer=lua (domyslnie lub wymuszone): nie ukrywaj awarii montazu
+        if prefer == "lua":
             raise
         import karmazyn_exec
         _GUEST_KIND = "exec"
-        # ostrzezenie zostawi boot() w logu przez fail? tu cichy fallback + atrybut
         ev = karmazyn_exec.Evaluator(store, env_label="repl")
         ev._lua_mount_error = e
         return ev
@@ -239,9 +251,44 @@ class KarmazynShell:
         return (
             kod
             + "OS : :info | :stats | :tick [n>=1] | :gc | :ls [stan] | :env | :tools\n"
-            "     :find <q> | :new <S> <E> | :exit\n"
+            "     :guest [lua|exec] | :find <q> | :new <S> <E> | :exit\n"
             "     :gc studzi WSZYSTKO: sieroty gina, korzenie jako retained-TOMB (:ls tomb)"
         )
+
+    def _m_guest(self, a):
+        """Pokaz / przelacz gościa: :guest | :guest lua | :guest exec|lisp."""
+        global _GUEST_KIND
+        if not a:
+            hooks = {}
+            if hasattr(self.store, "hook_names"):
+                hooks = self.store.hook_names()
+            return (
+                f"gosc={_GUEST_KIND}  haki={hooks}\n"
+                "  :guest lua   — karmazyn_lua\n"
+                "  :guest exec  — mini-Lisp (karmazyn_exec)\n"
+                "  start: --lua | --lisp  albo  KARMAZYN_GUEST=lua|exec"
+            )
+        try:
+            want = _normalize_guest(a[0])
+        except ValueError as e:
+            return str(e)
+        if want == _GUEST_KIND:
+            return f"gosc={_GUEST_KIND} (bez zmian)"
+        old_env = self.env
+        try:
+            ev = mount_evaluator(self.store, kind=want)
+        except Exception as e:
+            return f"nie udalo sie zamontowac {want}: {type(e).__name__}: {e}"
+        if old_env is not None and old_env is not (
+            getattr(ev, "env", None) or getattr(ev, "G", None)
+        ):
+            try:
+                self.store.unset_root(old_env)
+            except Exception:
+                pass
+        self.ev = ev
+        self.env = getattr(ev, "env", None) or getattr(ev, "G", None)
+        return f"gosc={_GUEST_KIND}  (przelaczono; nowy korzen env)"
 
     def _m_tools(self, a):
         """Lista narzedzi z package.preload (Lua) albo wskazowka dla exec."""
@@ -536,7 +583,20 @@ def demo():
     print("\n[demo] gosc=%s; zmienne/tabele zyja pod reach-GC." % _GUEST_KIND)
 
 
+def _apply_cli_guest_flags(argv):
+    """--lua / --lisp|--exec  oraz  --guest NAME  -> KARMAZYN_GUEST."""
+    if "--lua" in argv:
+        os.environ["KARMAZYN_GUEST"] = "lua"
+    if "--lisp" in argv or "--exec" in argv:
+        os.environ["KARMAZYN_GUEST"] = "exec"
+    if "--guest" in argv:
+        i = argv.index("--guest")
+        if i + 1 < len(argv):
+            os.environ["KARMAZYN_GUEST"] = argv[i + 1]
+
+
 if __name__ == "__main__":
+    _apply_cli_guest_flags(sys.argv)
     if "--demo" in sys.argv:
         demo()
     else:

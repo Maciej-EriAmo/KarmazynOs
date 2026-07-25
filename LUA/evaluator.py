@@ -35,20 +35,11 @@ class Evaluator:
         else:
             self.G = store.bubble_new(env_label)     # globalny zakres = korzeń
         store.set_root(self.G)
-        # HAK OSIĄGALNOŚCI (kontrakt substratu S1): tabela=Bubble, domknięcie=env.
-        # Składamy z ewentualnym poprzednim env_of (host/Karmin), Lua ma pierwszeństwo.
-        prev = getattr(store, "_env_of", None)
-        def _env_of(v):
-            r = lua_env_of(v)
-            if r is not None:
-                return r
-            if prev is not None and prev is not _env_of:
-                try:
-                    return prev(v)
-                except Exception:
-                    return None
-            return None
-        store._env_of = _env_of
+        # HAK OSIĄGALNOŚCI — rejestr substratu (name='guest'), nie store._env_of =
+        if hasattr(store, "register_env_of"):
+            store.register_env_of(lua_env_of, name="guest")
+        else:
+            store._env_of = lua_env_of
         self._out = []
         self._va_stack = [[]]                    # varargi ramek; dno = chunk główny
         # metatabele typów (Lua: string library → mt z __index=string → s:sub())
@@ -70,19 +61,16 @@ class Evaluator:
         self._active_envs = []                   # stos bąbli wywołań (extra_reach GC)
         self._call_stack = []                    # nazwy ramek do traceback (najstarsza→0)
         # root + aktywne ramki wywołań — inaczej settle w środku skryptu zżyna locale
-        prev_extra = getattr(store, "_extra_reach", None)
         def _extra():
             ids = []
             for env in self._active_envs:
                 for aid in list(env.bindings.values()):
                     ids.append(aid)
-            if prev_extra:
-                try:
-                    ids.extend(prev_extra() or ())
-                except Exception:
-                    pass
             return ids
-        store._extra_reach = _extra
+        if hasattr(store, "register_extra_reach"):
+            store.register_extra_reach(_extra, name="guest")
+        else:
+            store._extra_reach = _extra
         self._install_builtins()
 
     # ── wbudowane (biała lista; żadnej ambient authority) ──
