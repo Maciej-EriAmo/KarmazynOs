@@ -1,25 +1,30 @@
 #!/usr/bin/env python3
 """
-karmazyn_boot.py — punkt startowy samodzielnego runtime KarmazynOS (v0.4)
+karmazyn_boot.py — punkt startowy samodzielnego runtime KarmazynOS (v0.5)
 =========================================================================
 Maciej Mazur, Warsaw 2026
 
-Po boocie: PROMPT WYKONAWCZY. Wpisujesz kod (mini-Lisp) — liczy sie.
-  - linia kodu              -> warstwa wykonawcza (karmazyn_exec)
+Po boocie: PROMPT WYKONAWCZY. Domyslny jezyk narzedzi: karmazyn_lua (Lua 5.5).
+  - linia kodu              -> warstwa wykonawcza (Lua / fallback mini-Lisp)
   - linia ':...'            -> komenda systemu (OS meta)
+
+Narzedzia w OS: funkcje i moduly Lua (package.preload / require).
+  function echo(s) print(s) end
+  package.preload.tool = function() return {run=function() return 42 end} end
+  require("tool").run()
 
 Start RAPORTUJE uslugi na ekran: [ OK ]/[WARN]/[FAIL] per usluga, z czasem.
 Kolor tylko na terminalu (na potoku/do pliku — czyste tagi). Awaria uslugi
 jest zgloszona jako [FAIL] i przerywa start czysto, bez surowego traceback.
 
-Zmienne z `define` to atomy w bablu-korzeniu -> zyja pod REACH-GC. Zero
-zaleznosci zewnetrznych (dziala bez numpy).
+Zmienne/tabele Lua to atomy w bablu-korzeniu -> zyja pod REACH-GC.
 
   python3 karmazyn_boot.py          # interaktywny prompt
   python3 karmazyn_boot.py --demo   # skryptowa sesja
+  KARMAZYN_GUEST=exec               # wymus mini-Lisp zamiast Lua
+  KARMAZYN_LUA=<sciezka>            # katalog pakietu karmazyn_lua
 
-SZEW MONTAZU: boot oczekuje obiektu z `eval_line(str)->str`. Bogatszy front-end
-(np. karmazyn_scheme) wpina sie tak samo.
+SZEW MONTAZU: boot oczekuje obiektu z `eval_line(str)->str` oraz `.env` (Bubble).
 
 FIX v0.4 (audyt 2026-07):
   - :tick waliduje argument (n >= 1); wczesniej `:tick -5` bylo cichym
@@ -27,14 +32,17 @@ FIX v0.4 (audyt 2026-07):
   - :gc raportuje uczciwie: zmienne-korzeniowe przezywaja vacuum jako
     retained-TOMB (widoczne w `:ls tomb`); dopisane w :help.
   - Wspolbieznosc scheduler <-> REPL: bezpieczenstwo daje `Store.lock`
-    (karmazyn_substrate v1.1) + ramki-korzenie (karmazyn_exec v1.1);
-    boot nie musi nic synchronizowac sam.
+    (karmazyn_substrate v1.1) + ramki/extra_reach u gosci; boot nie
+    musi nic synchronizowac sam.
+
+FIX v0.5: domyslny gosc = karmazyn_lua (jezyk narzedzi w KarmazynOS).
 """
 
 import os
 import sys
 import threading
 import time
+import types
 
 from karmazyn_kernel import Store, kernel_info
 
@@ -43,6 +51,9 @@ try:
     _HAS_READLINE = True
 except Exception:
     _HAS_READLINE = False
+
+# etykieta zamontowanego gosci (lua | exec) — dla :help / raportu startu
+_GUEST_KIND = "exec"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -85,11 +96,100 @@ def _ms(t0):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+def _lua_root_candidates():
+    """Katalogi, w ktorych moze lezec pakiet karmazyn_lua (pliki lib.py, evaluator.py…)."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    # software/ -> repo root; root boot -> parent = Users\… sibling LUA
+    kernel_root = os.path.dirname(here)
+    parent = os.path.dirname(kernel_root)
+    env = os.environ.get("KARMAZYN_LUA") or os.environ.get("KARMAZYN_LUA_HOME")
+    out = []
+    if env:
+        out.append(os.path.abspath(env))
+    # Prefer in-repo LUA (KarmazynOs/LUA), then sibling C:\Users\…\LUA
+    out.extend([
+        os.path.join(here, "LUA"),
+        os.path.join(kernel_root, "LUA"),
+        os.path.join(here, "karmazyn_lua"),
+        os.path.join(here, "lua"),
+        os.path.join(parent, "LUA"),
+        os.path.join(parent, "Karmazyn_lua"),
+    ])
+    return out
+
+
+def _ensure_karmazyn_lua():
+    """Zarejestruj katalog zrodlowy jako pakiet karmazyn_lua (relative imports)."""
+    if "karmazyn_lua" in sys.modules and getattr(sys.modules["karmazyn_lua"], "mount", None):
+        return sys.modules["karmazyn_lua"]
+    root = None
+    for cand in _lua_root_candidates():
+        if cand and os.path.isfile(os.path.join(cand, "lib.py")) and os.path.isfile(
+            os.path.join(cand, "evaluator.py")
+        ):
+            root = cand
+            break
+    if root is None:
+        # klasyczny import (site-packages / PYTHONPATH)
+        import karmazyn_lua  # noqa: F401
+        return sys.modules["karmazyn_lua"]
+    pkg = types.ModuleType("karmazyn_lua")
+    pkg.__path__ = [root]
+    pkg.__file__ = os.path.join(root, "__init__.py")
+    sys.modules["karmazyn_lua"] = pkg
+    from karmazyn_lua.lib import mount, LuaLib, install_env_of, install_tools  # noqa: E402
+    from karmazyn_lua.values import lua_env_of, compose_phi  # noqa: E402
+    pkg.mount = mount
+    pkg.LuaLib = LuaLib
+    pkg.install_env_of = install_env_of
+    pkg.install_tools = install_tools
+    pkg.lua_env_of = lua_env_of
+    pkg.compose_phi = compose_phi
+    return pkg
+
+
+def _tools_dir():
+    """Opcjonalny katalog narzedzi *.lua (KARMAZYN_TOOLS lub software/tools)."""
+    env = os.environ.get("KARMAZYN_TOOLS")
+    if env and os.path.isdir(env):
+        return env
+    here = os.path.dirname(os.path.abspath(__file__))
+    cand = os.path.join(here, "tools")
+    return cand if os.path.isdir(cand) else None
+
+
 def mount_evaluator(store):
-    """Montuje warstwe wykonawcza na Store. Tu wpina sie karmazyn_scheme, gdy bedzie.
-    Kontrakt: obiekt z metoda eval_line(str) -> str, ze zmiennymi w Store (reach-GC)."""
-    import karmazyn_exec
-    return karmazyn_exec.Evaluator(store, env_label="repl")
+    """Montuje warstwe wykonawcza na Store.
+
+    Domyslnie karmazyn_lua (jezyk narzedzi). Fallback: karmazyn_exec (mini-Lisp).
+    Wymus: KARMAZYN_GUEST=lua|exec
+    Kontrakt: eval_line(str)->str, .env = Bubble korzenia (reach-GC).
+    """
+    global _GUEST_KIND
+    prefer = (os.environ.get("KARMAZYN_GUEST") or "lua").strip().lower()
+    if prefer in ("exec", "lisp", "scheme", "karmazyn_exec"):
+        import karmazyn_exec
+        _GUEST_KIND = "exec"
+        return karmazyn_exec.Evaluator(store, env_label="repl")
+    try:
+        kl = _ensure_karmazyn_lua()
+        tools = _tools_dir()
+        kwargs = {"env_label": "lua"}
+        if tools:
+            kwargs["tools"] = tools
+        ev = kl.mount(store, **kwargs)
+        _GUEST_KIND = "lua"
+        return ev
+    except Exception as e:
+        if prefer in ("lua", "karmazyn_lua"):
+            # jawnie chcieli Lua — nie ukrywaj awarii
+            raise
+        import karmazyn_exec
+        _GUEST_KIND = "exec"
+        # ostrzezenie zostawi boot() w logu przez fail? tu cichy fallback + atrybut
+        ev = karmazyn_exec.Evaluator(store, env_label="repl")
+        ev._lua_mount_error = e
+        return ev
 
 
 class KarmazynShell:
@@ -98,7 +198,7 @@ class KarmazynShell:
     def __init__(self, store, evaluator, verbose_events=False):
         self.store = store
         self.ev = evaluator
-        self.env = evaluator.env
+        self.env = getattr(evaluator, "env", None) or getattr(evaluator, "G", None)
         if verbose_events:
             store.events.on("vacuum_decay",
                             lambda a: print(f"  [GC] vacuum_decay: {a.id} ({a.E})"))
@@ -126,9 +226,43 @@ class KarmazynShell:
             return f"blad :{cmd}: {type(e).__name__}: {e}"
 
     def _m_help(self, a):
-        return ("KOD: (define x 10)  (+ x 5)  (if (> x 0) x 0)  (lambda (n) (* n n))  (begin ...)\n"
-                "OS : :info | :stats | :tick [n>=1] | :gc | :ls [stan] | :env | :find <q> | :new <S> <E> | :exit\n"
-                "     :gc studzi WSZYSTKO: sieroty gina, zmienne-korzeniowe przezywaja jako retained-TOMB (:ls tomb)")
+        if _GUEST_KIND == "lua":
+            kod = (
+                "KOD (Lua):  x = 10  |  function f(n) return n*n end  |  print(f(5))\n"
+                "  tool: package.preload.echo = function() return function(s) print(s) end end\n"
+                "        require('echo')('czesc')   |  load('return 1+2')()\n"
+            )
+        else:
+            kod = (
+                "KOD (Lisp): (define x 10)  (+ x 5)  (lambda (n) (* n n))  (begin ...)\n"
+            )
+        return (
+            kod
+            + "OS : :info | :stats | :tick [n>=1] | :gc | :ls [stan] | :env | :tools\n"
+            "     :find <q> | :new <S> <E> | :exit\n"
+            "     :gc studzi WSZYSTKO: sieroty gina, korzenie jako retained-TOMB (:ls tomb)"
+        )
+
+    def _m_tools(self, a):
+        """Lista narzedzi z package.preload (Lua) albo wskazowka dla exec."""
+        if _GUEST_KIND != "lua":
+            return "gosc exec (mini-Lisp): brak package.preload — :help"
+        preload = getattr(self.ev, "_preload", None) or {}
+        loaded = getattr(self.ev, "_modules", None) or {}
+        if not preload and not loaded:
+            return ("(brak narzedzi w package.preload)\n"
+                    "  zdefiniuj: package.preload.foo = function() return {run=function() return 1 end} end\n"
+                    "  uzyj:      local m = require('foo'); print(m.run())\n"
+                    "  albo pliki *.lua w software/tools/ (auto-preload przy starcie)")
+        lines = ["package.preload:"]
+        for name in sorted(preload.keys()):
+            st = " [loaded]" if name in loaded else ""
+            lines.append(f"  {name}{st}")
+        if loaded:
+            extra = [n for n in sorted(loaded.keys()) if n not in preload]
+            if extra:
+                lines.append("package.loaded (poza preload): " + ", ".join(extra))
+        return "\n".join(lines)
 
     def _m_info(self, a):
         i = kernel_info()
@@ -184,11 +318,26 @@ class KarmazynShell:
                          for x in atoms)
 
     def _m_env(self, a):
-        out = []
         b = self.env
+        if b is None:
+            return "(brak env — ewaluator bez korzenia)"
+        out = []
         depth = 0
         while b is not None:
-            names = ", ".join(b.bindings.keys()) or "(puste)"
+            # Lua: klucze s:name w bindings; Lisp: nazwy proste
+            keys = list(getattr(b, "bindings", {}).keys())
+            # skroc: pokaz uzytkownicze / bez wewnetrznych @
+            shown = []
+            for k in keys:
+                if isinstance(k, str) and k.startswith("@"):
+                    continue
+                if isinstance(k, str) and k.startswith("s:"):
+                    shown.append(k[2:])
+                else:
+                    shown.append(str(k))
+            names = ", ".join(shown) or "(puste)"
+            if len(names) > 200:
+                names = names[:200] + "…"
             out.append(f"  {'  '*depth}{b.label}: {names}")
             b = b.parent
             depth += 1
@@ -252,15 +401,28 @@ def boot(verbose_events=False, log=None):
         raise BootError("substrat nie wstal") from e
     log.ok("substrat (Store, reach-GC)", f"prawo: {i['law']}", _ms(t))
 
-    # 3. warstwa wykonawcza (montaz: env_of + korzen)
+    # 3. warstwa wykonawcza (montaz: env_of + korzen) — domyslnie Lua
     t = time.perf_counter()
     try:
         evaluator = mount_evaluator(store)
     except Exception as e:
         log.fail("warstwa wykonawcza", f"{type(e).__name__}: {e}")
         raise BootError("warstwa wykonawcza nie wstala") from e
-    wired = (evaluator.env in store.roots)
-    log.ok("warstwa wykonawcza", f"env_of wpiete, korzen={'tak' if wired else 'NIE'}", _ms(t))
+    env = getattr(evaluator, "env", None) or getattr(evaluator, "G", None)
+    wired = (env is not None and env in store.roots)
+    guest = _GUEST_KIND
+    detail = f"gosc={guest}, korzen={'tak' if wired else 'NIE'}"
+    err = getattr(evaluator, "_lua_mount_error", None)
+    if err is not None:
+        log.warn("warstwa wykonawcza", f"{detail}; Lua niedostepna: {err}", _ms(t))
+    else:
+        log.ok("warstwa wykonawcza", detail, _ms(t))
+    if guest == "lua":
+        ntools = len(getattr(evaluator, "_preload", {}) or {})
+        if ntools:
+            log.ok("narzedzia Lua", f"package.preload x{ntools}")
+        else:
+            log.ok("narzedzia Lua", "package.preload gotowy (pusto — :tools)")
 
     # 4. shell
     t = time.perf_counter()
@@ -322,18 +484,48 @@ def demo():
     store, shell = boot(verbose_events=True)
     print("  " + "-" * 56)
     print("  start zakonczony (tryb demo).\n")
-    script = [
-        ":info",
-        "(define x 10)", "(define y (+ x 5))", "(+ x y)",
-        "(if (> y x) (* x y) 0)",
-        "(define keep 123)",
-        ":new sierota orphan-bez-wiazania",
-        ":ls", ":tick 200", ":ls tomb", "keep", "(+ keep x)",
-        "(define counter (lambda () (begin (define n 0) (lambda () (begin (set! n (+ n 1)) n)))))",
-        "(define c (counter))", "(c)", "(c)", ":tick 100", "(c)",
-        ":tick -5",
-        ":env", ":stats", ":exit",
-    ]
+    if _GUEST_KIND == "lua":
+        script = [
+            ":info",
+            ":help",
+            "x = 10",
+            "y = x + 5",
+            "return x + y",
+            "function square(n) return n * n end",
+            "return square(7)",
+            "keep = 123",
+            ":new sierota orphan-bez-wiazania",
+            ":ls",
+            ":tick 200",
+            "return keep",
+            # narzedzie jako modul w package.preload
+            "package.preload.echo = function() local M = {}; function M.run(s) return 'echo:' .. tostring(s) end; return M end",
+            "e = require('echo')",
+            "return e.run('karmazyn')",
+            "function counter() local n = 0; return function() n = n + 1; return n end end",
+            "c = counter()",
+            "return c()",
+            "return c()",
+            ":tick 100",
+            "return c()",
+            ":tools",
+            ":env",
+            ":stats",
+            ":exit",
+        ]
+    else:
+        script = [
+            ":info",
+            "(define x 10)", "(define y (+ x 5))", "(+ x y)",
+            "(if (> y x) (* x y) 0)",
+            "(define keep 123)",
+            ":new sierota orphan-bez-wiazania",
+            ":ls", ":tick 200", ":ls tomb", "keep", "(+ keep x)",
+            "(define counter (lambda () (begin (define n 0) (lambda () (begin (set! n (+ n 1)) n)))))",
+            "(define c (counter))", "(c)", "(c)", ":tick 100", "(c)",
+            ":tick -5",
+            ":env", ":stats", ":exit",
+        ]
     for line in script:
         print(f"\nkarmazyn> {line}")
         out = shell.feed(line)
@@ -341,7 +533,7 @@ def demo():
             break
         if out:
             print(out)
-    print("\n[demo] warstwa wykonawcza dziala; zmienne zyja pod reach-GC, nie pod temperatura.")
+    print("\n[demo] gosc=%s; zmienne/tabele zyja pod reach-GC." % _GUEST_KIND)
 
 
 if __name__ == "__main__":
