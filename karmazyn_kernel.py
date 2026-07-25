@@ -78,12 +78,37 @@ except Exception:
 
 # ── Rdzen wlasciwy: silnik z reach-GC (atomy + bable + korzenie + rezonans) ───
 # Substrate sam degraduje lagodnie bez hrr/numpy — patrz karmazyn_substrate.
+# Przełącznik testowy: KARMAZYN_SUBSTRATE=python|native (patrz karmazyn_backend).
 from karmazyn_substrate import (
-    Store,                  # natywna powierzchnia silnika (D2)
+    Store,                  # domyślna powierzchnia silnika (Python, D2)
     Bubble,
     EventBus,
     VEC_DIM,                # zamrozone D = 2048
 )
+
+try:
+    from karmazyn_backend import (
+        open_store,
+        substrate_backend,
+        native_available as native_substrate_available,
+        backend_info as substrate_backend_info,
+        apply_cli_substrate_flags,
+    )
+except Exception:  # pragma: no cover
+    def open_store(thermal=True, backend=None, **kwargs):
+        return Store(thermal=thermal, **kwargs)
+
+    def substrate_backend(explicit=None):
+        return "python"
+
+    def native_substrate_available():
+        return False
+
+    def substrate_backend_info():
+        return {"backend": "python", "native_available": False}
+
+    def apply_cli_substrate_flags(argv=None):
+        return None
 
 # ── Kontrakt granicy: jaka powierzchnie musi miec magazyn dla aplikacji ───────
 # Czysty stdlib (Protocol) — zero zaleznosci.
@@ -108,6 +133,9 @@ __all__ = [
     "random_unit_vector", "name_to_vector", "HRROperations", "HAS_HRR",
     # silnik
     "Store", "Bubble", "EventBus", "VEC_DIM",
+    # przełącznik substratu (test / eksperyment)
+    "open_store", "substrate_backend", "native_substrate_available",
+    "substrate_backend_info", "apply_cli_substrate_flags",
     # kontrakt
     "AtomStore", "capabilities", "conforms", "assert_conforms", "CORE_METHODS",
     # meta
@@ -118,12 +146,17 @@ __all__ = [
 def kernel_info() -> dict:
     """Samoopis jadra — do diagnostyki i potwierdzenia, ze fasada zaladowala
     czesci. Raportuje tez, czy twarz HRR jest aktywna (zalezy od numpy)."""
+    try:
+        _sub = substrate_backend_info()
+    except Exception:
+        _sub = {"backend": "python", "native_available": False}
     return {
         "version": __version__,
         "modules": ["karmazyn_atom", "karmazyn_hrr",
                     "karmazyn_substrate", "karmazyn_atomstore"],
         "vec_dim": VEC_DIM,
         "hrr_active": HAS_HRR,          # False => praca w trybie zero-zaleznosci
+        "substrate": _sub,              # python | native (przełącznik testowy)
         "law": "temperatura mowi KIEDY, osiagalnosc mowi CZY",
         "surfaces": {
             # Kanoniczna powierzchnia natywna silnika (Store). Jawna lista —

@@ -3,13 +3,19 @@ KarmazynOS Kernel - jedna wersja kanoniczna
 Zsynchronizowane: 2026-07-24 (zgodnosc Kernel Karmazyn + DBase + monorepo KarmazynOs)
 Wersja jadra (karmazyn_kernel.__version__): 1.1.0  (FIX v1.1 + v1.2 + S15 dual-emit/snapshot)
 
-Jadro (kernel/) - ZRODLO PRAWDY:
+Jadro (kernel/) - ZRODLO PRAWDY (Python, nadal domyslne w boot):
   karmazyn_atom.py
   karmazyn_atomstore.py
   karmazyn_hrr.py
   karmazyn_substrate.py
   karmazyn_kernel.py
   kernel_boundary.py
+
+Native substrate (Rust) - prawo reach-GC + C ABI (faza 0/1):
+  native/karmazyn_substrate/   cargo test && cargo build --release
+  native/karmazyn_substrate_native.py
+  native/README.md
+  Boot nadal Python Store; podmiana za szwem = nastepna faza.
 
 Oprogramowanie minimalne (software/) - ZRODLO PRAWDY:
   karmazyn_boot.py
