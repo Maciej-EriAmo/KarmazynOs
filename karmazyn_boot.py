@@ -47,6 +47,21 @@ import types
 from karmazyn_kernel import Store, kernel_info
 
 try:
+    from karmazyn_backend import (
+        open_store,
+        native_available,
+        substrate_backend,
+        apply_cli_substrate_flags,
+        backend_info,
+    )
+except Exception:  # pragma: no cover
+    open_store = None
+    native_available = lambda: False
+    substrate_backend = lambda explicit=None: "python"
+    apply_cli_substrate_flags = lambda argv=None: None
+    backend_info = lambda: {"backend": "python", "native_available": False}
+
+try:
     import readline
     _HAS_READLINE = True
 except Exception:
@@ -106,15 +121,20 @@ def _lua_root_candidates():
     out = []
     if env:
         out.append(os.path.abspath(env))
-    # Prefer in-repo LUA (KarmazynOs/LUA), then sibling C:\Users\…\LUA
-    out.extend([
+    # Prefer katalog z warstwą projektu (project.py), potem in-repo, sibling.
+    # Dzięki temu dev w C:\Users\…\LUA nie gubi się za starym mirror w monorepo.
+    candidates = [
         os.path.join(here, "LUA"),
         os.path.join(kernel_root, "LUA"),
         os.path.join(here, "karmazyn_lua"),
         os.path.join(here, "lua"),
         os.path.join(parent, "LUA"),
         os.path.join(parent, "Karmazyn_lua"),
-    ])
+    ]
+    # Najpierw te, które mają project.py (MVP host→bąbel), potem reszta
+    with_proj = [c for c in candidates if c and os.path.isfile(os.path.join(c, "project.py"))]
+    without = [c for c in candidates if c and c not in with_proj]
+    out.extend(with_proj + without)
     return out
 
 
@@ -145,6 +165,24 @@ def _ensure_karmazyn_lua():
     pkg.install_tools = install_tools
     pkg.lua_env_of = lua_env_of
     pkg.compose_phi = compose_phi
+    # opcjonalnie: warstwa projektu (host → bąbel)
+    try:
+        from karmazyn_lua.session import (  # noqa: E402
+            mount_session, run_entry, check_project, reload_module, set_project,
+        )
+        from karmazyn_lua.project import (  # noqa: E402
+            ProjectSpec, attach_lua_bin, put_memory_module,
+        )
+        pkg.mount_session = mount_session
+        pkg.run_entry = run_entry
+        pkg.check_project = check_project
+        pkg.reload_module = reload_module
+        pkg.set_project = set_project
+        pkg.ProjectSpec = ProjectSpec
+        pkg.attach_lua_bin = attach_lua_bin
+        pkg.put_memory_module = put_memory_module
+    except Exception:
+        pass
     return pkg
 
 
@@ -156,6 +194,14 @@ def _tools_dir():
     here = os.path.dirname(os.path.abspath(__file__))
     cand = os.path.join(here, "tools")
     return cand if os.path.isdir(cand) else None
+
+
+def _project_from_env():
+    """KARMAZYN_PROJECT → ścieżka root lub None."""
+    p = os.environ.get("KARMAZYN_PROJECT")
+    if p and os.path.isdir(p):
+        return os.path.abspath(p)
+    return None
 
 
 def _normalize_guest(kind):
@@ -170,11 +216,30 @@ def _normalize_guest(kind):
     raise ValueError(f"nieznany gosc: {kind!r}  (lua|exec)")
 
 
-def mount_evaluator(store, kind=None):
+def _lua_bin_dir():
+    """KARMAZYN_LUA_BIN lub monorepo lua_bin/."""
+    env = os.environ.get("KARMAZYN_LUA_BIN")
+    if env and os.path.isdir(env):
+        return os.path.abspath(env)
+    here = os.path.dirname(os.path.abspath(__file__))
+    kernel_root = os.path.dirname(here)
+    for cand in (
+        os.path.join(kernel_root, "lua_bin"),
+        os.path.join(here, "lua_bin"),
+    ):
+        if os.path.isdir(cand):
+            return cand
+    return None
+
+
+def mount_evaluator(store, kind=None, project=None, tools=None, caps=None,
+                    lua_bin=None):
     """Montuje warstwe wykonawcza na Store.
 
     Domyslnie karmazyn_lua. Alternatywa: karmazyn_exec (mini-Lisp).
     Wymus: kind= | KARMAZYN_GUEST=lua|exec | CLI --lua / --lisp
+    project: root projektu (searcher hosta) | KARMAZYN_PROJECT | None
+    lua_bin: katalog narzędzi OS (preload) | KARMAZYN_LUA_BIN | monorepo lua_bin
     Kontrakt: eval_line(str)->str, .env = Bubble korzenia (reach-GC).
     Haki reach: register_env_of / register_extra_reach (name='guest').
     """
@@ -186,11 +251,43 @@ def mount_evaluator(store, kind=None):
         return karmazyn_exec.Evaluator(store, env_label="repl")
     try:
         kl = _ensure_karmazyn_lua()
-        tools = _tools_dir()
+        tools = tools if tools is not None else _tools_dir()
+        if project is None:
+            project = _project_from_env()
+        if lua_bin is None:
+            lua_bin = _lua_bin_dir()
         kwargs = {"env_label": "lua"}
         if tools:
             kwargs["tools"] = tools
-        ev = kl.mount(store, **kwargs)
+        if project:
+            kwargs["project"] = project
+        if caps:
+            kwargs["caps"] = caps
+        # mount z project= gdy lib to obsługuje; fallback: mount + set_project
+        try:
+            ev = kl.mount(store, **kwargs)
+        except TypeError:
+            kwargs.pop("project", None)
+            ev = kl.mount(store, **kwargs)
+            if project and getattr(kl, "set_project", None):
+                kl.set_project(ev, project)
+        # lua_bin: preload + module root (host; gość bez FS)
+        if lua_bin and getattr(kl, "attach_lua_bin", None):
+            try:
+                kl.attach_lua_bin(ev, lua_bin)
+            except Exception:
+                # nie zabijaj bootu jeśli stary skrypt w bin
+                from karmazyn_lua.project import attach_lua_bin
+                try:
+                    attach_lua_bin(ev, lua_bin)
+                except Exception:
+                    pass
+        elif lua_bin:
+            try:
+                from karmazyn_lua.project import attach_lua_bin
+                attach_lua_bin(ev, lua_bin)
+            except Exception:
+                pass
         _GUEST_KIND = "lua"
         return ev
     except Exception as e:
@@ -207,10 +304,12 @@ def mount_evaluator(store, kind=None):
 class KarmazynShell:
     """Prompt: kod -> warstwa wykonawcza; ':...' -> komendy systemu."""
 
-    def __init__(self, store, evaluator, verbose_events=False):
+    def __init__(self, store, evaluator, verbose_events=False, project=None):
         self.store = store
         self.ev = evaluator
         self.env = getattr(evaluator, "env", None) or getattr(evaluator, "G", None)
+        # root projektu hosta (mapa → bąbel); None = tylko preload/tools
+        self.project_root = project or _project_from_env()
         if verbose_events:
             store.events.on("vacuum_decay",
                             lambda a: print(f"  [GC] vacuum_decay: {a.id} ({a.E})"))
@@ -251,8 +350,10 @@ class KarmazynShell:
         return (
             kod
             + "OS : :info | :stats | :tick [n>=1] | :gc | :ls [stan] | :env | :tools\n"
+            "     :project [path] | :run [file] | :reload [mod] | :check\n"
             "     :guest [lua|exec] | :find <q> | :new <S> <E> | :exit\n"
-            "     :gc studzi WSZYSTKO: sieroty gina, korzenie jako retained-TOMB (:ls tomb)"
+            "     :gc studzi WSZYSTKO: sieroty gina, korzenie jako retained-TOMB (:ls tomb)\n"
+            "     projekt = mapa host→bąbel (require z plików); gość bez ambient FS"
         )
 
     def _m_guest(self, a):
@@ -276,7 +377,9 @@ class KarmazynShell:
             return f"gosc={_GUEST_KIND} (bez zmian)"
         old_env = self.env
         try:
-            ev = mount_evaluator(self.store, kind=want)
+            ev = mount_evaluator(
+                self.store, kind=want, project=self.project_root,
+            )
         except Exception as e:
             return f"nie udalo sie zamontowac {want}: {type(e).__name__}: {e}"
         if old_env is not None and old_env is not (
@@ -300,7 +403,8 @@ class KarmazynShell:
             return ("(brak narzedzi w package.preload)\n"
                     "  zdefiniuj: package.preload.foo = function() return {run=function() return 1 end} end\n"
                     "  uzyj:      local m = require('foo'); print(m.run())\n"
-                    "  albo pliki *.lua w software/tools/ (auto-preload przy starcie)")
+                    "  albo pliki *.lua w software/tools/ (auto-preload przy starcie)\n"
+                    "  albo :project <dir> + require z plików projektu")
         lines = ["package.preload:"]
         for name in sorted(preload.keys()):
             st = " [loaded]" if name in loaded else ""
@@ -311,10 +415,99 @@ class KarmazynShell:
                 lines.append("package.loaded (poza preload): " + ", ".join(extra))
         return "\n".join(lines)
 
+    def _m_project(self, a):
+        """Pokaż / ustaw root projektu (host mapa → bąbel searcher)."""
+        if _GUEST_KIND != "lua":
+            return "gosc exec: :project tylko dla Lua"
+        if not a:
+            spec = getattr(self.ev, "project", None)
+            if spec is not None:
+                return f"project={spec.root}"
+            if self.project_root:
+                return f"project={self.project_root} (env; nie podpięty do searchera?)"
+            return ("project=(brak)\n"
+                    "  :project <katalog>  — require z plików pod rootem\n"
+                    "  start: --project PATH  lub  KARMAZYN_PROJECT=PATH")
+        root = os.path.abspath(a[0])
+        if not os.path.isdir(root):
+            return f"brak katalogu: {root}"
+        try:
+            kl = _ensure_karmazyn_lua()
+            set_project = getattr(kl, "set_project", None)
+            if set_project is None:
+                from karmazyn_lua.session import set_project as set_project  # noqa
+            set_project(self.ev, root)
+        except Exception as e:
+            return f"nie udalo sie podpiac projektu: {type(e).__name__}: {e}"
+        self.project_root = root
+        os.environ["KARMAZYN_PROJECT"] = root
+        return f"project={root}  (searcher aktywny; :run / require \"mod\")"
+
+    def _m_run(self, a):
+        """Uruchom main.lua projektu lub wskazany plik (host czyta FS)."""
+        if _GUEST_KIND != "lua":
+            return "gosc exec: :run tylko dla Lua"
+        entry = a[0] if a else None
+        try:
+            kl = _ensure_karmazyn_lua()
+            run_entry = getattr(kl, "run_entry", None)
+            if run_entry is None:
+                from karmazyn_lua.session import run_entry  # noqa
+            # jeśli brak projektu a podano plik — jednorazowy run_file
+            if entry is None and getattr(self.ev, "project", None) is None:
+                if self.project_root:
+                    self._m_project([self.project_root])
+                else:
+                    return "uzycie: :run [plik]  (najpierw :project <dir> lub main.lua)"
+            kind, text = run_entry(self.ev, entry=entry)
+            return text if text else f"(run {kind})"
+        except Exception as e:
+            return f"blad :run: {type(e).__name__}: {e}"
+
+    def _m_reload(self, a):
+        """Wyczyść cache require; opcjonalnie przeładuj moduł z dysku projektu."""
+        if _GUEST_KIND != "lua":
+            return "gosc exec: :reload tylko dla Lua"
+        name = a[0] if a else None
+        try:
+            kl = _ensure_karmazyn_lua()
+            reload_module = getattr(kl, "reload_module", None)
+            if reload_module is None:
+                from karmazyn_lua.session import reload_module  # noqa
+            return reload_module(self.ev, name)
+        except Exception as e:
+            return f"blad :reload: {type(e).__name__}: {e}"
+
+    def _m_check(self, a):
+        """Parse wszystkich *.lua w projekcie (bez wykonania)."""
+        if _GUEST_KIND != "lua":
+            return "gosc exec: :check tylko dla Lua"
+        if a:
+            # jednorazowo podłącz katalog
+            r = self._m_project([a[0]])
+            if r.startswith("brak") or r.startswith("nie"):
+                return r
+        if getattr(self.ev, "project", None) is None:
+            return "uzycie: :check [katalog]  (wymaga projektu)"
+        try:
+            kl = _ensure_karmazyn_lua()
+            check_project = getattr(kl, "check_project", None)
+            if check_project is None:
+                from karmazyn_lua.session import check_project  # noqa
+            errs = check_project(self.ev)
+        except Exception as e:
+            return f"blad :check: {type(e).__name__}: {e}"
+        if not errs:
+            return "check: OK"
+        return "check FAIL:\n" + "\n".join(errs)
+
     def _m_info(self, a):
         i = kernel_info()
+        sub = i.get("substrate") or {}
+        be = sub.get("backend") or type(self.store).__name__
         return (f"KarmazynOS jadro v{i['version']}  D={i['vec_dim']}  "
                 f"HRR={'on' if i['hrr_active'] else 'off (zero-dep)'}\n"
+                f"substrat: {be}  store={type(self.store).__name__}\n"
                 f"prawo: {i['law']}")
 
     def _m_stats(self, a):
@@ -418,10 +611,13 @@ class BootError(RuntimeError):
     """Start przerwany — usluga krytyczna nie wstala (zgloszona jako [FAIL])."""
 
 
-def boot(verbose_events=False, log=None):
+def boot(verbose_events=False, log=None, project=None):
     """Sekwencja startowa z raportem uslug. Zwraca (store, shell).
-    Awaria uslugi krytycznej -> [FAIL] + BootError (czysto, bez surowego traceback)."""
+    Awaria uslugi krytycznej -> [FAIL] + BootError (czysto, bez surowego traceback).
+    project: root projektu Lua (host→bąbel) lub None / KARMAZYN_PROJECT."""
     log = log or BootLog()
+    if project is None:
+        project = _project_from_env()
     print("=" * 60)
     print("  KarmazynOS — sekwencja startowa")
     print("=" * 60)
@@ -439,19 +635,48 @@ def boot(verbose_events=False, log=None):
     else:
         log.warn("HRR (wektory)", "wylaczone — brak numpy (tryb zero-dep)")
 
-    # 2. substrat (Store + reach-GC)
+    # 2. substrat (Store + reach-GC) — Python lub Rust (KARMAZYN_SUBSTRATE)
     t = time.perf_counter()
     try:
-        store = Store(thermal=True)
+        # Domyślnie: native jeśli DLL jest i nie wymuszono python
+        if open_store is not None:
+            if os.environ.get("KARMAZYN_SUBSTRATE") is None and native_available():
+                os.environ["KARMAZYN_SUBSTRATE"] = "native"
+            store = open_store(thermal=True)
+            backend = substrate_backend()
+            if backend == "both":
+                backend = "python"
+        else:
+            store = Store(thermal=True)
+            backend = "python"
     except Exception as e:
-        log.fail("substrat (Store)", f"{type(e).__name__}: {e}")
-        raise BootError("substrat nie wstal") from e
-    log.ok("substrat (Store, reach-GC)", f"prawo: {i['law']}", _ms(t))
+        # native fail → twardy fallback na Python, z ostrzeżeniem
+        if open_store is not None and substrate_backend() == "native":
+            try:
+                log.warn("substrat native", f"{type(e).__name__}: {e} → fallback python")
+                os.environ["KARMAZYN_SUBSTRATE"] = "python"
+                store = open_store(thermal=True)
+                backend = "python"
+            except Exception as e2:
+                log.fail("substrat (Store)", f"{type(e2).__name__}: {e2}")
+                raise BootError("substrat nie wstal") from e2
+        else:
+            log.fail("substrat (Store)", f"{type(e).__name__}: {e}")
+            raise BootError("substrat nie wstal") from e
+    sub_detail = f"backend={backend}, prawo: {i['law']}"
+    if backend == "native":
+        try:
+            from karmazyn_backend import backend_info as _bi
+            ver = (_bi() or {}).get("native_version") or "?"
+            sub_detail = f"backend=native ({ver}), prawo: {i['law']}"
+        except Exception:
+            pass
+    log.ok("substrat (Store, reach-GC)", sub_detail, _ms(t))
 
     # 3. warstwa wykonawcza (montaz: env_of + korzen) — domyslnie Lua
     t = time.perf_counter()
     try:
-        evaluator = mount_evaluator(store)
+        evaluator = mount_evaluator(store, project=project)
     except Exception as e:
         log.fail("warstwa wykonawcza", f"{type(e).__name__}: {e}")
         raise BootError("warstwa wykonawcza nie wstala") from e
@@ -470,10 +695,17 @@ def boot(verbose_events=False, log=None):
             log.ok("narzedzia Lua", f"package.preload x{ntools}")
         else:
             log.ok("narzedzia Lua", "package.preload gotowy (pusto — :tools)")
+        spec = getattr(evaluator, "project", None)
+        if spec is not None:
+            log.ok("projekt Lua", spec.root)
+        elif project:
+            log.warn("projekt Lua", f"ustawiono {project}, ale searcher nieaktywny")
 
     # 4. shell
     t = time.perf_counter()
-    shell = KarmazynShell(store, evaluator, verbose_events=verbose_events)
+    shell = KarmazynShell(
+        store, evaluator, verbose_events=verbose_events, project=project,
+    )
     log.ok("shell", "prompt gotowy", _ms(t))
 
     return store, shell
@@ -595,8 +827,17 @@ def _apply_cli_guest_flags(argv):
             os.environ["KARMAZYN_GUEST"] = argv[i + 1]
 
 
+def _apply_cli_project_flags(argv):
+    """--project PATH → KARMAZYN_PROJECT (host mapa plików → bąbel)."""
+    if "--project" in argv:
+        i = argv.index("--project")
+        if i + 1 < len(argv):
+            os.environ["KARMAZYN_PROJECT"] = os.path.abspath(argv[i + 1])
+
+
 if __name__ == "__main__":
     _apply_cli_guest_flags(sys.argv)
+    _apply_cli_project_flags(sys.argv)
     if "--demo" in sys.argv:
         demo()
     else:

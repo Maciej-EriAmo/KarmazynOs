@@ -1,9 +1,10 @@
 KarmazynOS Kernel - jedna wersja kanoniczna
 ==========================================
-Zsynchronizowane: 2026-07-25
+Zsynchronizowane: 2026-07-29
 Wersja jadra (karmazyn_kernel.__version__): 1.1.0  (FIX v1.1 + v1.2 + S15 dual-emit/snapshot)
-Boot: karmazyn_boot v0.5 (gość Lua domyślnie; :guest / --lisp)
+Boot: karmazyn_boot v0.5+ (gość Lua; :project / :run / :reload / :check; --project)
 Native substrate (Rust): 0.1.0-karmazyn-substrate (faza 0/1)
+Lua guest: project host (searchers preload|memory|project), CLI run_lua.py
 
 Jadro (kernel/) - ZRODLO PRAWDY (Python, domyslne w boot):
   karmazyn_atom.py
@@ -27,12 +28,16 @@ Oprogramowanie minimalne (software/) - ZRODLO PRAWDY:
   karmazyn_phi.py
 
 Gość Lua (vendored):
-  LUA/                           karmazyn_lua (lib, evaluator, …)
+  LUA/                           karmazyn_lua (evaluator, project, session, cli, …)
+  LUA/examples/hello/            demo multi-file require
+  LUA/README.md                  skrót API / CLI
+  lua_bin/                       skrypty narzędzi (montaż hosta)
 
 Dokumentacja runtime:
   Documents/runtime_pl.md
   Documents/runtime_en.md
   Documents/START.PL.MD
+  Documents/START.MD
   README.md / RADME_PL.MD
 
 Narzedzia (root):
@@ -56,3 +61,6 @@ Przelaczniki:
   KARMAZYN_GUEST=lua|exec     gość REPL
   KARMAZYN_SUBSTRATE=python|native|both   substrat (testy / open_store)
   KARMAZYN_LUA=…              ścieżka pakietu Lua
+  KARMAZYN_PROJECT=… / --project   root projektu (require z plików)
+  KARMAZYN_TOOLS=…            tools/*.lua → preload
+  KARMAZYN_LUA_BIN=…          lua_bin (preload + module root)

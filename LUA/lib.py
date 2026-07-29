@@ -138,19 +138,26 @@ def _default_libs():
 
 
 def install_env_of(store):
-    """Zarejestruj hak env_of Lua w rejestrze substratu (name='guest')."""
-    reg = getattr(store, "register_env_of", None)
-    if reg is not None:
-        reg(lua_env_of, name="guest")
-    else:
-        # stary Store bez rejestru — fallback
-        store._env_of = lua_env_of
+    prev = getattr(store, "_env_of", None)
+
+    def _env_of(v):
+        r = lua_env_of(v)
+        if r is not None:
+            return r
+        if prev is not None and prev is not _env_of:
+            try:
+                return prev(v)
+            except Exception:
+                return None
+        return None
+
+    store._env_of = _env_of
     return store
 
 
 def mount(store, libs=None, root_bubble=None, env_label="lua",
           phi=None, phi1=None, phi2=None, caps=None,
-          budget=None, io_input=None, tools=None):
+          budget=None, io_input=None, tools=None, project=None):
     """Zamontuj interpreter Lua na substracie.
 
     store        — karmazyn_kernel.Store
@@ -162,6 +169,8 @@ def mount(store, libs=None, root_bubble=None, env_label="lua",
     io_input     — lista stringów do io.read() (kolejka FIFO)
     tools        — dict{nazwa: źródło str|callable} lub ścieżka katalogu *.lua
                    → package.preload (narzędzia OS: require "nazwa")
+    project      — ProjectSpec | ścieżka root | None
+                   → package.searchers[2] (host czyta pliki pod rootem)
 
     Zwraca Evaluator (ev.phi, ev.caps, ev.budget; ev.env == ev.G).
     """
@@ -194,6 +203,10 @@ def mount(store, libs=None, root_bubble=None, env_label="lua",
             ev._declared_globals.add(n)
     if tools is not None:
         install_tools(ev, tools)
+    if project is not None:
+        from .project import ProjectSpec, install_project_searcher
+        spec = project if not isinstance(project, str) else ProjectSpec.from_root(project)
+        install_project_searcher(ev, spec)
     return ev
 
 

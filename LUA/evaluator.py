@@ -35,17 +35,27 @@ class Evaluator:
         else:
             self.G = store.bubble_new(env_label)     # globalny zakres = korzeń
         store.set_root(self.G)
-        # HAK OSIĄGALNOŚCI — rejestr substratu (name='guest'), nie store._env_of =
-        if hasattr(store, "register_env_of"):
-            store.register_env_of(lua_env_of, name="guest")
-        else:
-            store._env_of = lua_env_of
+        # HAK OSIĄGALNOŚCI (kontrakt substratu S1): tabela=Bubble, domknięcie=env.
+        # Składamy z ewentualnym poprzednim env_of (host/Karmin), Lua ma pierwszeństwo.
+        prev = getattr(store, "_env_of", None)
+        def _env_of(v):
+            r = lua_env_of(v)
+            if r is not None:
+                return r
+            if prev is not None and prev is not _env_of:
+                try:
+                    return prev(v)
+                except Exception:
+                    return None
+            return None
+        store._env_of = _env_of
         self._out = []
         self._va_stack = [[]]                    # varargi ramek; dno = chunk główny
         # metatabele typów (Lua: string library → mt z __index=string → s:sub())
         self._type_mt = {}                       # typename -> Bubble
         self._modules = {}                       # package.loaded (nazwa -> wartość)
         self._preload = {}                       # package.preload (nazwa -> loader fn)
+        self._memory_modules = {}                # host overlay: nazwa -> źródło (edytor)
         self._coro = None                        # bieżąca korutyna (LuaThread|None)
         self._YIELD = object()                   # wartownik builtin yield
         # Lua 5.5 global mode: open (*) vs strict (po pierwszej deklaracji global)
@@ -61,16 +71,19 @@ class Evaluator:
         self._active_envs = []                   # stos bąbli wywołań (extra_reach GC)
         self._call_stack = []                    # nazwy ramek do traceback (najstarsza→0)
         # root + aktywne ramki wywołań — inaczej settle w środku skryptu zżyna locale
+        prev_extra = getattr(store, "_extra_reach", None)
         def _extra():
             ids = []
             for env in self._active_envs:
                 for aid in list(env.bindings.values()):
                     ids.append(aid)
+            if prev_extra:
+                try:
+                    ids.extend(prev_extra() or ())
+                except Exception:
+                    pass
             return ids
-        if hasattr(store, "register_extra_reach"):
-            store.register_extra_reach(_extra, name="guest")
-        else:
-            store._extra_reach = _extra
+        store._extra_reach = _extra
         self._install_builtins()
 
     # ── wbudowane (biała lista; żadnej ambient authority) ──
@@ -291,7 +304,9 @@ class Evaluator:
         def b_loadstring(chunk=None, chunkname=None, *_):
             return b_load(chunk, chunkname, "t", None)
 
-        # ── require / package.searchers (pamięć; zero path/FS) ──
+        # ── require / package.searchers ──
+        # Domyślnie: preload w pamięci (zero path gościa). Host może dodać
+        # searchers[2] = project (czyta pliki pod rootem projektu — nie ambient FS).
         def b_searcher_preload(modname=None, *_):
             if not isinstance(modname, str):
                 return None
@@ -714,6 +729,87 @@ class Evaluator:
         # wyczyszczony cache — ponowny require załaduje nową wersję
         self._modules.pop(name, None)
         return name
+
+    # ── publiczne: chunk z hosta (pliki / project searcher) ──
+    def compile_chunk(self, source, chunkname="=(chunk)", env=None):
+        """Skompiluj tekstowy chunk do LuaFunction. Rzuca LuaError przy błędzie parse.
+
+        env: tabela _ENV dla chunka (domyślnie G). Host / searcher projektowy —
+        nie dają gościowi dostępu do FS; źródło dostarcza host.
+        Format błędu: chunkname:line:col: message (gdy parser podał linię).
+        """
+        if not isinstance(source, str):
+            raise LuaError("compile_chunk: oczekiwano stringa")
+        cname = chunkname if isinstance(chunkname, str) and chunkname else "=(chunk)"
+        try:
+            toks = tokenize(source)
+            block = Parser(toks).parse_chunk()
+        except LuaError as e:
+            msg = _tostring(e.lua_value)
+            # już sformatowane jako name:… albo line:col:…
+            if msg.startswith(cname):
+                raise
+            # line:col: message → @chunk:line:col: message
+            raise LuaError(f"{cname}:{msg}", value=f"{cname}:{msg}") from e
+        except Exception as ex:
+            raise LuaError(f"{cname}: {ex}") from ex
+        env_tbl = env if isinstance(env, Bubble) else self.G
+        wrap = self.store.bubble_new("chunk", parent=None)
+        ea = self.store.atom_new("var", "_ENV", value=env_tbl)
+        wrap.bind("_ENV", ea)
+        return LuaFunction(["..."], block, wrap, name=cname)
+
+    def run_source(self, source, chunkname="=(chunk)", args=None, env=None,
+                   as_module=False, clear_out=None):
+        """Uruchom chunk (host wpuszcza źródło). Zwraca listę wartości return.
+
+        as_module=True: jak plik require — pierwsza wartość albo True gdy brak return.
+        print() ląduje w self._out. Błędy → LuaError (host decyduje o formatowaniu).
+        clear_out: domyślnie True dla entrypointu, False dla as_module (require).
+        """
+        if clear_out is None:
+            clear_out = not as_module
+        if clear_out:
+            self._out = []
+        fn = self.compile_chunk(source, chunkname=chunkname, env=env)
+        ret = self._call(fn, list(args) if args is not None else [])
+        if as_module:
+            if not ret:
+                return True
+            return ret[0] if ret[0] is not None else True
+        return ret
+
+    def run_file(self, path, chunkname=None, args=None, as_module=False, clear_out=None):
+        """Host: odczytaj plik z dysku i run_source. Gość nigdy nie woła tego sam."""
+        import os
+        if not isinstance(path, str) or not path:
+            raise LuaError("run_file: oczekiwano ścieżki")
+        try:
+            with open(path, encoding="utf-8") as f:
+                src = f.read()
+        except OSError as e:
+            raise LuaError(f"run_file: nie można odczytać {path!r}: {e}") from e
+        cname = chunkname
+        if not cname:
+            cname = "@" + os.path.basename(path)
+        return self.run_source(
+            src, chunkname=cname, args=args, as_module=as_module, clear_out=clear_out,
+        )
+
+    def format_run_result(self, ret=None, err=None):
+        """Złóż wynik jak eval_line: stdout (_out) + return values / błąd."""
+        if err is not None:
+            if isinstance(err, LuaError):
+                if getattr(err, "traceback", None):
+                    return "blad: " + err.traceback
+                return "blad: " + _tostring(err.lua_value)
+            return f"blad: {type(err).__name__}: {err}"
+        parts = []
+        if self._out:
+            parts.append("\n".join(self._out))
+        if ret:
+            parts.append("\t".join(_tostring(v) for v in ret))
+        return "\n".join(p for p in parts if p)
 
     # ── publiczne: jedna linia/chunk -> string ──
     def eval_line(self, line):

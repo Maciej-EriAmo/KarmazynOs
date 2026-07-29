@@ -3,8 +3,10 @@
 **Kernel:** `karmazyn_kernel` v1.1.0  
 **Boot:** `karmazyn_boot` v0.5  
 **Native substrate (Rust):** phase 0/1 — reach-GC law + C ABI  
+**Lua guest:** project host layer (multi-file `require`, CLI, memory overlay)
 
-This document describes the **current** monorepo runtime (not archived `shell.py` / `studio.py` under `archiwum/`).
+This document describes the **current** monorepo runtime (not archived `shell.py` / `studio.py` under `archiwum/`).  
+Full Polish guide: **[runtime_pl.md](runtime_pl.md)**.
 
 ---
 
@@ -22,16 +24,22 @@ Kernel law:
 > cold + unreachable → vacuum GC  
 > cold + reachable → retained TOMB
 
+**Guest sandbox = bubble.** The host maps a project tree into `require`; the guest has no ambient FS (`dofile` / system `package.path` / `os.execute` are absent by design).
+
 ---
 
 ## Seams
 
 ```
+Host CLI / boot / editor  (FS, project, lua_bin)
+        │
+        v
 Guest (Lua | mini-Lisp)  --eval_line-->  software
-         | register_env_of / extra_reach / set_root
-         v
+  package.searchers: preload → memory → project
+        | register_env_of / extra_reach / set_root
+        v
    karmazyn_kernel facade
-         v
+        v
    Store: Python (default boot)  |  Rust native (tests / next phase)
 ```
 
@@ -43,17 +51,41 @@ Guest (Lua | mini-Lisp)  --eval_line-->  software
 ## Run
 
 ```bash
-python karmazyn_boot.py              # interactive
+python karmazyn_boot.py
 python karmazyn_boot.py --demo
 python karmazyn_boot.py --lisp --demo
+python karmazyn_boot.py --project LUA/examples/hello
 ```
 
-Guest switch: `KARMAZYN_GUEST`, `--lua` / `--lisp`, REPL `:guest lua|exec`.
+In the prompt (Lua guest + project):
 
-Substrate switch (tests / `open_store`): `KARMAZYN_SUBSTRATE=python|native`,  
-`--python` / `--native`, `open_store(backend=...)`.
+```text
+karmazyn> :project
+karmazyn> :check
+karmazyn> :run
+karmazyn> :reload util
+```
 
-Boot still uses **Python Store** by default.
+Standalone package CLI (no full OS):
+
+```bash
+cd LUA
+python run_lua.py run examples/hello
+python run_lua.py check examples/hello
+python run_lua.py repl examples/hello
+python _run_tests.py
+```
+
+| Switch | Meaning |
+|--------|---------|
+| `KARMAZYN_GUEST` / `--lua` / `--lisp` | guest language |
+| `KARMAZYN_PROJECT` / `--project` | project root for `require` |
+| `KARMAZYN_LUA` | path to `karmazyn_lua` package |
+| `KARMAZYN_TOOLS` | `*.lua` → `package.preload` |
+| `KARMAZYN_LUA_BIN` | OS tool scripts (preload + module root) |
+| `KARMAZYN_SUBSTRATE` | `python` \| `native` (tests / `open_store`) |
+
+Boot still uses **Python Store** by default for interactive work.
 
 ---
 
@@ -63,7 +95,8 @@ Boot still uses **Python Store** by default.
 python -m unittest test_substrate -v
 python test_substrate_compat.py -v
 python kernel_boundary.py kernel/ software/
+cd LUA && python _run_tests.py
 cd native/karmazyn_substrate && cargo test && cargo build --release
 ```
 
-Full Polish guide: [runtime_pl.md](runtime_pl.md) · Native: [../native/README.md](../native/README.md).
+Package notes: [../LUA/README.md](../LUA/README.md) · Native: [../native/README.md](../native/README.md).

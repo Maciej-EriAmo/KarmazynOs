@@ -28,8 +28,12 @@ Prawo jądra:
 
 ```
 ┌─────────────────────────────────────────────────────────┐
+│  Host: CLI / boot / edytor  (FS, projekt, lua_bin)      │
+│    run | check | repl | :project | :run | :reload       │
+├─────────────────────────────────────────────────────────┤
 │  Gość: Lua  |  mini-Lisp     eval_line(str) → str       │
-│  (LUA/, karmazyn_exec)       package.preload / tools    │
+│  (LUA/, karmazyn_exec)  sandbox = bąbel (bez ambient FS)│
+│  package.searchers: preload → memory → project          │
 ├─────────────────────────────────────────────────────────┤
 │  Szwy językowe (rejestr haków Store):                   │
 │    register_env_of(fn, name=…)     — domknięcia/tabele  │
@@ -43,6 +47,10 @@ Prawo jądra:
 │    Rust    native/karmazyn_substrate  ← testy / faza N  │
 └─────────────────────────────────────────────────────────┘
 ```
+
+**Zasada:** sandbox gościa = **bąbel**. Host montuje **projekt** (mapa plików →
+`require`) i opcjonalnie bufory edytora (memory searcher). Gość **nie** ma
+`dofile` / `loadfile` / `package.path` systemowego / `os.execute`.
 
 **Reguła granicy:** jadro **nigdy** nie importuje oprogramowania  
 (`python kernel_boundary.py kernel/ software/` → twarda brama).
@@ -84,6 +92,28 @@ python karmazyn_boot.py --demo
 python karmazyn_boot.py --lisp --demo    # gość mini-Lisp
 ```
 
+### Projekt Lua (multi-file, host → bąbel)
+
+```bash
+# z katalogu repo (boot)
+python karmazyn_boot.py --project LUA/examples/hello
+# w prompcie:
+#   :project          — pokaż root
+#   :check            — parse wszystkich *.lua
+#   :run              — main.lua
+#   :reload util      — odśwież require z dysku
+#   return require("lib.greeter").hello("x")
+
+# bez pełnego OS — CLI pakietu
+cd LUA
+python run_lua.py run examples/hello
+python run_lua.py check examples/hello
+python run_lua.py path lib.greeter -p examples/hello
+python run_lua.py repl examples/hello
+python _run_tests.py                  # ~151 testów
+python kombajn_run.py                 # kombajn integracyjny
+```
+
 ### Docker (Alpine, separacja jadro/oprogramowanie)
 
 ```bash
@@ -103,8 +133,15 @@ docker run -it karmazyn
 | CLI | `--lua`, `--lisp` / `--exec`, `--guest NAME` |
 | REPL | `:guest`, `:guest lua`, `:guest exec` |
 
-Ścieżka pakietu Lua: `KARMAZYN_LUA` / `LUA/` w repo (oraz sibling `../LUA`).  
-Narzędzia: `software/tools/*.lua` → `package.preload` (gdy boot widzi katalog tools).
+| Env / flaga | Znaczenie |
+|-------------|-----------|
+| `KARMAZYN_LUA` | katalog pakietu `karmazyn_lua` (preferuj z `project.py`) |
+| `KARMAZYN_PROJECT` / `--project PATH` | root projektu → searcher `require` |
+| `KARMAZYN_TOOLS` | katalog `*.lua` → `package.preload` |
+| `KARMAZYN_LUA_BIN` | katalog narzędzi OS (preload + module root) |
+
+Narzędzia: `software/tools/*.lua` → preload; opcjonalnie monorepo `lua_bin/`.  
+CLI pakietu: `LUA/run_lua.py` (`run` \| `check` \| `path` \| `repl`).
 
 ### Substrat (jądro implementacji) — na razie głównie testy
 
@@ -155,7 +192,9 @@ python ../../native/karmazyn_substrate_native.py   # smoke z roota: python nativ
 |---------|------|
 | `kernel/` | źródło prawdy jadra Python |
 | `software/` | boot, exec, phi |
-| `LUA/` | gość Lua (vendored) |
+| `LUA/` | gość Lua (vendored) + host CLI/projekt |
+| `LUA/examples/hello/` | demo multi-file (`require`) |
+| `lua_bin/` | skrypty narzędzi OS (host montuje jako tools) |
 | `native/karmazyn_substrate/` | substrat Rust + C ABI |
 | `holo/` | Linux HSS LSM (C) — most bezpieczeństwa, nie mini-runtime |
 | `archiwum/` | historyczny monolit (shell/studio…) |
@@ -178,8 +217,29 @@ Wersje: [../VERSION.txt](../VERSION.txt).
 | `:ls [stan]` | lista atomów |
 | `:env` | wiązania korzenia |
 | `:tools` | package.preload (Lua) |
+| `:project [path]` | root projektu (mapa host→bąbel / `require`) |
+| `:run [file]` | uruchom `main.lua` lub plik (host czyta FS) |
+| `:reload [mod]` | wyczyść cache `require` / przeładuj moduł |
+| `:check [dir]` | parse wszystkich `*.lua` w projekcie |
 | `:guest [lua\|exec]` | przełącznik gościa |
 | `:exit` | wyjście |
+
+---
+
+## 7b. Gość Lua — status (v1 host+projekt)
+
+| Warstwa | Stan |
+|---------|------|
+| Język (podzbiór 5.5) + metatabele + liby | ✅ testy unit (~151) + kombajn |
+| Tabela = Bubble, reach-GC, kontrakt A–H | ✅ |
+| Projekt multi-file, CLI, boot `:project`/`:run` | ✅ |
+| Memory searcher (bufor edytora → `require`) | ✅ |
+| `strict-project` (run tylko pod rootem) | ✅ |
+| Błędy `@plik:linia:kolumna:` (parse) | ✅ |
+| Pełne `dofile` / ambient FS | ❌ celowo (sandbox = bąbel) |
+| Pełne host API `karmazyn.*` w `lua_bin` | ⏳ kolejna faza |
+
+Szczegóły pakietu: [../LUA/README.md](../LUA/README.md).
 
 ---
 

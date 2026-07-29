@@ -23,14 +23,27 @@ pip install numpy          # optional
 python karmazyn_boot.py                 # live interpreter (Lua guest)
 python karmazyn_boot.py --demo
 python karmazyn_boot.py --lisp          # mini-Lisp guest
+python karmazyn_boot.py --project LUA/examples/hello   # multi-file project
 ```
 
 ```text
 karmazyn> x = 10
 karmazyn> return x * 2
 20
+karmazyn> :project
+karmazyn> :run
 karmazyn> :guest exec
 ```
+
+Standalone Lua CLI (no full OS boot):
+
+```bash
+cd LUA
+python run_lua.py run examples/hello
+python run_lua.py check examples/hello
+```
+
+Guest sandbox = bubble (no ambient FS). Host maps project files into `require`.
 
 Legacy ksh (`shell.py`, write/recall) → `archiwum/`.
 

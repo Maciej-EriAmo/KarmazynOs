@@ -28,7 +28,7 @@ sys.modules["karmazyn_lua"] = pkg
 
 from karmazyn_kernel import Store  # noqa: E402
 from karmazyn_lua.lib import mount  # noqa: E402
-from karmazyn_lua.values import compose_phi  # noqa: E402
+from karmazyn_lua.values import compose_phi, LuaError  # noqa: E402
 
 pkg.mount = mount
 pkg.compose_phi = compose_phi
@@ -36,9 +36,6 @@ pkg.compose_phi = compose_phi
 
 def main() -> int:
     path = os.path.join(ROOT, "kombajn.lua")
-    with open(path, encoding="utf-8") as f:
-        src = f.read()
-
     store = Store(thermal=True)
     session = store.bubble_new("kombajn-session")
     phi = compose_phi(b"kombajn", b"test")
@@ -46,26 +43,14 @@ def main() -> int:
 
     print(f"kernel: {__import__('karmazyn_kernel').__file__}")
     print(f"phi:    {phi!r}")
-    print(f"source: {path} ({len(src)} bajtów)")
+    print(f"source: {path}")
     print("---")
 
-    # cały plik jako jeden chunk (parser → funkcja → call); bez load-z-pliku
-    from karmazyn_lua.lexer import tokenize
-    from karmazyn_lua.parser import Parser
-    from karmazyn_lua.values import LuaFunction, LuaError
-
     try:
-        block = Parser(tokenize(src)).parse_chunk()
+        ret = ev.run_file(path, chunkname="@kombajn.lua")
     except LuaError as e:
-        print("PARSE ERROR:", e)
+        print("ERROR:", ev.format_run_result(err=e))
         return 1
-
-    wrap = store.bubble_new("kombajn-chunk")
-    ea = store.atom_new("var", "_ENV", value=ev.G)
-    wrap.bind("_ENV", ea)
-    fn = LuaFunction(["..."], block, wrap, name="kombajn.lua")
-    try:
-        ev._call(fn, [])
     except Exception as ex:
         print("RUNTIME ERROR:", type(ex).__name__, ex)
         out = "\n".join(ev._out) if getattr(ev, "_out", None) else ""
@@ -73,7 +58,7 @@ def main() -> int:
             print(out)
         return 1
 
-    out = "\n".join(ev._out) if ev._out else ""
+    out = ev.format_run_result(ret=ret)
     print(out)
 
     m = re.search(r"KOMBAJN_RESULT\s+(\d+)\s+(\d+)", out)

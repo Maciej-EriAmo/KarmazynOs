@@ -54,6 +54,32 @@ karmazyn> (+ 1 2)
 
 To **aktywny interpreter** na żywym Store (tick w tle, reach-GC) — nie jednorazowy skrypt.
 
+### Program wieloplikowy (projekt → bąbel)
+
+```bash
+python karmazyn_boot.py --project LUA/examples/hello
+```
+
+```text
+karmazyn> :check
+check: OK
+karmazyn> :run
+=== hello project ===
+witaj, Karmazyn
+…
+karmazyn> return require("util").banner()
+```
+
+Albo bez pełnego OS:
+
+```bash
+cd LUA
+python run_lua.py run examples/hello
+python run_lua.py check examples/hello
+```
+
+**Sandbox = bąbel:** gość nie ma dostępu do dysku; host montuje katalog projektu.
+
 ---
 
 ## Testy (opcjonalnie)
@@ -61,6 +87,7 @@ To **aktywny interpreter** na żywym Store (tick w tle, reach-GC) — nie jednor
 ```bash
 python -m unittest test_substrate -q
 python test_substrate_compat.py -v    # Python ↔ Rust (po cargo build --release)
+cd LUA && python _run_tests.py        # gość Lua (~151)
 ```
 
 ---

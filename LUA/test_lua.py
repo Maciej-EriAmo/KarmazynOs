@@ -34,6 +34,11 @@ def _src():
         "karmazyn_lua_string.py",
         "karmazyn_lua_os.py",
         "karmazyn_lua_utf8.py",
+        # host surface (CLI / entry / most edytora) — nie rdzeń gościa
+        "cli.py",
+        "__main__.py",
+        "run_lua.py",
+        "editor_bridge.py",
     }
     if path:
         d = list(path)[0]
@@ -1118,6 +1123,227 @@ class III_GuestContract(unittest.TestCase):
         for tok in ("._archived", "._roots", "._bubbles", "._handlers"):
             self.assertNotIn(tok, src, f"siega wnetrza Store: {tok}")
         self.assertIn("_env_of", src)                        # udokumentowany hook — wolno
+
+
+# =====================================================================
+#  V. HOST: run_source / project searcher (sandbox = bąbel)
+# =====================================================================
+class V_ProjectHost(unittest.TestCase):
+    def test_run_source_return(self):
+        ev = ev_fresh()
+        ret = ev.run_source("return 1+2*3", chunkname="@t.lua")
+        self.assertEqual(ret, [7])
+
+    def test_run_file_temp(self):
+        import os
+        import tempfile
+        ev = ev_fresh()
+        with tempfile.NamedTemporaryFile("w", suffix=".lua", delete=False,
+                                         encoding="utf-8") as f:
+            f.write('print("hi"); return 42')
+            path = f.name
+        try:
+            ret = ev.run_file(path, chunkname="@tmp.lua")
+            self.assertEqual(ret, [42])
+            self.assertIn("hi", "\n".join(ev._out))
+        finally:
+            os.unlink(path)
+
+    def test_run_source_parse_error_chunkname(self):
+        from karmazyn_lua.values import LuaError
+        ev = ev_fresh()
+        with self.assertRaises(LuaError) as cm:
+            ev.run_source("!!!", chunkname="@bad.lua")
+        msg = str(cm.exception)
+        self.assertIn("@bad.lua", msg)
+        # line:col
+        self.assertRegex(msg, r"@bad\.lua:\d+:\d+:")
+
+    def test_parse_error_line_number(self):
+        from karmazyn_lua.values import LuaError
+        ev = ev_fresh()
+        src = "local x = 1\nreturn !!!\n"
+        with self.assertRaises(LuaError) as cm:
+            ev.run_source(src, chunkname="@x.lua")
+        self.assertIn("@x.lua:2:", str(cm.exception))
+
+    def test_project_require_multifile(self):
+        import os
+        import tempfile
+        from karmazyn_lua.session import mount_session, run_entry
+        from karmazyn_lua.project import ProjectSpec
+
+        td = tempfile.mkdtemp()
+        try:
+            os.makedirs(os.path.join(td, "lib"))
+            with open(os.path.join(td, "util.lua"), "w", encoding="utf-8") as f:
+                f.write("return {n=7}")
+            with open(os.path.join(td, "lib", "g.lua"), "w", encoding="utf-8") as f:
+                f.write("local u = require 'util'; return {v = u.n + 1}")
+            with open(os.path.join(td, "main.lua"), "w", encoding="utf-8") as f:
+                f.write(
+                    "local g = require 'lib.g'\n"
+                    "print(g.v)\n"
+                    "return g.v\n"
+                )
+            store = Store(thermal=True)
+            ev = mount_session(store, project=td)
+            kind, text = run_entry(ev)
+            self.assertEqual(kind, "ok", text)
+            self.assertIn("8", text)
+            # cache
+            self.assertEqual(ev.eval_line("return require('util').n"), "7")
+        finally:
+            import shutil
+            shutil.rmtree(td, ignore_errors=True)
+
+    def test_project_escape_dotdot_modname(self):
+        import os
+        import tempfile
+        from karmazyn_lua.project import ProjectSpec
+        from karmazyn_lua.session import mount_session
+
+        td = tempfile.mkdtemp()
+        try:
+            with open(os.path.join(td, "main.lua"), "w", encoding="utf-8") as f:
+                f.write("return 1")
+            spec = ProjectSpec.from_root(td)
+            self.assertIsNone(spec.resolve(".."))
+            self.assertIsNone(spec.resolve("../secret"))
+            store = Store(thermal=True)
+            ev = mount_session(store, project=spec)
+            out = ev.eval_line("return require('..')")
+            self.assertTrue(out.startswith("blad"), out)
+        finally:
+            import shutil
+            shutil.rmtree(td, ignore_errors=True)
+
+    def test_guest_still_no_dofile(self):
+        from karmazyn_lua.values import _own_keys
+        from karmazyn_lua.session import mount_session
+        import tempfile, os, shutil
+        td = tempfile.mkdtemp()
+        try:
+            os.makedirs(td, exist_ok=True)
+            with open(os.path.join(td, "main.lua"), "w", encoding="utf-8") as f:
+                f.write("return 1")
+            ev = mount_session(Store(thermal=True), project=td)
+            names = set(_own_keys(ev.G))
+            self.assertNotIn("dofile", names)
+            self.assertNotIn("loadfile", names)
+        finally:
+            shutil.rmtree(td, ignore_errors=True)
+
+    def test_check_project(self):
+        import os
+        import tempfile
+        import shutil
+        from karmazyn_lua.project import ProjectSpec
+        from karmazyn_lua.session import check_project
+
+        td = tempfile.mkdtemp()
+        try:
+            with open(os.path.join(td, "ok.lua"), "w", encoding="utf-8") as f:
+                f.write("return 1")
+            with open(os.path.join(td, "bad.lua"), "w", encoding="utf-8") as f:
+                f.write("!!!")
+            errs = check_project(ProjectSpec.from_root(td))
+            self.assertEqual(len(errs), 1)
+            self.assertIn("bad.lua", errs[0])
+        finally:
+            shutil.rmtree(td, ignore_errors=True)
+
+    def test_reload_module_from_disk(self):
+        import os
+        import tempfile
+        import shutil
+        from karmazyn_lua.session import mount_session, reload_module
+
+        td = tempfile.mkdtemp()
+        try:
+            with open(os.path.join(td, "m.lua"), "w", encoding="utf-8") as f:
+                f.write("return {v=1}")
+            with open(os.path.join(td, "main.lua"), "w", encoding="utf-8") as f:
+                f.write("return 1")
+            ev = mount_session(Store(thermal=True), project=td)
+            self.assertEqual(ev.eval_line("return require('m').v"), "1")
+            with open(os.path.join(td, "m.lua"), "w", encoding="utf-8") as f:
+                f.write("return {v=99}")
+            # bez reload — cache
+            self.assertEqual(ev.eval_line("return require('m').v"), "1")
+            msg = reload_module(ev, "m")
+            self.assertIn("ok", msg)
+            self.assertEqual(ev.eval_line("return require('m').v"), "99")
+        finally:
+            shutil.rmtree(td, ignore_errors=True)
+
+    def test_guest_session_and_editor_bridge(self):
+        import os
+        import tempfile
+        import shutil
+        from karmazyn_lua.session import GuestSession, check_buffer, run_entry
+        from karmazyn_lua.editor_bridge import EditorBridge
+        from karmazyn_lua.project import ProjectSpec
+
+        td = tempfile.mkdtemp()
+        outside = tempfile.mkdtemp()
+        try:
+            os.makedirs(os.path.join(td, "lib"))
+            with open(os.path.join(td, "util.lua"), "w", encoding="utf-8") as f:
+                f.write("return {n=3}")
+            with open(os.path.join(td, "main.lua"), "w", encoding="utf-8") as f:
+                f.write("local u=require 'util'; return u.n")
+            with open(os.path.join(outside, "evil.lua"), "w", encoding="utf-8") as f:
+                f.write("return 666")
+            sess = GuestSession(project=td)
+            kind, text = sess.run()
+            self.assertEqual(kind, "ok", text)
+            self.assertIn("3", text)
+            self.assertIsNone(check_buffer("x", "return 1"))
+            self.assertIsNotNone(check_buffer("x", "!!!"))
+            # strict-project
+            kind2, text2 = run_entry(
+                sess.ev, entry=os.path.join(outside, "evil.lua"),
+                strict_project=True,
+            )
+            self.assertNotEqual(kind2, "ok", text2)
+            self.assertIn("strict-project", text2)
+            # memory require via editor
+            br = EditorBridge(project=td)
+            self.assertIsNone(br.check_buffer("main.lua"))
+            br.put_buffer("draft", "return {v=42}")
+            self.assertEqual(br.eval("return require('draft').v"), "42")
+            br.put_buffer("draft.lua", "return 2 +")
+            diags = br.check_all()
+            self.assertTrue(any("draft" in d for d in diags), diags)
+        finally:
+            shutil.rmtree(td, ignore_errors=True)
+            shutil.rmtree(outside, ignore_errors=True)
+
+    def test_attach_lua_bin_preload(self):
+        import os
+        import tempfile
+        import shutil
+        from karmazyn_lua.session import GuestSession
+
+        td = tempfile.mkdtemp()
+        bin_d = tempfile.mkdtemp()
+        try:
+            with open(os.path.join(td, "main.lua"), "w", encoding="utf-8") as f:
+                f.write("return require('echo_tool').run('x')")
+            with open(os.path.join(bin_d, "echo_tool.lua"), "w", encoding="utf-8") as f:
+                f.write(
+                    "local M={}\n"
+                    "function M.run(s) return 'echo:'..tostring(s) end\n"
+                    "return M\n"
+                )
+            sess = GuestSession(project=td, lua_bin=bin_d)
+            kind, text = sess.run()
+            self.assertEqual(kind, "ok", text)
+            self.assertIn("echo:x", text)
+        finally:
+            shutil.rmtree(td, ignore_errors=True)
+            shutil.rmtree(bin_d, ignore_errors=True)
 
 
 if __name__ == "__main__":

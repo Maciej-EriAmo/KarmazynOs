@@ -39,6 +39,13 @@ class Parser:
         self.i += 1
         return t
 
+    def _err(self, msg, tok=None):
+        """Błąd parse z lokalizacją line:col (1-based)."""
+        t = tok if tok is not None else self.peek()
+        ln = getattr(t, "line", None) or 1
+        cl = getattr(t, "col", None) or 1
+        raise LuaError(f"{ln}:{cl}: {msg}")
+
     def accept(self, kind, val=None):
         t = self.peek()
         if t.kind == kind and (val is None or t.val == val):
@@ -49,7 +56,7 @@ class Parser:
         t = self.accept(kind, val)
         if t is None:
             got = self.peek()
-            raise LuaError(f"oczekiwano {val or kind}, jest {got.val!r}")
+            self._err(f"oczekiwano {val or kind}, jest {got.val!r}", got)
         return t
 
     def at_kw(self, *words):
@@ -66,7 +73,7 @@ class Parser:
     def parse_chunk(self):
         block = self.parse_block()
         if self.peek().kind != "eof":
-            raise LuaError(f"nadmiarowy token: {self.peek().val!r}")
+            self._err(f"nadmiarowy token: {self.peek().val!r}")
         return block
 
     def parse_block(self):
@@ -96,7 +103,7 @@ class Parser:
             if s[0] == "label":
                 name = s[1]
                 if name in labels:
-                    raise LuaError(f"etykieta '::{name}::' już zdefiniowana w bloku")
+                    self._err(f"etykieta '::{name}::' już zdefiniowana w bloku")
                 labels[name] = i
         for i, s in enumerate(stmts):
             if s[0] != "goto":
@@ -109,11 +116,11 @@ class Parser:
                 sk = stmts[k]
                 if sk[0] == "local":
                     nm = sk[1][0] if sk[1] else "?"
-                    raise LuaError(
+                    self._err(
                         f"<goto {name}> jumps into the scope of local '{nm}'"
                     )
                 if sk[0] == "localfunc":
-                    raise LuaError(
+                    self._err(
                         f"<goto {name}> jumps into the scope of local '{sk[1]}'"
                     )
 
@@ -159,7 +166,7 @@ class Parser:
         if self.at_kw("break"):
             self.next()
             if self.loop_depth == 0:
-                raise LuaError("'break' poza pętlą")
+                self._err("'break' poza pętlą")
             return ("break",)
         if self.at_kw("if"):
             return self.parse_if()
@@ -199,7 +206,7 @@ class Parser:
             rhs = self.parse_exprlist()
             for t in targets:
                 if t[0] not in ("name", "index"):
-                    raise LuaError("nieprawidłowy cel przypisania")
+                    self._err("nieprawidłowy cel przypisania")
             return ("assign", targets, rhs)
         return ("exprstat", expr)
 
@@ -243,7 +250,7 @@ class Parser:
         name = self.expect("name").val
         self.expect("sym", ">")
         if name not in ("const", "close"):
-            raise LuaError(f"nieznany atrybut <{name}>")
+            self._err(f"nieznany atrybut <{name}>")
         return name
 
     def parse_attnamelist(self):
@@ -267,7 +274,7 @@ class Parser:
         names, attrs = self.parse_attnamelist()
         # co najwyżej jeden <close>
         if sum(1 for a in attrs if a == "close") > 1:
-            raise LuaError("co najwyżej jedna zmienna <close> na listę")
+            self._err("co najwyżej jedna zmienna <close> na listę")
         inits = []
         if self.accept("sym", "="):
             inits = self.parse_exprlist()
@@ -319,7 +326,7 @@ class Parser:
         if self.accept("sym", "="):
             # pętla NUMERYCZNA: dokładnie jedna zmienna
             if len(names) != 1:
-                raise LuaError("pętla numeryczna 'for' wymaga jednej zmiennej")
+                self._err("pętla numeryczna 'for' wymaga jednej zmiennej")
             name = names[0]
             start = self.parse_expr()
             self.expect("sym", ",")
@@ -405,7 +412,7 @@ class Parser:
                 method = self.expect("name").val
                 args = self._parse_args()
                 if args is None:
-                    raise LuaError("oczekiwano argumentów po ':metoda'")
+                    self._err("oczekiwano argumentów po ':metoda'")
                 e = ("methodcall", e, method, args)  # obj:m(..) — obj liczone RAZ
             else:
                 args = self._parse_args()
@@ -435,7 +442,7 @@ class Parser:
         if self.at_sym("..."):
             self.next()
             if not self.in_vararg:
-                raise LuaError("'...' poza funkcją vararg")
+                self._err("'...' poza funkcją vararg")
             return ("vararg",)
         if self.at_sym("("):
             self.next()
@@ -444,7 +451,7 @@ class Parser:
             return ("paren", e)                  # nawiasy obcinają do 1 wartości
         if self.at_sym("{"):
             return self.parse_table()
-        raise LuaError(f"nieoczekiwany token: {t.val!r}")
+        self._err(f"nieoczekiwany token: {t.val!r}", t)
 
     def parse_table(self):
         self.expect("sym", "{")
