@@ -107,6 +107,18 @@ def main() -> int:
     else:
         print("[ OK ] kombajn")
 
+    # 5) lua_bin matrix (pass tools; skip top/nano)
+    rc = _run(
+        "lua_bin matrix (software/lua_bin_matrix.py --smoke)",
+        [sys.executable, "lua_bin_matrix.py", "--smoke"],
+        cwd=SOFTWARE,
+    )
+    if rc != 0:
+        fails += 1
+        print("[FAIL] lua_bin matrix")
+    else:
+        print("[ OK ] lua_bin matrix")
+
     print()
     print("=" * 60)
     if fails:

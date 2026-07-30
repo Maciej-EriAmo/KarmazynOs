@@ -7,8 +7,9 @@ Native substrate (Rust): 0.1.0-karmazyn-substrate (faza 0/1)
 Lua guest: karmazyn_lua **0.8.0-alpha** (LUA/__version__)
   - project host (searchers preload|memory|project), CLI run_lua.py
   - Host API: software/karmazyn_host.py → karmazyn.*; :tool <lua_bin>
-  - Smoke: software/test_host_tools.py (12)
-  - Release gate: software/test_lua_release.py
+  - Smoke: software/test_host_tools.py (12) + lua_bin_matrix (26 pass / 2 skip)
+  - Release gate: software/test_lua_release.py (unit+host+kombajn+matrix)
+  - Matrix doc: Documents/lua_bin_status.md
   - Known limits: LUA/README.md
   - Canonical tree: monorepo LUA/ (not sibling-only)
 

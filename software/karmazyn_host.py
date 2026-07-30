@@ -150,6 +150,11 @@ class KarmazynHost:
         return None
 
     def sleep(self, sec=1, *_):
+        # w testach / CI: KARMAZYN_NOSLEEP=1
+        if os.environ.get("KARMAZYN_NOSLEEP") in ("1", "true", "yes"):
+            return None
+        if getattr(self, "_no_sleep", False):
+            return None
         try:
             time.sleep(float(sec))
         except Exception:
@@ -282,11 +287,18 @@ class KarmazynHost:
         rows = []
         for sim, aid in hits:
             row = self._tbl()
-            self._set(row, "score", float(sim))
+            sim_f = float(sim)
+            self._set(row, "score", sim_f)
+            self._set(row, "sim", sim_f)
             self._set(row, "id", aid)
             atom = self.store.get_atom(aid)
-            self._set(row, "E", atom.E if atom else "")
-            self._set(row, "S", atom.S if atom else "")
+            e = atom.E if atom else ""
+            s = atom.S if atom else ""
+            self._set(row, "E", e)
+            self._set(row, "S", s)
+            # pola pod lua_bin/recall.lua
+            self._set(row, "label", aid if not e else (aid + ":" + str(e)[:24]))
+            self._set(row, "layer", "phi")
             rows.append(row)
         return self._arr(rows)
 

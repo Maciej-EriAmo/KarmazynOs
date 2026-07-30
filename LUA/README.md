@@ -61,16 +61,16 @@ print(__version__)  # 0.8.0-alpha
 2. **Brak** `dofile` / `loadfile` / ambient `io.open` / `os.execute` (sandbox).
 3. **`generate_from_idea`** — wektor placeholder, nie pełny PCA hologramów.
 4. **Agenci / hologramy** — rejestr sesji hosta, nie pełny runtime agentowy z paperów.
-5. **Część `lua_bin`** bez smoke (np. `nano`, `top` interaktywne / pętle) — używać ostrożnie.
+5. **`lua_bin`:** **26/28 pass** smoke; **skip:** `top` (pętla), `nano` (edytor interaktywny) — macierz: [../Documents/lua_bin_status.md](../Documents/lua_bin_status.md).
 6. **Linie w błędach** — mocne na parse; runtime zależy od ścieżki `error()`.
-7. **API `karmazyn.*`** — surface v1, może rosnąć przed 0.9 (semver: alpha = breaking OK).
+7. **API `karmazyn.*`** — surface `1.0.0-alpha` (`karmazyn._VERSION`), breaking OK do 0.9.
 8. **Dryf sibling `C:\Users\…\LUA`** — kanon to monorepo; sibling tylko cache dev.
 
-## Do 0.9 (nie alpha)
+## Do 0.9
 
-- smoke / status matrix większości `lua_bin`
-- `karmazyn._VERSION` stabilniejszy + changelog surface
-- jeden gate CI lub obowiązkowy `test_lua_release` przed release
+- [x] smoke / status matrix `lua_bin` (26 pass / 2 skip)
+- [x] `karmazyn._VERSION` + gate `test_lua_release.py`
+- [ ] opcjonalnie: `nano`/`top` w kontrolowanym trybie testowym lub DEPRECATED w man
 
 ## Host API i narzędzia
 

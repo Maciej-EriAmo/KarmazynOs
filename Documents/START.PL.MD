@@ -104,6 +104,12 @@ python software/test_lua_release.py
 
 Powinno zakończyć się: `RELEASE GATE OK  karmazyn_lua 0.8.0-alpha`.
 
+Macierz narzędzi (26 pass / 2 skip):
+
+```bash
+python software/lua_bin_matrix.py
+```
+
 Osobno:
 
 ```bash

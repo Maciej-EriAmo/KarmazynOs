@@ -81,9 +81,11 @@ python test_host_tools.py -v
 
 ## Status
 
-| Działa E2E (smoke) | Częściowo / ostrożnie |
-|--------------------|------------------------|
-| ls, whoami, uptime, df, free, step, touch, cat | nano (fs/cache mini, interaktywny) |
-| ps, kill, spawn_agent | — |
-| lsh, idea, create_hologram | wektor z `generate_from_idea` = deterministyczny placeholder (nie pełny PCA) |
-| kedit, lsb (po consolidate) | — |
+**Macierz live:** [lua_bin_status.md](lua_bin_status.md) · generator: `python software/lua_bin_matrix.py`
+
+| Wynik | Narzędzia |
+|-------|-----------|
+| **pass (26)** | ls, cat, touch, rm, cp, mv, df, free, du, find, grep, stat, step, whoami, uptime, clear, man, ps, kill, lsh, lsb, idea, kedit, consolidate, ping, recall |
+| **skip (2)** | `top` (nieskończona pętla), `nano` (edytor interaktywny) |
+
+`generate_from_idea` = wektor placeholder (nie pełny PCA).
