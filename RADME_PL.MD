@@ -99,10 +99,10 @@ Pełna specyfikacja: [HSS Paper v2.6.0](https://doi.org/10.5281/zenodo.19548693)
 ## Runtime (kanon 2026)
 
 ```
-kernel/     jadro Python (atomy, Store, fasada) — domyślny boot
+kernel/     fasada Python + API (atomy, HRR, referencyjny substrat)
 software/   boot, mini-Lisp, phi
-LUA/        gość Lua (język narzędzi)
-native/     substrat Rust (reach-GC + C ABI; testy / migracja)
+LUA/        gość Lua 1.0.0 (język narzędzi)
+native/     substrat Rust — DEFAULT produkcyjny (reach-GC + C ABI + PyO3)
 holo/       HSS LSM (C) — most Linux, opcjonalny
 archiwum/   stary monolit (shell/studio)
 ```
@@ -111,9 +111,11 @@ archiwum/   stary monolit (shell/studio)
 |---|---|
 | `karmazyn_boot.py` | Żywy REPL — domyślnie **Lua** na Store |
 | `karmazyn_kernel.py` | Fasada jadra (jedyna dla oprogramowania) |
-| `karmazyn_backend.py` | Przełącznik substratu: `python` \| `native` |
+| `karmazyn_backend.py` | Przełącznik: **`native` (domyślnie)** \| `python` (referencja) |
+| `native/run_native.ps1` | Budowa / smoke substratu (Windows) |
 | `test_substrate_compat.py` | Zgodność prawa Python ↔ Rust |
 | `Documents/runtime_pl.md` | Pełny przewodnik runtime |
+| `VERSION.txt` | Kanoniczna macierz wersji |
 
 **Prawo jadra:** temperatura mówi *kiedy*, osiągalność mówi *czy* (Vacuum Decay vs retained TOMB).
 
@@ -140,15 +142,17 @@ karmazyn> return x * 2
 20
 ```
 
-### Testy / native
+### Testy / native (Rust = domyślny Store)
 
 ```bash
 python -m unittest test_substrate -q
 python test_substrate_compat.py -v
-cd native/karmazyn_substrate && cargo test && cargo build --release
+.\native\build_native.ps1
+.\native\run_native.ps1
+# wymuszenie referencji: $env:KARMAZYN_SUBSTRATE = "python"
 ```
 
-Szczegóły: [Documents/runtime_pl.md](Documents/runtime_pl.md) · [native/README.md](native/README.md).  
+Szczegóły: [Documents/runtime_pl.md](Documents/runtime_pl.md) · [native/README.md](native/README.md) · [VERSION.txt](VERSION.txt).  
 Stary UX `shell.py` / Studio → katalog **`archiwum/`**.
 
 ---
@@ -169,14 +173,14 @@ Stary UX `shell.py` / Studio → katalog **`archiwum/`**.
 ## Status
 
 ```
-karmazyn_kernel v1.1.0     ✅  fasada + Store reach-GC (Python domyślnie)
-karmazyn_boot v0.5         ✅  żywy REPL, gość Lua, :guest
-LUA/                       ✅  język narzędzi
-native (Rust)              ✅  prawo GC + ABI + testy zgodności
-rejestr haków              ✅  env_of / extra_reach
+karmazyn_kernel v1.1.0     ✅  fasada; Store = NativeStore gdy most zbudowany
+karmazyn_boot v0.5+        ✅  żywy REPL, gość Lua, :guest / :project / :tool
+LUA/ karmazyn_lua 1.0.0    ✅  stabilny domyślny gość (release gate)
+native substrate 0.1.0     ✅  DEFAULT produkcyjny (PyO3 → ctypes; C ABI)
+Python Store               ✅  referencja + fallback KARMAZYN_SUBSTRATE=python
+rejestr haków              ✅  env_of / extra_reach (name=guest)
 holo/ HSS LSM              ✅  źródła mostu Linux
 archiwum shell/studio      📦  legacy
-Boot w pełni na Rust       ⏳  faza 2–3
 Crimson Loop               ⏳  warstwa introspekcji
 ```
 

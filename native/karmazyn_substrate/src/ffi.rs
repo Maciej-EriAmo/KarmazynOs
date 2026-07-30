@@ -97,9 +97,48 @@ pub extern "C" fn ksub_atom_t(handle: u64, aid: u32) -> f64 {
 }
 
 #[no_mangle]
+pub extern "C" fn ksub_atom_set_t(handle: u64, aid: u32, t: f64) -> c_int {
+    with_store(handle, |st| st.atom_set_t(aid, t) as c_int).unwrap_or(0)
+}
+
+#[no_mangle]
 pub extern "C" fn ksub_atom_is_dead(handle: u64, aid: u32) -> c_int {
     with_store(handle, |st| {
         st.atom_is_dead(aid).map(|d| d as c_int).unwrap_or(-1)
+    })
+    .unwrap_or(-1)
+}
+
+/// Upsert atom with fixed id. Returns 1 on success.
+#[no_mangle]
+pub extern "C" fn ksub_atom_upsert(
+    handle: u64,
+    aid: u32,
+    s: *const c_char,
+    e: *const c_char,
+    t: f64,
+    token: u64,
+) -> c_int {
+    let s = unsafe { cstr(s) };
+    let e = unsafe { cstr(e) };
+    with_store(handle, |st| st.atom_upsert(aid, &s, &e, t, token) as c_int).unwrap_or(0)
+}
+
+/// Fill `out` with up to `max_out` atom ids. Returns count written (or -1 on error).
+#[no_mangle]
+pub extern "C" fn ksub_atom_ids(handle: u64, out: *mut u32, max_out: u32) -> i32 {
+    if out.is_null() && max_out > 0 {
+        return -1;
+    }
+    with_store(handle, |st| {
+        let ids = st.atom_ids();
+        let n = ids.len().min(max_out as usize);
+        if n > 0 && !out.is_null() {
+            unsafe {
+                std::ptr::copy_nonoverlapping(ids.as_ptr(), out, n);
+            }
+        }
+        n as i32
     })
     .unwrap_or(-1)
 }
@@ -132,6 +171,17 @@ pub extern "C" fn ksub_lookup(handle: u64, bid: u32, name: *const c_char) -> i64
     let name = unsafe { cstr(name) };
     with_store(handle, |st| {
         st.lookup(bid, &name).map(|a| a as i64).unwrap_or(-1)
+    })
+    .unwrap_or(-1)
+}
+
+#[no_mangle]
+pub extern "C" fn ksub_unbind(handle: u64, bid: u32, name: *const c_char) -> i64 {
+    let name = unsafe { cstr(name) };
+    with_store(handle, |st| {
+        st.unbind(bid, &name)
+            .map(|a| a as i64)
+            .unwrap_or(-1)
     })
     .unwrap_or(-1)
 }

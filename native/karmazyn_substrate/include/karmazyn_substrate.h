@@ -20,11 +20,15 @@ int      ksub_has_atom(uint64_t handle, uint32_t aid);
 int      ksub_delete_atom(uint64_t handle, uint32_t aid);
 int      ksub_heat(uint64_t handle, uint32_t aid);
 double   ksub_atom_t(uint64_t handle, uint32_t aid);
+int      ksub_atom_set_t(uint64_t handle, uint32_t aid, double t);
 int      ksub_atom_is_dead(uint64_t handle, uint32_t aid);
+int      ksub_atom_upsert(uint64_t handle, uint32_t aid, const char *s, const char *e, double t, uint64_t token);
+int32_t  ksub_atom_ids(uint64_t handle, uint32_t *out, uint32_t max_out);
 
 uint32_t ksub_bubble_new(uint64_t handle, const char *label, int64_t parent /* -1 = none */);
 int      ksub_bind(uint64_t handle, uint32_t bid, const char *name, uint32_t aid);
 int64_t  ksub_lookup(uint64_t handle, uint32_t bid, const char *name);
+int64_t  ksub_unbind(uint64_t handle, uint32_t bid, const char *name);
 void     ksub_set_root(uint64_t handle, uint32_t bid);
 void     ksub_unset_root(uint64_t handle, uint32_t bid);
 

@@ -49,12 +49,12 @@ See **[runtime_en.md](runtime_en.md)** for the full guide.
 
 | Layer | Implementation | Notes |
 |-------|----------------|--------|
-| Facade | `karmazyn_kernel` | sole software entry |
-| Substrate | Python `Store` or Rust `native/` | same T×reach law |
-| Guest | Lua / mini-Lisp | `eval_line`; no GC internals |
-| Boot | `karmazyn_boot` | mount + REPL + thermal scheduler |
+| Facade | `karmazyn_kernel` v1.1.0 | sole software entry |
+| Substrate | **Rust `native/` (default)** · Python `Store` (reference) | same T×reach law; `0.1.0-karmazyn-substrate` |
+| Guest | Lua **1.0.0** / mini-Lisp | `eval_line`; no GC internals |
+| Boot | `karmazyn_boot` v0.5+ | mount + REPL + thermal scheduler |
 | Linux HSS | `holo/*.c` LSM | upcall transport only |
 
 **Law:** temperature = *when*, reachability = *whether* (vacuum vs retained TOMB).  
 Hooks: `register_env_of`, `register_extra_reach`, roots.  
-Guest switch: `KARMAZYN_GUEST` / `:guest`. Substrate switch (tests): `KARMAZYN_SUBSTRATE` / `open_store`.
+Guest: `KARMAZYN_GUEST` / `:guest`. Substrate: `KARMAZYN_SUBSTRATE=native|python` / `open_store` (default **native** when bridge built).

@@ -3,7 +3,7 @@
 **Jądro:** `karmazyn_kernel` v1.1.0  
 **Boot:** `karmazyn_boot` v0.5+  
 **Gość Lua:** `karmazyn_lua` **1.0.0** (stable; gate: `software/test_lua_release.py`, macierz 26/28)  
-**Substrat native (Rust):** faza 0/1 — prawo reach-GC + C ABI  
+**Substrat native (Rust):** `0.1.0-karmazyn-substrate` — fazy 0–5 ✅ (PyO3 + C ABI, drop-in Store, boot default); Python = referencja  
 
 Ten dokument opisuje **aktualny** runtime monorepo (nie archiwalny `shell.py` / `studio.py` w `archiwum/`).
 
@@ -44,8 +44,8 @@ Prawo jądra:
 │  Fasada: karmazyn_kernel  (JEDYNE wejście oprogramowania)│
 ├─────────────────────────────────────────────────────────┤
 │  Substrat (implementacja):                              │
-│    Python  karmazyn_substrate.Store   ← domyślny boot   │
-│    Rust    native/karmazyn_substrate  ← testy / faza N  │
+│    Rust    native/karmazyn_substrate  ← domyślny boot   │
+│    Python  karmazyn_substrate.Store   ← referencja / fallback │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -144,24 +144,30 @@ docker run -it karmazyn
 Narzędzia: `software/tools/*.lua` → preload; opcjonalnie monorepo `lua_bin/`.  
 CLI pakietu: `LUA/run_lua.py` (`run` \| `check` \| `path` \| `repl`).
 
-### Substrat (jądro implementacji) — na razie głównie testy
+### Substrat (jądro implementacji)
 
 | Sposób | Wartości |
 |--------|----------|
-| Env `KARMAZYN_SUBSTRATE` | `python` (domyślnie), `native`, `both` (tylko testy) |
+| Env / flaga | Znaczenie |
+|-------------|-----------|
+| `KARMAZYN_SUBSTRATE` | `native` (auto gdy most jest), `python` (referencja), `both` (testy) |
+| `KARMAZYN_NATIVE_BRIDGE` | `pyo3` (preferowane) lub `ctypes` (C ABI DLL) |
 | CLI (testy) | `--python`, `--native`, `--substrate native` |
 | API | `open_store(backend="native"\|"python")` |
 
 ```python
 from karmazyn_kernel import open_store, kernel_info
 
-s = open_store(backend="python")   # boot path
-s = open_store(backend="native")   # wymaga DLL z cargo build --release
+s = open_store()                   # native jeśli zbudowany, inaczej python
+s = open_store(backend="python")   # referencja pure-Python
+s = open_store(backend="native")   # wymaga mostu (PyO3 i/lub DLL)
 print(kernel_info()["substrate"])
 ```
 
-**Boot produkcyjny** nadal tworzy Python `Store`.  
-Native jest **źródłem prawdy dla prawa GC** + golden tests; pełny drop-in w boot = kolejna faza.
+**Boot:** `open_store()` → **NativeStore** gdy most Rust jest dostępny
+(PyO3 wheel lub C ABI DLL). Python `Store` = referencja + fallback.  
+Wymuś Python: `KARMAZYN_SUBSTRATE=python`.  
+Budowa: `native/build_native.ps1` lub `native/build_native.sh`.
 
 ---
 
@@ -255,8 +261,9 @@ Wersje: [../VERSION.txt](../VERSION.txt).
 |------|------|
 | 0. Atom/Bubble/tick/reach-GC + C ABI | ✅ |
 | 1. Testy zgodności z Python Store | ✅ (`test_substrate_compat`) |
-| 2. Pełny drop-in (EventBus, metadata, HRR) | ⏳ |
-| 3. Boot na `KARMAZYN_SUBSTRATE=native` | ⏳ |
-| 4. Python Store tylko jako referencja | ⏳ |
+| 2. Drop-in Store (metadata, bindings, events, get_atom) | ✅ |
+| 3. Boot na native (Lua / mini-Lisp) | ✅ (domyślnie gdy most zbudowany) |
+| 4. PyO3 (`karmazyn_substrate_rs`) + HRR na native | ✅ (fallback: ctypes) |
+| 5. Python Store = referencja / fallback | ✅ |
 
 C dla **holo LSM** zostaje; **substrat** = Rust (ownership grafu GC).

@@ -17,7 +17,7 @@ def lua_root() -> str:
 
 
 def kernel_candidates(root: str | None = None) -> list[str]:
-    root = root or lua_root()
+    root = os.path.abspath(root or lua_root())
     parent = os.path.dirname(root)
     env = os.environ.get("KARMAZYN_KERNEL") or os.environ.get("KARMAZYN_KERNEL_HOME")
     out: list[str] = []
@@ -57,14 +57,42 @@ def _looks_like_kernel_dir(path: str) -> bool:
 
 
 def ensure_kernel_on_path(root: str | None = None) -> str | None:
-    """Dodaj pierwsze działające źródło jądra na sys.path. Zwraca wybraną ścieżkę lub None."""
+    """Dodaj pierwsze działające źródło jądra na sys.path. Zwraca wybraną ścieżkę lub None.
+
+    Monorepo wygrywa ze starym `karmazyn_kernel` w site-packages (czyści cache importu).
+    """
     chosen = None
     for cand in kernel_candidates(root):
         if _looks_like_kernel_dir(cand):
-            if cand not in sys.path:
-                sys.path.insert(0, cand)
+            # zawsze na czoło (nawet gdy już było dalej na path)
+            if cand in sys.path:
+                sys.path.remove(cand)
+            sys.path.insert(0, cand)
+            # root monorepo + native (backend → NativeStore)
+            parent = os.path.dirname(cand) if os.path.basename(cand) == "kernel" else cand
+            for extra in (parent, os.path.join(parent, "native")):
+                if os.path.isdir(extra):
+                    if extra in sys.path:
+                        sys.path.remove(extra)
+                    sys.path.insert(0, extra)
             chosen = cand
             break
+    if chosen is not None:
+        # drop cached site-packages kernel so monorepo Store (Rust default) wins
+        for name in list(sys.modules):
+            if name == "karmazyn_kernel" or name.startswith("karmazyn_kernel."):
+                del sys.modules[name]
+            if name in (
+                "karmazyn_backend",
+                "karmazyn_substrate",
+                "karmazyn_substrate_native",
+            ) or name.startswith("karmazyn_substrate."):
+                # allow re-import from monorepo path
+                if name in sys.modules:
+                    mod = sys.modules[name]
+                    f = getattr(mod, "__file__", "") or ""
+                    if "site-packages" in f.replace("\\", "/"):
+                        del sys.modules[name]
     return chosen
 
 

@@ -1,8 +1,17 @@
 #!/usr/bin/env python3
 """
-karmazyn_substrate.py — kanoniczny rdzeń KarmazynOS (krok 1 konsolidacji)
-==========================================================================
+karmazyn_substrate.py — REFERENCYJNY substrat Python (fallback + golden tests)
+==============================================================================
 Maciej Mazur, Warsaw 2026
+
+STATUS (Rust = DEFAULT produkcyjny):
+  • `from karmazyn_kernel import Store` / `open_store()` → **NativeStore (Rust)**
+    gdy most PyO3 lub C ABI jest zbudowany.
+  • Ten plik = **referencyjna implementacja pure-Python** (PythonStore):
+    golden tests, fallback, EventBus/Bubble dla fasady.
+
+  KARMAZYN_SUBSTRATE=native   → Rust (DEFAULT)
+  KARMAZYN_SUBSTRATE=python   → ten Store (referencja)
 
 Jeden substrat zamiast pięciu. Neutralny językowo, zbudowany na NAJBOGATSZYM
 istniejącym atomie — `karmazyn_atom.Atom` (pełny FSM HOT/WARM/COLD/TOMB, wektor).
@@ -132,13 +141,14 @@ class Bubble:
 
     FIX v1.1: bind/unbind/lookup biorą store.lock — bezpieczne przy
     schedulerze tick() w wątku tła (RLock: reentrancja w tym samym wątku)."""
-    __slots__ = ("store", "label", "parent", "bindings")
+    __slots__ = ("store", "label", "parent", "bindings", "bid")
 
     def __init__(self, store, label="", parent=None):
         self.store = store
         self.label = label
         self.parent = parent
         self.bindings = {}              # name -> atom id
+        self.bid = ""                   # Luneta: stabilny id bąbla (np. b3)
 
     def bind(self, name, atom):
         """Wiąże nazwę z atomem. Atom musi należeć do tego samego Store."""

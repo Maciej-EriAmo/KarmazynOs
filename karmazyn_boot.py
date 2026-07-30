@@ -678,13 +678,10 @@ def boot(verbose_events=False, log=None, project=None):
     else:
         log.warn("HRR (wektory)", "wylaczone — brak numpy (tryb zero-dep)")
 
-    # 2. substrat (Store + reach-GC) — Python lub Rust (KARMAZYN_SUBSTRATE)
+    # 2. substrat (Store + reach-GC) — native Rust domyślnie; Python = referencja
     t = time.perf_counter()
     try:
-        # Domyślnie: native jeśli DLL jest i nie wymuszono python
         if open_store is not None:
-            if os.environ.get("KARMAZYN_SUBSTRATE") is None and native_available():
-                os.environ["KARMAZYN_SUBSTRATE"] = "native"
             store = open_store(thermal=True)
             backend = substrate_backend()
             if backend == "both":
@@ -693,8 +690,13 @@ def boot(verbose_events=False, log=None, project=None):
             store = Store(thermal=True)
             backend = "python"
     except Exception as e:
-        # native fail → twardy fallback na Python, z ostrzeżeniem
-        if open_store is not None and substrate_backend() == "native":
+        # native fail → twardy fallback na pure-Python reference Store
+        want_native = False
+        try:
+            want_native = substrate_backend() == "native"
+        except Exception:
+            want_native = False
+        if open_store is not None and want_native:
             try:
                 log.warn("substrat native", f"{type(e).__name__}: {e} → fallback python")
                 os.environ["KARMAZYN_SUBSTRATE"] = "python"
@@ -710,10 +712,15 @@ def boot(verbose_events=False, log=None, project=None):
     if backend == "native":
         try:
             from karmazyn_backend import backend_info as _bi
-            ver = (_bi() or {}).get("native_version") or "?"
-            sub_detail = f"backend=native ({ver}), prawo: {i['law']}"
+            bi = _bi() or {}
+            ver = bi.get("native_version") or "?"
+            bridge = bi.get("native_bridge") or getattr(store, "native_backend", "?")
+            sub_detail = f"backend=native/{bridge} ({ver}), prawo: {i['law']}"
         except Exception:
-            pass
+            bridge = getattr(store, "native_backend", "?")
+            sub_detail = f"backend=native/{bridge}, prawo: {i['law']}"
+    else:
+        sub_detail = f"backend=python (reference), prawo: {i['law']}"
     log.ok("substrat (Store, reach-GC)", sub_detail, _ms(t))
 
     # 3. warstwa wykonawcza (montaz: env_of + korzen) — domyslnie Lua

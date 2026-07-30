@@ -5,6 +5,7 @@
 | Składnik | Wersja |
 |----------|--------|
 | Jądro | **1.1.0** |
+| Substrat | **Rust native `0.1.0`** (default) · Python = referencja |
 | Gość Lua | **`karmazyn_lua 1.0.0`** (stable) |
 | Host API | **`karmazyn._VERSION` 1.0.0** |
 | Boot | v0.5+ |

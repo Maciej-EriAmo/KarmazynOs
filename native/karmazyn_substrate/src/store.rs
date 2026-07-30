@@ -209,6 +209,89 @@ impl Store {
         self.lock().atoms.get(&aid).map(|a| a.is_dead())
     }
 
+    /// All live atom ids (order not guaranteed).
+    pub fn atom_ids(&self) -> Vec<AtomId> {
+        self.lock().atoms.keys().copied().collect()
+    }
+
+    /// Set absolute temperature (no heat/touch counters). Returns false if missing.
+    pub fn atom_set_t(&self, aid: AtomId, t: f64) -> bool {
+        use crate::atom::clamp_t;
+        let mut g = self.lock();
+        if let Some(a) = g.atoms.get_mut(&aid) {
+            a.t = clamp_t(if t.is_nan() { T_INIT } else { t });
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Upsert atom with fixed id (snapshot restore / host import).
+    pub fn atom_upsert(
+        &self,
+        aid: AtomId,
+        s: &str,
+        e: &str,
+        t: f64,
+        value_token: u64,
+    ) -> bool {
+        use crate::atom::clamp_t;
+        let mut g = self.lock();
+        let tt = clamp_t(if t.is_nan() { T_INIT } else { t });
+        if let Some(a) = g.atoms.get_mut(&aid) {
+            a.s = s.to_string();
+            a.e = e.to_string();
+            a.t = tt;
+            a.value_token = value_token;
+        } else {
+            let mut atom = Atom::new(aid, s, e, tt);
+            atom.value_token = value_token;
+            g.atoms.insert(aid, atom);
+            g.retained_tomb.remove(&aid);
+        }
+        if aid >= g.next_atom {
+            g.next_atom = aid.saturating_add(1);
+        }
+        true
+    }
+
+    /// Replace atom registry with snapshot (transaction rollback).
+    /// Entries: (id, S, E, T, value_token). Bubbles/roots unchanged;
+    /// dangling bindings to removed atoms are purged.
+    pub fn restore_atoms(&self, entries: &[(AtomId, String, String, f64, u64)]) {
+        use crate::atom::clamp_t;
+        let mut g = self.lock();
+        let keep: HashSet<AtomId> = entries.iter().map(|e| e.0).collect();
+        let remove: Vec<AtomId> = g
+            .atoms
+            .keys()
+            .copied()
+            .filter(|id| !keep.contains(id))
+            .collect();
+        for aid in remove {
+            g.purge_bindings(aid);
+            g.retained_tomb.remove(&aid);
+            g.atoms.remove(&aid);
+        }
+        let mut max_id = 0u32;
+        for (id, s, e, t, token) in entries {
+            max_id = max_id.max(*id);
+            let tt = clamp_t(if t.is_nan() { T_INIT } else { *t });
+            if let Some(a) = g.atoms.get_mut(id) {
+                a.s = s.clone();
+                a.e = e.clone();
+                a.t = tt;
+                a.value_token = *token;
+            } else {
+                let mut atom = Atom::new(*id, s.clone(), e.clone(), tt);
+                atom.value_token = *token;
+                g.atoms.insert(*id, atom);
+            }
+            g.retained_tomb.remove(id);
+        }
+        g.next_atom = max_id.saturating_add(1).max(g.next_atom);
+    }
+
     pub fn heat(&self, aid: AtomId) -> bool {
         let mut g = self.lock();
         if let Some(a) = g.atoms.get_mut(&aid) {
@@ -387,6 +470,26 @@ mod tests {
         s.settle(COOL);
         assert!(!s.has_atom(a));
         assert_eq!(s.stats().reaped, 1);
+    }
+
+    #[test]
+    fn restore_atoms_rollback() {
+        let s = Store::new(false);
+        let a0 = s.atom_new("var", "keep", 50.0);
+        s.atom_set_value_token(a0, 42);
+        let snap = vec![(a0, "var".into(), "keep".into(), 50.0, 42u64)];
+        let a1 = s.atom_new("var", "gone", 50.0);
+        assert!(s.has_atom(a1));
+        s.restore_atoms(&snap);
+        assert!(s.has_atom(a0));
+        assert!(!s.has_atom(a1));
+        assert_eq!(s.atom_value_token(a0), Some(42));
+        // re-insert with fixed id after delete
+        s.delete_atom(a0);
+        s.restore_atoms(&[(7, "S".into(), "E".into(), 12.5, 0)]);
+        assert!(s.has_atom(7));
+        assert!((s.get_atom_t(7).unwrap() - 12.5).abs() < 1e-9);
+        assert!(!s.has_atom(a0));
     }
 
     #[test]

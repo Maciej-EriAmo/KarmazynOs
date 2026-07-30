@@ -30,7 +30,9 @@ import unittest
 import warnings
 
 from karmazyn_kernel import (
-    Store, Bubble, Atom, conforms, capabilities, kernel_info, state_for_T,
+    # golden / reference pure-Python (Rust = default produkcyjny Store)
+    PythonStore as Store,
+    Bubble, Atom, conforms, capabilities, kernel_info, state_for_T,
     T_INIT, T_MAX, T_HOT, T_WARM, T_TOMB, HAS_HRR,
 )
 

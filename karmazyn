@@ -1,14 +1,16 @@
 #!/bin/sh
-# karmazyn — lokalny launcher (Kernel Karmazyn)
-# Preferuje uklad kernel/ + software/ (jak Docker); fallback: katalog plaski.
+# karmazyn — lokalny launcher (KarmazynOs)
+# Substrat DOMYSLNIE: native Rust. Override: KARMAZYN_SUBSTRATE=python
 set -e
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
+: "${KARMAZYN_SUBSTRATE:=native}"
+export KARMAZYN_SUBSTRATE
 if [ -d "$SCRIPT_DIR/kernel" ] && [ -d "$SCRIPT_DIR/software" ]; then
-  export PYTHONPATH="$SCRIPT_DIR/kernel:$SCRIPT_DIR/software${PYTHONPATH:+:$PYTHONPATH}"
+  export PYTHONPATH="$SCRIPT_DIR:$SCRIPT_DIR/kernel:$SCRIPT_DIR/software:$SCRIPT_DIR/native${PYTHONPATH:+:$PYTHONPATH}"
   BOOT="$SCRIPT_DIR/software/karmazyn_boot.py"
 else
   ROOT="${KARMAZYN_HOME:-$SCRIPT_DIR}"
-  export PYTHONPATH="${ROOT}${PYTHONPATH:+:$PYTHONPATH}"
+  export PYTHONPATH="${ROOT}:${ROOT}/native${PYTHONPATH:+:$PYTHONPATH}"
   BOOT="$ROOT/karmazyn_boot.py"
 fi
 exec python3 "$BOOT" "$@"

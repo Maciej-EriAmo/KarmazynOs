@@ -1072,7 +1072,11 @@ class III_GuestContract(unittest.TestCase):
         n0 = len(store.atoms())
         ev.eval_line("g = 1")
         self.assertGreater(len(store.atoms()), n0)
-        self.assertEqual(type(store).__module__, "karmazyn_substrate")
+        # Python reference Store albo native drop-in (Rust / ctypes)
+        self.assertIn(
+            type(store).__module__,
+            ("karmazyn_substrate", "karmazyn_substrate_native"),
+        )
 
     def test_C_zero_external_deps(self):
         stdlib = getattr(sys, "stdlib_module_names", None)

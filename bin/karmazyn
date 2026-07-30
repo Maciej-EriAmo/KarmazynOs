@@ -1,5 +1,8 @@
 #!/bin/sh
 # Runtime w obrazie Docker: jadro RO + oprogramowanie.
-export PYTHONPATH="${PYTHONPATH:-/opt/karmazyn/kernel:/opt/karmazyn/software}"
+# Substrat DOMYSLNIE: native Rust.
+: "${KARMAZYN_SUBSTRATE:=native}"
+export KARMAZYN_SUBSTRATE
+export PYTHONPATH="${PYTHONPATH:-/opt/karmazyn:/opt/karmazyn/kernel:/opt/karmazyn/software:/opt/karmazyn/native}"
 export KARMAZYN_HOME="${KARMAZYN_HOME:-/opt/karmazyn/software}"
 exec python3 "${KARMAZYN_HOME}/karmazyn_boot.py" "$@"

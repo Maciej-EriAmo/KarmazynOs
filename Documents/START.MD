@@ -3,8 +3,10 @@
 | Component | Version |
 |-----------|---------|
 | Kernel | **1.1.0** |
+| Substrate | **Rust native `0.1.0`** (default) · Python = reference |
 | Lua guest | **`karmazyn_lua 1.0.0`** (stable) |
 | Host API | **`karmazyn._VERSION` 1.0.0** |
+| Boot | v0.5+ |
 
 PL: **[START.PL.MD](START.PL.MD)** · [tools_lua.md](tools_lua.md) · [lua_bin_status.md](lua_bin_status.md)
 

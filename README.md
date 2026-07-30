@@ -99,10 +99,10 @@ Full specification: [HSS Paper v2.6.0](https://doi.org/10.5281/zenodo.19548693).
 ## Runtime layout (canonical 2026)
 
 ```
-kernel/          Python kernel (atoms, substrate, facade) — default boot Store
+kernel/          Python facade + API (atoms, HRR, reference substrate)
 software/        boot, mini-Lisp guest, phi
 LUA/             Lua guest (tools language)
-native/          Rust substrate (reach-GC + C ABI; tests / migration)
+native/          Rust substrate — DEFAULT production Store (reach-GC + C ABI + PyO3)
 holo/            Linux HSS LSM (C) — security bridge, optional
 archiwum/        legacy monolit (old shell/studio)
 ```
@@ -111,10 +111,12 @@ archiwum/        legacy monolit (old shell/studio)
 |---|---|
 | `karmazyn_boot.py` | Live REPL — default **Lua** on Store (thermal tick) |
 | `karmazyn_kernel.py` | Public kernel facade (only entry for software) |
-| `karmazyn_backend.py` | Substrate switch: `python` \| `native` (tests / `open_store`) |
-| `LUA/` | `karmazyn_lua` guest |
+| `karmazyn_backend.py` | Substrate switch: **`native` (default)** \| `python` (reference) |
+| `LUA/` | `karmazyn_lua` guest **1.0.0** |
 | `native/karmazyn_substrate/` | Rust Store + `ksub_*` C ABI |
-| `test_substrate.py` | Python law tests |
+| `native/karmazyn_substrate_rs/` | PyO3 extension (`CoreStore`) |
+| `native/run_native.ps1` | Build / smoke path (Windows) |
+| `test_substrate.py` | Python reference law tests |
 | `test_substrate_compat.py` | Python ↔ Rust golden law |
 | `Documents/runtime_en.md` | Runtime guide (EN) |
 | `Documents/runtime_pl.md` | Runtime guide (PL) |
@@ -155,17 +157,23 @@ python test_substrate_compat.py -v          # needs: cargo build --release
 python kernel_boundary.py kernel/ software/
 ```
 
-### Native substrate (Rust)
+### Native substrate (Rust) — production default
 
 ```bash
+# Windows (recommended)
+.\native\build_native.ps1
+.\native\run_native.ps1
+
+# Or pure cargo + smoke
 cd native/karmazyn_substrate
 cargo test && cargo build --release
 cd ../..
-python native/karmazyn_substrate_native.py
-# KARMAZYN_SUBSTRATE=native  /  open_store(backend="native")
+python native/run_native_demo.py
+# open_store() → NativeStore when bridge is built
+# force reference: KARMAZYN_SUBSTRATE=python
 ```
 
-Details: [native/README.md](native/README.md) · [Documents/runtime_en.md](Documents/runtime_en.md).
+Details: [native/README.md](native/README.md) · [Documents/runtime_en.md](Documents/runtime_en.md) · [VERSION.txt](VERSION.txt).
 
 Legacy `shell.py` / Studio UX (write/recall) live under **`archiwum/`**.
 
@@ -187,14 +195,14 @@ Legacy `shell.py` / Studio UX (write/recall) live under **`archiwum/`**.
 ## Status
 
 ```
-karmazyn_kernel v1.1.0     ✅  facade + reach-GC Store (Python default)
-karmazyn_boot v0.5         ✅  live REPL, Lua guest, :guest switch
-LUA/                       ✅  tools language on substrate
-native substrate (Rust)    ✅  law + C ABI + compat tests (boot still Python)
-hook registry              ✅  register_env_of / extra_reach
+karmazyn_kernel v1.1.0     ✅  facade; Store = NativeStore when bridge built
+karmazyn_boot v0.5+        ✅  live REPL, Lua guest, :guest / :project / :tool
+LUA/ karmazyn_lua 1.0.0    ✅  stable default guest (release gate)
+native substrate 0.1.0     ✅  DEFAULT production (PyO3 → ctypes; C ABI)
+Python Store               ✅  reference + KARMAZYN_SUBSTRATE=python fallback
+hook registry              ✅  register_env_of / extra_reach (name=guest)
 holo/ HSS LSM              ✅  Linux kernel bridge sources
 archiwum/ shell+studio     📦  legacy
-Full native boot drop-in   ⏳  phase 2–3
 Crimson Loop               ⏳  introspection layer
 ```
 

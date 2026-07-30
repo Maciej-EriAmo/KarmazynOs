@@ -11,3 +11,17 @@ __pycache__/
 lua_bin/*.txt
 *.tmp
 
+# Rust / maturin build artifacts
+**/target/
+**/*.pdb
+native/**/*.dll
+native/**/*.dll.lib
+native/**/*.dll.exp
+native/**/*.pyd
+native/karmazyn_substrate_rs/target/
+native/karmazyn_substrate_rs/wheels/
+*.egg-info/
+
+# local bench dumps
+bench_results.json
+

@@ -74,8 +74,8 @@ Osiągalność: korzenie (`set_root`) + łańcuch `parent` bąbli + haki
 ### 5.3 Przełączniki
 
 - **Gość:** `KARMAZYN_GUEST`, `--lua`/`--lisp`, REPL `:guest`
-- **Substrat (testy):** `KARMAZYN_SUBSTRATE`, `open_store(backend=…)`  
-  Boot domyślnie: Python Store; Rust — golden tests i migracja.
+- **Substrat:** `KARMAZYN_SUBSTRATE`, `open_store(backend=…)`  
+  **Domyślnie:** Rust `NativeStore` (gdy most zbudowany); Python Store = referencja / fallback.
 
 ### 5.4 Granica jadro ↛ oprogramowanie
 
