@@ -45,7 +45,10 @@ karmazyn> :tool hello_tool
 | `get_resources()` | `store.stats()` |
 | `recall(query, k)` | resonance HRR + fallback tekstowy |
 | `get_similarity(id1, id2)` | podobieństwo |
-| `list_bubbles()` / `list_agents()` / `list_holograms()` | listy (agenci/holo = stub) |
+| `list_bubbles()` | bąble z etykietą + `content` |
+| `list_agents()` / `spawn_agent(name, task, prisms)` / `delete_agent(pid)` | agenci sesji |
+| `list_holograms()` / `create_hologram(id, topic, atom_ids)` | idee w sesji |
+| `generate_from_idea(id, prompt, temp)` | wektor syntetyczny (placeholder) |
 | `clear_screen()` / `sleep(sec)` | UI terminala |
 | `ui.progress_bar(v, max, width)` | pasek tekstowy |
 | `ui.draw_frame(title, lines)` | ramka tekstowa |
@@ -78,6 +81,9 @@ python test_host_tools.py -v
 
 ## Status
 
-| Działa E2E (smoke) | Stub / częściowo |
-|--------------------|------------------|
-| ls, whoami, uptime, df, free, step, touch, cat | ps/kill (agenci), idea/lsh (hologramy), nano (fs/cache mini) |
+| Działa E2E (smoke) | Częściowo / ostrożnie |
+|--------------------|------------------------|
+| ls, whoami, uptime, df, free, step, touch, cat | nano (fs/cache mini, interaktywny) |
+| ps, kill, spawn_agent | — |
+| lsh, idea, create_hologram | wektor z `generate_from_idea` = deterministyczny placeholder (nie pełny PCA) |
+| kedit, lsb (po consolidate) | — |

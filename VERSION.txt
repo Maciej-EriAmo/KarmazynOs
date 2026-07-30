@@ -6,7 +6,7 @@ Boot: karmazyn_boot v0.5+ (gość Lua; :project / :run / :reload / :check; --pro
 Native substrate (Rust): 0.1.0-karmazyn-substrate (faza 0/1)
 Lua guest: project host (searchers preload|memory|project), CLI run_lua.py
 Host API: software/karmazyn_host.py → global karmazyn.*; :tool <lua_bin>
-Smoke: software/test_host_tools.py
+Smoke: software/test_host_tools.py (12: ls/df/ps/idea/kedit/…)
 
 Jadro (kernel/) - ZRODLO PRAWDY (Python, domyslne w boot):
   karmazyn_atom.py

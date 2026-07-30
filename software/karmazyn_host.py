@@ -318,22 +318,34 @@ class KarmazynHost:
         except Exception:
             bubbles = []
         seen = set()
+        skip = {
+            "lua", "table", "call", "chunk", "preload", "load",
+            "lib", "var", "field", "builtin", "param",
+        }
         for b in bubbles:
             lab = getattr(b, "label", None) or ""
             if not lab or lab in seen:
                 continue
-            if lab in ("lua", "table", "call", "chunk", "preload", "load"):
+            if lab in skip or lab.startswith("i:") or lab.startswith("s:"):
                 continue
             seen.add(lab)
+            content_parts = []
+            n = 0
+            try:
+                binds = getattr(b, "bindings", {}) or {}
+                n = len(binds)
+                for name, atom in list(binds.items())[:5]:
+                    if hasattr(atom, "E") and atom.E:
+                        content_parts.append(str(atom.E)[:20])
+                    else:
+                        content_parts.append(str(name)[:20])
+            except Exception:
+                pass
             row = self._tbl()
             self._set(row, "id", lab)
             self._set(row, "label", lab)
-            n = 0
-            try:
-                n = len(getattr(b, "bindings", {}) or {})
-            except Exception:
-                pass
             self._set(row, "n", n)
+            self._set(row, "content", ", ".join(content_parts) if content_parts else "(pusto)")
             rows.append(row)
         return self._arr(rows)
 
@@ -343,18 +355,83 @@ class KarmazynHost:
             row = self._tbl()
             self._set(row, "id", hid)
             self._set(row, "label", h.get("label", hid))
+            self._set(row, "topic", h.get("topic", h.get("label", hid)))
+            labels = h.get("atom_labels") or h.get("atoms") or []
+            self._set(row, "atom_labels", self._arr([str(x) for x in labels]))
+            self._set(row, "epoch_created", int(h.get("epoch_created", 0)))
             rows.append(row)
         return self._arr(rows)
 
+    def create_hologram(self, hid=None, topic=None, atom_ids=None, *_):
+        """Utwórz hologram (ideę) w sesji hosta — bez pełnego PCA/HRR engine."""
+        if not isinstance(hid, str) or not hid:
+            hid = f"idea_{len(self._holograms) + 1}"
+        topic = topic if isinstance(topic, str) else (topic or hid)
+        labels = []
+        if isinstance(atom_ids, (list, tuple)):
+            labels = [str(x) for x in atom_ids]
+        elif atom_ids is not None:
+            # tablica Lua 1..n
+            try:
+                i = 1
+                while i <= 64:
+                    v = self.ev._table_get(atom_ids, i)
+                    if v is None:
+                        break
+                    labels.append(str(v))
+                    i += 1
+            except Exception:
+                pass
+        self._holograms[hid] = {
+            "label": hid,
+            "topic": str(topic),
+            "atom_labels": labels,
+            "epoch_created": int(self._epoch),
+            "prompt_seed": str(topic),
+        }
+        return hid
+
     def list_agents(self, *_):
         rows = []
-        for pid, ag in self._agents.items():
+        for pid, ag in sorted(self._agents.items()):
             row = self._tbl()
-            self._set(row, "pid", pid)
+            self._set(row, "pid", int(pid))
             self._set(row, "name", ag.get("name", str(pid)))
+            self._set(row, "task", ag.get("task", ag.get("status", "idle")))
             self._set(row, "status", ag.get("status", "idle"))
+            prisms = ag.get("prisms") or []
+            self._set(row, "prisms", self._arr([str(p) for p in prisms]))
             rows.append(row)
         return self._arr(rows)
+
+    def spawn_agent(self, name=None, task=None, prisms=None, *_):
+        """Utwórz agenta w rejestrze sesji (pid auto)."""
+        pid = 1
+        while pid in self._agents:
+            pid += 1
+        plist = []
+        if isinstance(prisms, (list, tuple)):
+            plist = [str(x) for x in prisms]
+        elif prisms is not None:
+            try:
+                i = 1
+                while i <= 32:
+                    v = self.ev._table_get(prisms, i)
+                    if v is None:
+                        break
+                    plist.append(str(v))
+                    i += 1
+            except Exception:
+                pass
+        if not plist:
+            plist = ["phi"]
+        self._agents[pid] = {
+            "name": str(name or f"agent_{pid}"),
+            "task": str(task or "idle"),
+            "status": "running",
+            "prisms": plist,
+        }
+        return pid
 
     def delete_agent(self, pid=None, *_):
         try:
@@ -367,11 +444,26 @@ class KarmazynHost:
         return False
 
     def generate_from_idea(self, hid=None, prompt=None, temp=0.3, *_):
-        # stub: brak pełnego silnika hologramów w minimalnym runtime
+        """Syntetyczny wektor z hologramu (deterministyczny placeholder + szum z promptu)."""
         if not isinstance(hid, str) or hid not in self._holograms:
             return None
-        # zwróć pustą tablicę liczb (wektor-placeholder)
-        return self._arr([0.0, 0.0, 0.0])
+        h = self._holograms[hid]
+        try:
+            t = float(temp) if temp is not None else 0.3
+        except (TypeError, ValueError):
+            t = 0.3
+        prompt = "" if prompt is None else str(prompt)
+        seed = abs(hash((hid, h.get("topic", ""), prompt))) % (10 ** 9)
+        dim = 16
+        vec = []
+        x = float(seed % 997) / 997.0
+        for i in range(dim):
+            x = (x * 1.6180339887 + 0.1 * t + 0.01 * i) % 1.0
+            # mieszaj z literami promptu
+            if prompt:
+                x = (x + ord(prompt[i % len(prompt)]) / 255.0 * t) % 1.0
+            vec.append(round(x * 2.0 - 1.0, 6))
+        return self._arr(vec)
 
     # ── fs / cache (minimalne, w pamięci sesji) ────────────────────────
     def _fs_read(self, bubble=None, file_id=None, *_):
@@ -468,7 +560,9 @@ def install_karmazyn_host(ev, store=None, boot_t0=None):
         ("get_similarity", host.get_similarity),
         ("list_bubbles", host.list_bubbles),
         ("list_holograms", host.list_holograms),
+        ("create_hologram", host.create_hologram),
         ("list_agents", host.list_agents),
+        ("spawn_agent", host.spawn_agent),
         ("delete_agent", host.delete_agent),
         ("generate_from_idea", host.generate_from_idea),
     ):

@@ -90,6 +90,48 @@ class HostToolsSmoke(unittest.TestCase):
         # at least chunk context after our wrap
         self.assertTrue("boom" in msg or "error" in msg.lower(), msg)
 
+    def test_agents_ps_kill(self):
+        out = self.ev.eval_line(
+            'local p = karmazyn.spawn_agent("scout", "map", {"phi", "net"}); '
+            'return p, #karmazyn.list_agents()'
+        )
+        self.assertIn("1", out)
+        t = self.ev.format_run_result(ret=run_lua_tool(self.ev, "ps", lua_bin=LUA_BIN))
+        self.assertIn("scout", t)
+        self.assertIn("ACTIVE AGENTS", t)
+        self.ev._io_input = ["1"]
+        t2 = self.ev.format_run_result(ret=run_lua_tool(self.ev, "kill", lua_bin=LUA_BIN))
+        self.assertTrue("usunięty" in t2 or "✓" in t2 or "Agent" in t2, t2)
+        self.assertEqual(self.ev.eval_line("return #karmazyn.list_agents()"), "0")
+
+    def test_hologram_idea_lsh(self):
+        out = self.ev.eval_line(
+            'return karmazyn.create_hologram("idea_demo", "filozofia", {"a","b"})'
+        )
+        self.assertIn("idea_demo", out)
+        t = self.ev.format_run_result(ret=run_lua_tool(self.ev, "lsh", lua_bin=LUA_BIN))
+        self.assertIn("HOLOGRAMS", t)
+        self.assertIn("idea_demo", t)
+        self.ev._io_input = ["idea_demo", "co to jest pamiec"]
+        t2 = self.ev.format_run_result(ret=run_lua_tool(self.ev, "idea", lua_bin=LUA_BIN))
+        self.assertIn("Wygenerowano", t2)
+        self.assertIn("Wymiar", t2)
+
+    def test_tool_kedit(self):
+        self.store.create_atom("k1", "S", "stare", 0.8)
+        # 1=set E, new text, 2=refresh, 3=consolidate, 4=exit
+        self.ev._io_input = ["k1", "1", "nowe E", "2", "3", "4"]
+        t = self.ev.format_run_result(ret=run_lua_tool(self.ev, "kedit", lua_bin=LUA_BIN))
+        self.assertIn("KEDIT", t)
+        self.assertEqual(self.ev.eval_line('return karmazyn.get_atom("k1").E'), "nowe E")
+
+    def test_tool_lsb_after_consolidate(self):
+        self.store.create_atom("c1", "S", "payload-bubble", 0.9)
+        bid = self.ev.host.consolidate("c1")
+        self.assertTrue(bid)
+        t = self.ev.format_run_result(ret=run_lua_tool(self.ev, "lsb", lua_bin=LUA_BIN))
+        self.assertTrue("BUBBLE" in t or "bąbl" in t.lower() or "bubble" in t.lower(), t)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

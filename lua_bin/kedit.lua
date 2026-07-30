@@ -1,3 +1,4 @@
+-- kedit.lua — edycja atomu w Φ (host API karmazyn.*)
 local id = karmazyn.read_line("ID Atomu do edycji: ")
 if id == "" then return end
 
@@ -9,9 +10,6 @@ end
 
 while true do
     local menu = {
-        "1. Zmień Emanację (E) [Φ - ulotna]",
-        "2. Stabilizuj (Refresh) [Φ]",
-        "3. ZAPISZ TRWALE (Skonsoliduj do bąbla)",
         "1. Zmień Emanację (E)",
         "2. Stabilizuj (Refresh)",
         "3. Skonsoliduj do bąbla",
@@ -22,7 +20,7 @@ while true do
     local choice = karmazyn.read_line("Wybór: ")
 
     if choice == "1" then
-        print("Aktualna E: " .. atom.E)
+        print("Aktualna E: " .. tostring(atom.E))
         local new_e = karmazyn.read_line("Nowa Emanacja: ")
         if new_e ~= "" then
             atom.set_E(new_e)
@@ -39,14 +37,6 @@ while true do
         else
             print("✗ Błąd utrwalania informacji.")
         end
-            print("✓ Zaktualizowano.")
-        end
-    elseif choice == "2" then
-        atom.refresh()
-        print("✓ Atom zastabilizowany.")
-    elseif choice == "3" then
-        local bid = atom.consolidate()
-        print("✓ Skonsolidowano: " .. bid)
     elseif choice == "4" or choice == "" then
         break
     else

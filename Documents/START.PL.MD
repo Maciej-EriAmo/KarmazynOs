@@ -87,6 +87,9 @@ karmazyn> :tool           # lista
 karmazyn> :tool ls
 karmazyn> :tool whoami
 karmazyn> :tool step      # pyta o liczbę ticków
+karmazyn> :tool ps        # agenci (po spawn_agent)
+karmazyn> :tool lsh       # hologramy / idee
+karmazyn> :tool kedit     # edycja atomu
 ```
 
 API hosta i jak pisać tool: [tools_lua.md](tools_lua.md).
