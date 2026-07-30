@@ -1,8 +1,17 @@
 # Plan implementacji: bliżej PUC-Rio bez zmiany fizyki Karmazyn
 
-**Pakiet:** `karmazyn_lua` 1.0.0 → linia **1.1.x** (opcjonalnie 1.2)  
-**Zakaz nadrzędny:** **nie wolno zmieniać fizyki systemu**  
-(T × reach-GC × bąbel × zero ambient authority).
+**Pakiet:** `karmazyn_lua` 1.0.0 → linia **1.1.x** (opcjonalnie 1.2)
+
+### Ostrzeżenie nadrzędne (nie paragraf „zakaz”)
+
+Fizyka jądra (T × reach-GC × bąbel × brak ambient authority) to **warunek życia systemu**, nie „tabu dla formalności”.
+
+> **Destabilizacja jądra = śmierć prawidłowego działania.**  
+> Chcesz grzebać w fizyce (T, vacuum, reach, rooty, haki GC, granica gościa) — szykuj się na to, że system **przestanie działać poprawnie**: utrata pamięci, zombie, nieszczelny sandbox, losowy GC, śmierć sesji.  
+> Nikt nie stoi z pałką „nie wolno”. **Konsekwencja jest fizyczna, nie administracyjna.**
+
+Plan 1.1–1.2 **zakłada** pracę **nad** jądrem (gość Lua), nie **w** jądrze — bo to tańsza droga do zgodności z PUC-Rio przy żywym systemie.  
+Wejście w `kernel/` jest możliwe, ale to **zmiana konstytucji**: osobna decyzja, osobny audyt, pełna świadomość ryzyka.
 
 **Zakres (z listy):**
 
@@ -15,22 +24,22 @@
 
 ---
 
-## 0. Niezmienniki fizyki (Definition of Done — twardy)
+## 0. Kryteria zdrowia systemu (Definition of Done)
 
-Każdy PR z tej listy **musi** przejść:
+PR z tej listy **domyślnie** utrzymują żywą fizykę. Jeśli celowo ją ruszasz — oznacz PR jako **KERNEL-PHYSICS**, uzasadnij i zaakceptuj, że możesz zabić system.
 
-| # | Niezmiennik | Jak weryfikować |
-|---|-------------|-----------------|
-| P1 | Gość **nie** ma ambient FS / `dofile` / `loadfile` / `os.execute` / `package.path` systemowego | `III_GuestContract` + skan globali |
-| P2 | Tabela = Bubble; GC = **reach × temperatura** jądra | testy II_Architecture; brak „wiecznego” heap poza rootami |
-| P3 | Haki reach tylko przez `register_env_of` / `register_extra_reach` (`name=guest`) | `hook_names()`, brak stackowania |
-| P4 | `debug.*` **nie** eksponuje `Store`, atomów jądra, `_reg`, pathów hosta, raw Python | testy kontraktu + lista dozwolonych pól |
-| P5 | `collectgarbage` **nie** omija vacuum/reach (tylko mapuje na settle + weak/`__gc` gościa) | test: sierota ginie, korzeń zostaje |
-| P6 | `string.dump` / `load(..., "b")` — **zablokowane** (lub tylko host-gated, nie w gościu default) | test_F + load binary |
-| P7 | Bramka: `python software/test_lua_release.py` zielona | CI / lokalnie |
+| # | Kryterium zdrowia | Jak weryfikować | Jeśli złamiesz… |
+|---|-------------------|-----------------|-----------------|
+| P1 | Gość bez ambient FS / `dofile` / `loadfile` / `os.execute` / system `package.path` | `III_GuestContract` | nieszczelna piaskownica = kompromitacja modelu |
+| P2 | Tabela = Bubble; życie = **reach × T** | II_Architecture | „pamięć Lua” rozjeżdża się z jądrem → zombie / utrata stanu |
+| P3 | Haki reach: `register_*` (`name=guest`), bez stackowania | `hook_names()` | GC kłamie → śmierć lub wycieki |
+| P4 | `debug.*` nie jest backdoorem do Store / pathów hosta | kontrakt debug | „diagnostyka” = eskalacja → koniec zaufania do sesji |
+| P5 | `collectgarbage` mapuje na settle + weak/`__gc`, **nie** omija vacuum | test root vs sierota | sztuczny GC niszczy fizykę T |
+| P6 | `string.dump` / `load b` nie w gościu (default) | testy negatywne | bytecode omija audyt hosta |
+| P7 | `test_lua_release.py` zielony | bramka | regresja 1.0 |
 
-**Fizyka jądra (T, vacuum, retained TOMB, Bubble bindings) — poza zakresem zmian.**  
-Tylko **projekcja** semantyki Lua na istniejący substrat.
+**Domyślna ścieżka planu:** projekcja semantyki Lua **na** istniejący substrat.  
+**Ścieżka ryzykowna:** diff w `kernel/` — dozwolona świadomie, z ostrzeżeniem o końcu prawidłowego działania.
 
 ---
 
@@ -47,7 +56,7 @@ Tylko **projekcja** semantyki Lua na istniejący substrat.
 │  Host (boot, CLI, project searcher) — jedyny FS              │
 ├──────────────────────────────────────────────────────────────┤
 │  karmazyn_kernel / Store — FIZYKA (T, reach, bąble)          │
-│  NIE modyfikować reguł w PR-ach z tej listy                  │
+│  Grzebanie tu = ryzyko śmierci systemu (ostrzeżenie, nie tabu)│
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -90,11 +99,11 @@ wolno mutować wartości w ramach Lua; **nie wolno** przez debug odłączać roo
 | **B4** | `__gc` — kolejność finalizacji, jednokrotność, błędy w finalizerze | finalizer **nie** może reanimować poza reach bez root; inaczej łamie P2 |
 | **B5** | `collectgarbage("count"|"step"|"collect"|"isrunning"|…)` — subset | `collect` = weak clear + __gc + `store.settle(N)` **bez** force-delete rootów |
 
-**Reguła B (fizyka):**
+**Reguła B (ostrzeżenie fizyki):**
 
-> Słabość i finalizacja to **warstwa gościa na wierzchu** reach-GC.  
-> Nie implementować „Lua GC niezależnego od T/reach”.  
-> Atom/Bubble nieosiągalny z korzeni **i** zimny → i tak vacuum jądra.
+> Słabość i finalizacja **bezpiecznie** żyją jako warstwa gościa **na wierzchu** reach-GC.  
+> Osobny „Lua GC niezależny od T/reach” = konkurencyjna fizyka → system przestaje być Karmazynem (niespójna śmierć obiektów, utrata TOMB, dziury w piaskownicy).  
+> Jeśli to zrobisz, nie dziw się, że „wszystko się sypie”.
 
 ---
 
@@ -146,7 +155,7 @@ W planie implementacji: jawny test „dump/binary forbidden” + wpis w Known li
 | C1–C4 | 1–2 tyg. | string fidelity ↑ |
 | D1–D5 | równolegle od A/C | puc_subset CI optional → required w 1.2 |
 
-**Nie łączyć B4 (__gc) z refaktorem jądra** — osobne PR, osobny review pod P2/P5.
+**Nie łączyć B4 (__gc) z refaktorem jądra w jednym PR** — bo wtedy nie da się oddzielić „sypie się gość” od „zabiłem fizykę”. Osobny PR, osobny review pod P2/P5, jawna etykieta KERNEL-PHYSICS jeśli ruszasz Store.
 
 ---
 
@@ -206,16 +215,21 @@ W planie implementacji: jawny test „dump/binary forbidden” + wpis w Known li
 | Weak tables vs T | clear weak przy collect **i** przy vacuum; nie trzymać extra roots |
 | puc-tests wymagają io | skip + adapt loader hosta |
 | Scope creep „pełna 5.5” | milestone 1.1/1.2 = lista A–D, nie cały manual |
+| „Poprawię GC w kernel przy okazji string.pack” | mieszanie warstw → nie da się zdiagnozować; system umiera po cichu |
 
 ---
 
-## 7. Poza planem (świadomie)
+## 7. Poza domyślnym torem (świadomy wybór ryzyka)
+
+Te rzeczy **nie są „zakazane paragrafem”** — są **poza bezpieczną ścieżką 1.1**, bo psują model albo fizykę:
 
 - C API / `userdata` C / `package.loadlib`  
-- `io` na prawdziwy FS  
+- `io` na prawdziwy FS z gościa  
 - `os.execute` / shell  
 - bytecode / `string.dump` w gościu  
-- Zmiana reguł T, vacuum, retained TOMB w kernel  
+- przepisanie reguł T, vacuum, retained TOMB „żeby było jak w Lua”
+
+Jeśli idziesz w to: **szykuj się na koniec prawidłowego działania**, pełny audyt jądra i brak gwarancji, że KarmazynOS nadal jest KarmazynOS.
 
 ---
 
@@ -225,8 +239,9 @@ W planie implementacji: jawny test „dump/binary forbidden” + wpis w Known li
 - `test_lua_release.py` zielony  
 - Nowy gate opcjonalny `run_puc_subset.py` z rosnącym `pass`  
 - Dokument [lua_arch_for_programmers.md](lua_arch_for_programmers.md) zaktualizowany o debug/numbers  
-- **Fizyka jądra niezmieniona** (diff kernel/ tylko jeśli absolutnie konieczny bugfix — domyślnie **zero** diff jądra)
+- Domyślnie **brak** diffu `kernel/` w PR gościa; każdy diff jądra = etykieta **KERNEL-PHYSICS** + akceptacja ryzyka śmierci systemu  
 
 ---
 
-*Plan dla programistów i agentów implementujących 1.1.x. Fizyka = konstytucja.*
+*Plan dla programistów i agentów implementujących 1.1.x.  
+Fizyka nie jest zakazana — jest **śmiertelnie wrażliwa**.*

@@ -31,9 +31,19 @@ Nie oczekuj `lua.exe` 1:1. Oczekuj **semantyki skryptowej** + **gwarancji piasko
 
 ---
 
-## 3. Fizyka, której **nie wolno** łamać
+## 3. Fizyka: ostrzeżenie, nie regulamin
 
-Programista (i implementator stdlib) **nie projektuje** nowej fizyki. Obowiązuje:
+Nikt nie „zakazuje” ci grzebać w jądrze.  
+**Destabilizacja fizyki = śmierć prawidłowego działania systemu.**
+
+Jeśli ruszasz T, vacuum, reach, rooty, haki GC albo dajesz gościowi ambient authority — szykuj się na to, że:
+
+- sesje zaczynają gubić stan albo trzymać zombie,  
+- GC kłamie,  
+- piaskownica przestaje być piaskownicą,  
+- „Karmazyn” staje się zwykłym interpreterem z dziurami.
+
+Programista skryptów i domyślna linia stdlib **pracują na** fizyce, nie **przeciw** niej. Obowiązuje (jako warunek życia, nie tabu):
 
 ### 3.1 Temperatura (T)
 
@@ -64,12 +74,8 @@ Fizyka jądra (bez wyjątków z debug/collectgarbage)
 ```
 
 **Wniosek dla kodu:**  
-`debug`, `collectgarbage`, weak, `__gc` mogą **obserwować i porządkować warstwę Lua**, ale nie mogą:
-
-- robić `set_root` / psuć rejestru jądra z poziomu skryptu,  
-- otwierać dysku,  
-- ładować bytecode,  
-- trzymać obiektów „poza reach” bez korzenia (to i tak zginie).
+`debug`, `collectgarbage`, weak, `__gc` powinny **obserwować i porządkować warstwę Lua**.  
+Jeśli pozwolą na `set_root` z gościa, dysk, bytecode albo heap poza reach — to nie „feature”, to **strzał w fizykę**. System może dalej „coś robić”, ale nie będzie już wiarygodnym Karmazynem.
 
 ---
 
@@ -177,14 +183,15 @@ To **polityka sesji**, nie flaga PUC-Rio.
 
 Zanim zmergujesz feature z listy debug/numbers/string/coroutine/tests:
 
-1. Czy gość nadal nie ma FS/shell/binary load?  
-2. Czy reach-GC nadal decyduje o życiu tabel?  
-3. Czy haki to `register_*` a nie `store._env_of =`?  
-4. Czy debug nie pokazuje jądra?  
+1. Czy gość nadal bez FS/shell/binary load (albo wiesz, że otwierasz dziurę)?  
+2. Czy reach × T nadal decyduje o życiu tabel?  
+3. Czy haki to `register_*` a nie ciche nadpisanie `_env_of` ze stackowaniem?  
+4. Czy debug nie jest backdoorem do jądra?  
 5. Czy `test_lua_release.py` zielony?  
-6. Czy **nie** ma diffu w `kernel/` bez osobnej decyzji o fizyce?
+6. Czy jest diff w `kernel/`? Jeśli tak — etykieta **KERNEL-PHYSICS**, audyt, akceptacja: *może zabić system*.
 
-Jeśli którykolwiek punkt = nie → **stop**.
+Jeśli łamiesz 1–5 przez pomyłkę → **stop i popraw**.  
+Jeśli łamiesz świadomie fizykę → nie „stop bo zakaz”, tylko **świadomy pogrzeb gwarancji**.
 
 ---
 
@@ -215,4 +222,5 @@ A: Po stronie hosta (Python/boot). Gość dostaje treść, nie ścieżki OS.
 
 ---
 
-*Fizyka jest konstytucją. Język jest gościem.*
+*Fizyka nie jest zakazem — jest warunkiem życia.  
+Język jest gościem. Zepsuj gospodarzowi prawa przyrody: nie dziw się, że umiera.*
