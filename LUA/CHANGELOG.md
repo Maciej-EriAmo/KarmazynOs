@@ -1,5 +1,12 @@
 # Changelog — karmazyn_lua
 
+## 0.9.1 — 2026-07-29
+
+- **Fix reach hooks:** `register_env_of` / `register_extra_reach` with `name="guest"` (no stacking on remount / `:guest`).
+- **Portable kernel discovery:** `LUA/_paths.py` — monorepo `kernel/` first; removed developer absolute paths from CLI/tests.
+- **Host API version:** `karmazyn._VERSION` = `0.9.0` (aligned with package line; freeze at 1.0).
+- Tests: `test_reach_hooks_registered_not_stacked`.
+
 ## 0.9.0 — 2026-07-29
 
 - **Release 0.9.0** — domyślny gość skryptowy KarmazynOS.

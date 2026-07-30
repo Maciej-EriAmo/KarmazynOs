@@ -2,7 +2,7 @@
 
 **Jądro:** `karmazyn_kernel` v1.1.0  
 **Boot:** `karmazyn_boot` v0.5+  
-**Gość Lua:** `karmazyn_lua` **0.9.0** (`LUA/`, gate: `software/test_lua_release.py`, macierz 26/28)  
+**Gość Lua:** `karmazyn_lua` **0.9.1** (`LUA/`, gate: `software/test_lua_release.py`, macierz 26/28)  
 **Substrat native (Rust):** faza 0/1 — prawo reach-GC + C ABI  
 
 Ten dokument opisuje **aktualny** runtime monorepo (nie archiwalny `shell.py` / `studio.py` w `archiwum/`).
@@ -238,11 +238,11 @@ Wersje: [../VERSION.txt](../VERSION.txt).
 | `strict-project` (run tylko pod rootem) | ✅ |
 | Błędy `@plik:linia:kolumna:` (parse) | ✅ |
 | Pełne `dofile` / ambient FS | ❌ celowo (sandbox = bąbel) |
-| Host API `karmazyn.*` + `:tool` + smoke `lua_bin` | ✅ 0.9 (`karmazyn._VERSION` 1.0.0) |
+| Host API `karmazyn.*` + `:tool` + smoke `lua_bin` | ✅ 0.9 (`karmazyn._VERSION` 0.9.0) |
 | Macierz `lua_bin` | ✅ 26 pass / 2 skip (top, nano DEPRECATED w automatyce) |
 | Numery linii w błędach parse + runtime (chunk) | ✅ |
 
-**Release:** `0.9.0` · tag `lua-v0.9.0` · [../LUA/README.md](../LUA/README.md) · [tools_lua.md](tools_lua.md) · [lua_bin_status.md](lua_bin_status.md).
+**Release:** `0.9.1` · tag `lua-v0.9.1` · [../LUA/README.md](../LUA/README.md) · [tools_lua.md](tools_lua.md) · [lua_bin_status.md](lua_bin_status.md).
 
 ---
 

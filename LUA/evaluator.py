@@ -35,20 +35,9 @@ class Evaluator:
         else:
             self.G = store.bubble_new(env_label)     # globalny zakres = korzeń
         store.set_root(self.G)
-        # HAK OSIĄGALNOŚCI (kontrakt substratu S1): tabela=Bubble, domknięcie=env.
-        # Składamy z ewentualnym poprzednim env_of (host/Karmin), Lua ma pierwszeństwo.
-        prev = getattr(store, "_env_of", None)
-        def _env_of(v):
-            r = lua_env_of(v)
-            if r is not None:
-                return r
-            if prev is not None and prev is not _env_of:
-                try:
-                    return prev(v)
-                except Exception:
-                    return None
-            return None
-        store._env_of = _env_of
+        # HAK OSIĄGALNOŚCI (kontrakt substratu): rejestr register_* (name="guest").
+        # Ta sama name = zamiana bez stackowania przy remount / :guest.
+        # Nie przypisujemy store._env_of / store._extra_reach ręcznie.
         self._out = []
         self._va_stack = [[]]                    # varargi ramek; dno = chunk główny
         # metatabele typów (Lua: string library → mt z __index=string → s:sub())
@@ -72,21 +61,35 @@ class Evaluator:
         self._call_stack = []                    # nazwy ramek do traceback (najstarsza→0)
         self._cur_line = None                    # linia bieżącej instrukcji (parser "@")
         self._cur_chunk = None                   # nazwa chunka (compile/run)
-        # root + aktywne ramki wywołań — inaczej settle w środku skryptu zżyna locale
-        prev_extra = getattr(store, "_extra_reach", None)
-        def _extra():
+        self._register_reach_hooks()
+        self._install_builtins()
+
+    def _register_reach_hooks(self):
+        """Zarejestruj env_of + extra_reach ramek jako guest (bez stackowania)."""
+        store = self.store
+
+        def _guest_env_of(v):
+            return lua_env_of(v)
+
+        def _guest_extra_reach():
             ids = []
             for env in self._active_envs:
-                for aid in list(env.bindings.values()):
-                    ids.append(aid)
-            if prev_extra:
                 try:
-                    ids.extend(prev_extra() or ())
+                    for aid in list(env.bindings.values()):
+                        ids.append(aid)
                 except Exception:
                     pass
             return ids
-        store._extra_reach = _extra
-        self._install_builtins()
+
+        if hasattr(store, "register_env_of"):
+            store.register_env_of(_guest_env_of, name="guest")
+        else:
+            # stary substrat bez rejestru — ostatni gość wygrywa
+            store._env_of = _guest_env_of
+        if hasattr(store, "register_extra_reach"):
+            store.register_extra_reach(_guest_extra_reach, name="guest")
+        else:
+            store._extra_reach = _guest_extra_reach
 
     # ── wbudowane (biała lista; żadnej ambient authority) ──
     def _install_builtins(self):

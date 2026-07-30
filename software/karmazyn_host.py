@@ -3,7 +3,8 @@
 Sandbox = bąbel: gość woła tylko jawnie wstrzyknięte funkcje.
 Host ma Store + (opcjonalnie) kolejkę io_input / stdin.
 
-Surface v1 (karmazyn_lua 0.9.0): lua_bin tools + session agents/holograms.
+Surface v1 (karmazyn_lua 0.9.x): lua_bin tools + session agents/holograms.
+Wersja surface = wersja gościa (0.9.0) — pełne zamrożenie API dopiero przy 1.0.
 """
 
 from __future__ import annotations
@@ -11,8 +12,8 @@ from __future__ import annotations
 import os
 import time
 
-# wersja surface hosta (nie mylić z jądrem / z __version__ pakietu Lua)
-HOST_API_VERSION = "1.0.0"
+# wersja surface hosta = linia pakietu 0.9 (nie twierdzić 1.0 przed zamrożeniem)
+HOST_API_VERSION = "0.9.0"
 
 
 # typowe T dla warstw FSM (wystarczająco w progu state_for_T)

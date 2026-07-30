@@ -1122,7 +1122,27 @@ class III_GuestContract(unittest.TestCase):
         self.assertIsNone(re.search(r"\.reg\b", src), "siega wnetrza Store: .reg")
         for tok in ("._archived", "._roots", "._bubbles", "._handlers"):
             self.assertNotIn(tok, src, f"siega wnetrza Store: {tok}")
-        self.assertIn("_env_of", src)                        # udokumentowany hook — wolno
+        # szew reach: rejestr substratu (register_env_of) lub legacy _env_of
+        self.assertTrue(
+            "register_env_of" in src or "_env_of" in src,
+            "brak szwu env_of / register_env_of",
+        )
+
+    def test_reach_hooks_registered_not_stacked(self):
+        """name='guest' zastępuje hak — bez stackowania przy podwójnym mount."""
+        store = Store(thermal=True)
+        if not hasattr(store, "register_env_of"):
+            self.skipTest("substrat bez rejestru haków")
+        mount(store)
+        names1 = store.hook_names()
+        self.assertIn("guest", names1.get("env_of", []))
+        self.assertIn("guest", names1.get("extra_reach", []))
+        n_env = len(names1.get("env_of", []))
+        mount(store)  # drugi mount — ta sama name=guest
+        names2 = store.hook_names()
+        self.assertEqual(names2.get("env_of", []).count("guest"), 1)
+        self.assertEqual(len(names2.get("env_of", [])), n_env)
+        self.assertEqual(names2.get("extra_reach", []).count("guest"), 1)
 
 
 # =====================================================================

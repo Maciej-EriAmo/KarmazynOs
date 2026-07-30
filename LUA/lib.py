@@ -145,20 +145,16 @@ def _default_libs():
 
 
 def install_env_of(store):
-    prev = getattr(store, "_env_of", None)
+    """Zarejestruj hak env_of dla wartości Lua (name='guest' — bez stackowania).
 
-    def _env_of(v):
-        r = lua_env_of(v)
-        if r is not None:
-            return r
-        if prev is not None and prev is not _env_of:
-            try:
-                return prev(v)
-            except Exception:
-                return None
-        return None
-
-    store._env_of = _env_of
+    Preferuje Store.register_env_of (kontrakt substratu). Evaluator montuje
+    dodatkowo extra_reach ramek pod tą samą name przy __init__.
+    """
+    if hasattr(store, "register_env_of"):
+        store.register_env_of(lua_env_of, name="guest")
+        return store
+    # fallback: stary Store bez rejestru (nie stackuj z poprzednim gościem)
+    store._env_of = lua_env_of
     return store
 
 
@@ -177,7 +173,7 @@ def mount(store, libs=None, root_bubble=None, env_label="lua",
     tools        — dict{nazwa: źródło str|callable} lub ścieżka katalogu *.lua
                    → package.preload (narzędzia OS: require "nazwa")
     project      — ProjectSpec | ścieżka root | None
-                   → package.searchers[2] (host czyta pliki pod rootem)
+                   → package.searchers[3] (host czyta pliki; [1]=preload [2]=memory)
 
     Zwraca Evaluator (ev.phi, ev.caps, ev.budget; ev.env == ev.G).
     """

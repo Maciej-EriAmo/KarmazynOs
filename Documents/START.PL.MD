@@ -6,9 +6,9 @@
 | Składnik | Wersja |
 |----------|--------|
 | Jądro | `karmazyn_kernel` **1.1.0** |
-| Gość Lua | **`karmazyn_lua 0.9.0`** |
+| Gość Lua | **`karmazyn_lua 0.9.1`** |
 | Boot | `karmazyn_boot` v0.5+ |
-| Host API | `karmazyn._VERSION` **1.0.0** |
+| Host API | `karmazyn._VERSION` **0.9.0** |
 
 Pełny runtime: **[runtime_pl.md](runtime_pl.md)** · narzędzia: **[tools_lua.md](tools_lua.md)** · macierz: **[lua_bin_status.md](lua_bin_status.md)** · pakiet: **[../LUA/README.md](../LUA/README.md)**
 
@@ -79,7 +79,7 @@ karmazyn> :tool kedit
 
 ```bash
 python software/test_lua_release.py
-# RELEASE GATE OK  karmazyn_lua 0.9.0
+# RELEASE GATE OK  karmazyn_lua 0.9.1
 
 python software/lua_bin_matrix.py
 ```
@@ -90,7 +90,7 @@ python software/lua_bin_matrix.py
 
 | | |
 |--|--|
-| **0.9.0** | domyślny gość skryptowy + tools + projekty |
+| **0.9.1** | domyślny gość + tools + fix reach/path po recenzji |
 | **1.0** | stabilny kontrakt hosta bez breaking bez major |
 | **Nie jest** | pełna Lua 5.5 / ambient Uniks |
 

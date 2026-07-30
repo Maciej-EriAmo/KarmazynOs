@@ -11,30 +11,15 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-import types
+
+from ._paths import ensure_kernel_on_path, ensure_lua_package, lua_root
 
 
 def _ensure_package():
-    """Umożliw import karmazyn_lua gdy katalog LUA jest na sys.path bez pakietu-rodzica."""
-    root = os.path.dirname(os.path.abspath(__file__))
-    # kernel
-    for cand in (
-        os.environ.get("KARMAZYN_KERNEL"),
-        os.path.normpath(os.path.join(root, "..", "Kernel Karmazyn")),
-        os.path.normpath(os.path.join(root, "..", "KarmazynOs")),
-        r"C:\Users\drwis\Kernel Karmazyn",
-        r"C:\Users\drwis\KarmazynOs",
-    ):
-        if cand and os.path.isdir(cand) and cand not in sys.path:
-            sys.path.insert(0, cand)
-    if root not in sys.path:
-        sys.path.insert(0, root)
-    # pakiet karmazyn_lua = ten katalog
-    if "karmazyn_lua" not in sys.modules:
-        pkg = types.ModuleType("karmazyn_lua")
-        pkg.__path__ = [root]
-        pkg.__file__ = os.path.join(root, "__init__.py")
-        sys.modules["karmazyn_lua"] = pkg
+    """Umożliw import karmazyn_lua + jądra (przenośne discovery)."""
+    root = lua_root()
+    ensure_kernel_on_path(root)
+    ensure_lua_package(root)
     return root
 
 

@@ -1,33 +1,23 @@
 #!/usr/bin/env python3
 """Uruchom testy z workspace jako pakiet karmazyn_lua.
 
-Preferuje kanoniczne jadro: C:\\Users\\drwis\\Kernel Karmazyn
-(nad site-packages), potem katalog LUA.
+Discovery jądra: KARMAZYN_KERNEL → monorepo kernel/ → monorepo root → sibling.
 """
 import os
 import sys
-import types
 import unittest
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
-KERNEL = os.path.normpath(os.path.join(ROOT, "..", "Kernel Karmazyn"))
-if not os.path.isdir(KERNEL):
-    KERNEL = r"C:\Users\drwis\Kernel Karmazyn"
-
-# 1) Kernel kanoniczny  2) workspace (liby + pakiet)
-if os.path.isdir(KERNEL):
-    sys.path.insert(0, KERNEL)
 sys.path.insert(0, ROOT)
+from _paths import ensure_kernel_on_path, ensure_lua_package  # noqa: E402
 
-# zarejestruj katalog jako pakiet karmazyn_lua (zanim cokolwiek go importuje)
-pkg = types.ModuleType("karmazyn_lua")
-pkg.__path__ = [ROOT]
-pkg.__file__ = os.path.join(ROOT, "__init__.py")
-sys.modules["karmazyn_lua"] = pkg
+ensure_kernel_on_path(ROOT)
+ensure_lua_package(ROOT)
 
-# doładuj publiczną powierzchnię
 from karmazyn_lua.lib import mount, LuaLib, install_env_of, install_tools  # noqa: E402
 from karmazyn_lua.values import lua_env_of, compose_phi  # noqa: E402
+import karmazyn_lua as pkg  # noqa: E402
+
 pkg.mount = mount
 pkg.LuaLib = LuaLib
 pkg.install_env_of = install_env_of
@@ -38,7 +28,6 @@ pkg.compose_phi = compose_phi
 import karmazyn_kernel  # noqa: E402
 print("kernel:", karmazyn_kernel.__file__, "v" + getattr(karmazyn_kernel, "__version__", "?"))
 
-# test_lua jako top-level (importuje karmazyn_lua)
 import test_lua  # noqa: E402
 
 if __name__ == "__main__":

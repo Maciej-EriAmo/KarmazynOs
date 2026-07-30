@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Uruchom kombajn.lua na KarmazynLua + Kernel Karmazyn.
+"""Uruchom kombajn.lua na KarmazynLua + Kernel.
 
   python kombajn_run.py
   exit 0  → FAIL==0
@@ -10,25 +10,19 @@ from __future__ import annotations
 import os
 import re
 import sys
-import types
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
-KERNEL = os.path.normpath(os.path.join(ROOT, "..", "Kernel Karmazyn"))
-if not os.path.isdir(KERNEL):
-    KERNEL = r"C:\Users\drwis\Kernel Karmazyn"
-
-if os.path.isdir(KERNEL):
-    sys.path.insert(0, KERNEL)
 sys.path.insert(0, ROOT)
+from _paths import ensure_kernel_on_path, ensure_lua_package  # noqa: E402
 
-pkg = types.ModuleType("karmazyn_lua")
-pkg.__path__ = [ROOT]
-pkg.__file__ = os.path.join(ROOT, "__init__.py")
-sys.modules["karmazyn_lua"] = pkg
+ensure_kernel_on_path(ROOT)
+ensure_lua_package(ROOT)
 
 from karmazyn_kernel import Store  # noqa: E402
 from karmazyn_lua.lib import mount  # noqa: E402
 from karmazyn_lua.values import compose_phi, LuaError  # noqa: E402
+
+import karmazyn_lua as pkg  # noqa: E402
 
 pkg.mount = mount
 pkg.compose_phi = compose_phi

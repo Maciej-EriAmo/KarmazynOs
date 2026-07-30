@@ -1,10 +1,10 @@
-# karmazyn_lua **0.9.0**
+# karmazyn_lua **0.9.1**
 
 Interpreter Lua **5.5 (podzbiór)** na substracie KarmazynOS — **domyślny gość skryptowy**.
 
 | | |
 |--|--|
-| **Status** | **0.9.0** — używalny na co dzień w bootcie, projektach i `:tool` |
+| **Status** | **0.9.1** — używalny na co dzień w bootcie, projektach i `:tool` |
 | **Sandbox** | **bąbel** — brak ambient FS |
 | **Źródło kanoniczne** | `KarmazynOs/LUA/` |
 | **Regresja** | `python software/test_lua_release.py` |
@@ -37,25 +37,31 @@ karmazyn> :tool whoami
 | Gość | eval / `require` / `load` — bez `dofile` |
 | `karmazyn.*` | host API (`software/karmazyn_host.py`, `karmazyn._VERSION`) |
 
-## Known limits (0.9)
+## Known limits (0.9.x)
 
 1. Podzbiór Lua 5.5 — nie pełne PUC-Rio.
 2. Brak ambient FS / `os.execute` (cel sandboxa).
 3. `generate_from_idea` — wektor placeholder (nie pełny PCA).
 4. Agenci / hologramy — rejestr sesji hosta, nie pełny runtime paperów HSS.
-5. **`top`**, **`nano`** — **DEPRECATED w automatyzacji** (pętla / edytor interaktywny); ręcznie OK.
-6. API hosta może dostać pola przed 1.0; surface oznaczony `karmazyn._VERSION`.
+5. **`top`**, **`nano`** — **DEPRECATED w automatyzacji**; ręcznie OK.
+6. **`karmazyn._VERSION` = 0.9.0** — surface z gościem; zamrożenie przy **1.0**.
 
-## Do 1.0 (po 0.9)
+## 0.9.1 (hotfixes po recenzji)
+
+- reach: `register_env_of` / `register_extra_reach` (`name=guest`)
+- portable discovery jądra (`_paths.py`)
+- host `_VERSION` = `0.9.0` (nie 1.0.0 przed zamrożeniem)
+
+## Do 1.0
 
 - stabilny kontrakt `karmazyn.*` bez breaking bez major
-- opcjonalnie kontrolowany tryb testowy nano/top albo usunięcie z domyślnej listy
+- opcjonalnie kontrolowany tryb testowy nano/top
 
 ## Testy
 
 | Komenda | Co |
 |---------|-----|
-| `software/test_lua_release.py` | bramka 0.9 (unit + host + kombajn + matrix) |
+| `software/test_lua_release.py` | bramka 0.9.x (unit + host + kombajn + matrix) |
 | `software/lua_bin_matrix.py` | macierz 28 narzędzi |
 | `LUA/_run_tests.py` | unit |
 | `LUA/kombajn_run.py` | kombajn |

@@ -3,8 +3,8 @@
 | Component | Version |
 |-----------|---------|
 | Kernel | **1.1.0** |
-| Lua guest | **`karmazyn_lua 0.9.0`** |
-| Host API | **`karmazyn._VERSION` 1.0.0** |
+| Lua guest | **`karmazyn_lua 0.9.1`** |
+| Host API | **`karmazyn._VERSION` 0.9.0** |
 
 PL start: **[START.PL.MD](START.PL.MD)** · tools: **[tools_lua.md](tools_lua.md)** · matrix: **[lua_bin_status.md](lua_bin_status.md)**
 
@@ -13,7 +13,7 @@ git clone https://github.com/Maciej-EriAmo/KarmazynOs
 cd KarmazynOs
 python karmazyn_boot.py
 python karmazyn_boot.py --project LUA/examples/hello
-python software/test_lua_release.py   # RELEASE GATE OK  0.9.0
+python software/test_lua_release.py   # RELEASE GATE OK  0.9.1
 ```
 
 ```text
