@@ -245,6 +245,8 @@ Wersje: [../VERSION.txt](../VERSION.txt).
 
 **Release:** **1.0.0** · tag `lua-v1.0.0` · [../LUA/README.md](../LUA/README.md) · [tools_lua.md](tools_lua.md) · [lua_bin_status.md](lua_bin_status.md).
 
+**Bliżej PUC-Rio (bez zmiany fizyki):** [lua_puc_gap_plan.md](lua_puc_gap_plan.md) · [lua_arch_for_programmers.md](lua_arch_for_programmers.md).
+
 ---
 
 ## 8. Native Rust — status
