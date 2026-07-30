@@ -72,8 +72,8 @@ def main() -> int:
         print(f"[FAIL] version: {e}")
         return 1
     print(f"  version = {ver}")
-    if not str(ver).startswith("0.8"):
-        print(f"[FAIL] oczekiwano wersji 0.8.x-alpha, jest {ver!r}")
+    if not str(ver).startswith("0.9"):
+        print(f"[FAIL] oczekiwano wersji 0.9.x, jest {ver!r}")
         return 1
     print("[ OK ] version")
 

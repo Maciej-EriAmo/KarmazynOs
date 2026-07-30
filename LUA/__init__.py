@@ -1,10 +1,10 @@
 """karmazyn_lua — interpreter Lua 5.5 (podzbiór) na substracie KarmazynOS.
 
-Wersja: 0.8.0-alpha — gość + host projektu + karmazyn.* (sandbox = bąbel).
+Wersja: 0.9.0 — gość + host projektu + karmazyn.* + macierz lua_bin (26/28).
 """
 
-__version__ = "0.8.0-alpha"
-__version_info__ = (0, 8, 0, "alpha")
+__version__ = "0.9.0"
+__version_info__ = (0, 9, 0)
 
 from .lib import mount, LuaLib, install_env_of, resolve_caps, install_tools
 from .values import lua_env_of, compose_phi

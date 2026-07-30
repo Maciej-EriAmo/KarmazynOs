@@ -69,8 +69,8 @@ TOOL_SPEC = {
     "idea": ("pass", lambda s, h: (h.create_hologram("h1", "tema"), ["h1", "prompt"])[-1], "vector from hologram"),
     "kedit": ("pass", lambda s, h: (s.create_atom("m_ke", "S", "old", 0.8) or True) and ["m_ke", "4"], "exit only path"),
     # skip
-    "top": ("skip", None, "infinite loop + sleep — not for automated smoke"),
-    "nano": ("skip", None, "interactive line editor — manual only in alpha"),
+    "top": ("skip", None, "DEPRECATED in automation — infinite loop; manual only"),
+    "nano": ("skip", None, "DEPRECATED in automation — interactive editor; manual only"),
 }
 
 

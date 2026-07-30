@@ -4,14 +4,13 @@ Zsynchronizowane: 2026-07-29
 Wersja jadra (karmazyn_kernel.__version__): 1.1.0  (FIX v1.1 + v1.2 + S15 dual-emit/snapshot)
 Boot: karmazyn_boot v0.5+ (gość Lua; :project / :run / :reload / :check / :tool; --project)
 Native substrate (Rust): 0.1.0-karmazyn-substrate (faza 0/1)
-Lua guest: karmazyn_lua **0.8.0-alpha** (LUA/__version__)
+Lua guest: karmazyn_lua **0.9.0** (LUA/__version__; tag lua-v0.9.0)
   - project host (searchers preload|memory|project), CLI run_lua.py
-  - Host API: software/karmazyn_host.py → karmazyn.*; :tool <lua_bin>
-  - Smoke: software/test_host_tools.py (12) + lua_bin_matrix (26 pass / 2 skip)
-  - Release gate: software/test_lua_release.py (unit+host+kombajn+matrix)
-  - Matrix doc: Documents/lua_bin_status.md
-  - Known limits: LUA/README.md
-  - Canonical tree: monorepo LUA/ (not sibling-only)
+  - Host API 1.0.0: software/karmazyn_host.py → karmazyn.*; :tool <lua_bin>
+  - Smoke: test_host_tools (12) + lua_bin_matrix (26 pass / 2 skip: top, nano)
+  - Release gate: software/test_lua_release.py
+  - Docs: LUA/README.md, Documents/lua_bin_status.md, tools_lua.md, START*.md
+  - Canonical tree: monorepo LUA/
 
 Jadro (kernel/) - ZRODLO PRAWDY (Python, domyslne w boot):
   karmazyn_atom.py

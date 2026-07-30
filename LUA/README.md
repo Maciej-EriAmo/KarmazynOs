@@ -1,104 +1,63 @@
-# karmazyn_lua **0.8.0-alpha**
+# karmazyn_lua **0.9.0**
 
-Interpreter Lua **5.5 (podzbiór)** na substracie KarmazynOS.
+Interpreter Lua **5.5 (podzbiór)** na substracie KarmazynOS — **domyślny gość skryptowy**.
 
 | | |
 |--|--|
-| **Status** | **alpha** — używalny w bootcie i CLI; API hosta może się jeszcze rozszerzać |
-| **Sandbox** | **bąbel** — brak ambient FS (`dofile` / system `package.path` / `os.execute`) |
-| **Źródło kanoniczne** | `KarmazynOs/LUA/` (monorepo) |
+| **Status** | **0.9.0** — używalny na co dzień w bootcie, projektach i `:tool` |
+| **Sandbox** | **bąbel** — brak ambient FS |
+| **Źródło kanoniczne** | `KarmazynOs/LUA/` |
 | **Regresja** | `python software/test_lua_release.py` |
+| **Macierz tools** | 26 pass / 2 skip (`top`, `nano`) — [lua_bin_status.md](../Documents/lua_bin_status.md) |
 
 ## Szybki start
 
 ```bash
-# z monorepo KarmazynOs
+# monorepo KarmazynOs
 python karmazyn_boot.py
 python karmazyn_boot.py --project LUA/examples/hello
-python karmazyn_boot.py --demo
+python software/test_lua_release.py
 
-# CLI pakietu (bez pełnego OS)
 cd LUA
 python run_lua.py run examples/hello
-python run_lua.py check examples/hello
-python run_lua.py repl examples/hello
-
-# bramka alpha
-cd ..
-python software/test_lua_release.py
 ```
-
-W prompcie:
 
 ```text
-karmazyn> x = 10
-karmazyn> return x * 2
+karmazyn> return _VERSION          -- etykieta zgodności Lua 5.5
 karmazyn> :tool ls
-karmazyn> :project
-karmazyn> :help
+karmazyn> :tool whoami
 ```
 
-## Architektura host → bąbel
+## Architektura
 
 | Warstwa | Rola |
 |---------|------|
-| Host (CLI / boot / `EditorBridge`) | FS, projekt, `lua_bin` |
-| `package.searchers[1]` preload | tools / lua_bin |
-| `package.searchers[2]` memory | bufory edytora |
-| `package.searchers[3]` project | pliki pod rootem |
-| Gość Lua | `require` / `load` / eval |
+| Host | CLI / boot / `EditorBridge` — FS, projekt, `lua_bin` |
+| searchers | preload → memory → project |
+| Gość | eval / `require` / `load` — bez `dofile` |
+| `karmazyn.*` | host API (`software/karmazyn_host.py`, `karmazyn._VERSION`) |
 
-## API publiczne (Python)
+## Known limits (0.9)
 
-```python
-from karmazyn_lua import __version__, mount, mount_session, GuestSession
-print(__version__)  # 0.8.0-alpha
-```
+1. Podzbiór Lua 5.5 — nie pełne PUC-Rio.
+2. Brak ambient FS / `os.execute` (cel sandboxa).
+3. `generate_from_idea` — wektor placeholder (nie pełny PCA).
+4. Agenci / hologramy — rejestr sesji hosta, nie pełny runtime paperów HSS.
+5. **`top`**, **`nano`** — **DEPRECATED w automatyzacji** (pętla / edytor interaktywny); ręcznie OK.
+6. API hosta może dostać pola przed 1.0; surface oznaczony `karmazyn._VERSION`.
 
-## Known limits (alpha)
+## Do 1.0 (po 0.9)
 
-1. **Nie jest** pełną Lua 5.5 / PUC-Rio — podzbiór celowy.
-2. **Brak** `dofile` / `loadfile` / ambient `io.open` / `os.execute` (sandbox).
-3. **`generate_from_idea`** — wektor placeholder, nie pełny PCA hologramów.
-4. **Agenci / hologramy** — rejestr sesji hosta, nie pełny runtime agentowy z paperów.
-5. **`lua_bin`:** **26/28 pass** smoke; **skip:** `top` (pętla), `nano` (edytor interaktywny) — macierz: [../Documents/lua_bin_status.md](../Documents/lua_bin_status.md).
-6. **Linie w błędach** — mocne na parse; runtime zależy od ścieżki `error()`.
-7. **API `karmazyn.*`** — surface `1.0.0-alpha` (`karmazyn._VERSION`), breaking OK do 0.9.
-8. **Dryf sibling `C:\Users\…\LUA`** — kanon to monorepo; sibling tylko cache dev.
-
-## Do 0.9
-
-- [x] smoke / status matrix `lua_bin` (26 pass / 2 skip)
-- [x] `karmazyn._VERSION` + gate `test_lua_release.py`
-- [ ] opcjonalnie: `nano`/`top` w kontrolowanym trybie testowym lub DEPRECATED w man
-
-## Host API i narzędzia
-
-Boot instaluje global `karmazyn` (`software/karmazyn_host.py`).
-
-```text
-karmazyn> :tool ls
-```
-
-Szczegóły: [../Documents/tools_lua.md](../Documents/tools_lua.md).
-
-## Flagi CLI
-
-| Flaga | Znaczenie |
-|-------|-----------|
-| `--project` / `-p` | root projektu |
-| `--tools` | katalog preload |
-| `--lua-bin` | tools + module root |
-| `--strict-project` / `--no-strict-project` | run tylko pod rootem |
-| `--caps` | `default` \| `strict` \| `compute` \| `full` |
+- stabilny kontrakt `karmazyn.*` bez breaking bez major
+- opcjonalnie kontrolowany tryb testowy nano/top albo usunięcie z domyślnej listy
 
 ## Testy
 
 | Komenda | Co |
 |---------|-----|
-| `LUA/_run_tests.py` | unit (~151) |
-| `LUA/kombajn_run.py` | kombajn integracyjny |
-| `software/test_host_tools.py` | host + tools smoke (12) |
-| `software/test_lua_release.py` | **bramka alpha** (wszystko razem) |
+| `software/test_lua_release.py` | bramka 0.9 (unit + host + kombajn + matrix) |
+| `software/lua_bin_matrix.py` | macierz 28 narzędzi |
+| `LUA/_run_tests.py` | unit |
+| `LUA/kombajn_run.py` | kombajn |
 
-Zasada Karmazynu: **bezpieczeństwo na granicy bąbla**, nie w magii ścieżek OS.
+Dokumentacja: [tools_lua.md](../Documents/tools_lua.md) · [START.PL.MD](../Documents/START.PL.MD)

@@ -3,7 +3,7 @@
 Sandbox = bąbel: gość woła tylko jawnie wstrzyknięte funkcje.
 Host ma Store + (opcjonalnie) kolejkę io_input / stdin.
 
-Surface v1 (karmazyn_lua 0.8.0-alpha): lua_bin tools + session agents/holograms.
+Surface v1 (karmazyn_lua 0.9.0): lua_bin tools + session agents/holograms.
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ import os
 import time
 
 # wersja surface hosta (nie mylić z jądrem / z __version__ pakietu Lua)
-HOST_API_VERSION = "1.0.0-alpha"
+HOST_API_VERSION = "1.0.0"
 
 
 # typowe T dla warstw FSM (wystarczająco w progu state_for_T)

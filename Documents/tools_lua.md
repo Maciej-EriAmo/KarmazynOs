@@ -1,5 +1,7 @@
 # Jak pisać narzędzie Lua na KarmazynOS
 
+**karmazyn_lua 0.9.0** · host API `karmazyn._VERSION` = **1.0.0**
+
 **Sandbox = bąbel.** Skrypt nie widzi dysku hosta. Widzi **global `karmazyn`**
 wstrzyknięty przez hosta przy starcie bootu.
 
@@ -81,11 +83,11 @@ python test_host_tools.py -v
 
 ## Status
 
-**Macierz live:** [lua_bin_status.md](lua_bin_status.md) · generator: `python software/lua_bin_matrix.py`
+**Macierz live:** [lua_bin_status.md](lua_bin_status.md) · `python software/lua_bin_matrix.py`
 
 | Wynik | Narzędzia |
 |-------|-----------|
 | **pass (26)** | ls, cat, touch, rm, cp, mv, df, free, du, find, grep, stat, step, whoami, uptime, clear, man, ps, kill, lsh, lsb, idea, kedit, consolidate, ping, recall |
-| **skip (2)** | `top` (nieskończona pętla), `nano` (edytor interaktywny) |
+| **skip / DEPRECATED w automatyce (2)** | `top`, `nano` — tylko ręcznie (`:tool top` w pętli; `nano` edytor) |
 
 `generate_from_idea` = wektor placeholder (nie pełny PCA).

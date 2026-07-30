@@ -1,29 +1,42 @@
+-- man.lua — opis narzędzi lua_bin (karmazyn_lua 0.9)
 local tools = {
-    ls = "Listuje atomy i bąble w systemie.",
-    cat = "Wyświetla pełną treść atomu.",
+    ls = "Listuje atomy w Φ.",
+    cat = "Wyświetla treść atomu.",
     touch = "Tworzy nowy atom.",
-    rm = "Usuwa atom (przenosi do TOMB).",
-    cp = "Kopiuje atom.",
-    mv = "Przenosi atom między warstwami.",
-    df = "Wyświetla statystyki termodynamiczne.",
-    free = "Wyświetla zasoby i żywicę.",
-    ps = "Listuje aktywnych agentów.",
-    uptime = "Czas życia systemu w epokach.",
+    rm = "Usuwa atom.",
+    cp = "Kopiuje atom (clone).",
+    mv = "Przenosi atom między warstwami HOT/WARM/COLD.",
+    df = "Statystyki termodynamiczne warstw.",
+    free = "Zasoby store.stats.",
+    du = "Użycie emanacji (długości E).",
+    find = "Filtr warstwy / temperatury.",
+    grep = "Szuka wzorca w S/E atomów.",
+    stat = "Metadane atomu.",
+    ps = "Listuje agentów sesji.",
+    kill = "Usuwa agenta po PID.",
+    uptime = "Epoki sesji (step).",
     whoami = "Informacje o węźle.",
-    nano = "Edytor linii emanacji atomu.",
-    kedit = "Menu zarządzania atomem.",
-    recall = "Wyszukiwanie semantyczne.",
-    step = "Wykonuje kroki termodynamiczne.",
-    consolidate = "Stabilizuje atom do bąbla.",
-    clear = "Czyści ekran."
+    step = "Kroki termodynamiczne (settle).",
+    consolidate = "Konsoliduje atom do bąbla-korzenia.",
+    lsb = "Listuje bąble z etykietą.",
+    lsh = "Listuje hologramy (idee) sesji.",
+    idea = "Generuje wektor z hologramu (placeholder).",
+    recall = "Wyszukiwanie asocjacyjne (resonance).",
+    ping = "Podobieństwo semantyczne dwóch atomów.",
+    kedit = "Menu edycji atomu.",
+    clear = "Czyści ekran terminala.",
+    man = "Ten opis.",
+    -- deprecated w automatyzacji 0.9
+    nano = "[DEPRECATED w smoke] Edytor linii — tylko ręcznie.",
+    top = "[DEPRECATED w smoke] Podgląd w pętli — tylko ręcznie (Ctrl+C).",
 }
 
-local tool = karmazyn.read_line("Podaj nazwę narzędzia dla instrukcji (lub zostaw puste dla listy): ")
+local tool = karmazyn.read_line("Podaj nazwę narzędzia (puste = lista): ")
 if tool == "" then
     local list = {}
     for k, _ in pairs(tools) do table.insert(list, k) end
     table.sort(list)
-    print(karmazyn.ui.draw_frame("DOSTĘPNE NARZĘDZIA LUA", list, "phi_signal"))
+    print(karmazyn.ui.draw_frame("DOSTĘPNE NARZĘDZIA LUA (0.9)", list, "phi_signal"))
 else
     local desc = tools[tool]
     if desc then
