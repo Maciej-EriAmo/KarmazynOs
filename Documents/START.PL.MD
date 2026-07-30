@@ -1,16 +1,15 @@
 # KarmazynOS — Szybki Start
 
-**Czas czytania: ~5 minut**  
-**Potrzebujesz: Python 3.10+** (opcjonalnie `numpy` dla HRR)
+**Czas czytania: ~5 minut** · Python 3.10+ (opcjonalnie `numpy`)
 
 | Składnik | Wersja |
 |----------|--------|
-| Jądro | `karmazyn_kernel` **1.1.0** |
-| Gość Lua | **`karmazyn_lua 0.9.1`** |
-| Boot | `karmazyn_boot` v0.5+ |
-| Host API | `karmazyn._VERSION` **0.9.0** |
+| Jądro | **1.1.0** |
+| Gość Lua | **`karmazyn_lua 1.0.0`** (stable) |
+| Host API | **`karmazyn._VERSION` 1.0.0** |
+| Boot | v0.5+ |
 
-Pełny runtime: **[runtime_pl.md](runtime_pl.md)** · narzędzia: **[tools_lua.md](tools_lua.md)** · macierz: **[lua_bin_status.md](lua_bin_status.md)** · pakiet: **[../LUA/README.md](../LUA/README.md)**
+[runtime_pl.md](runtime_pl.md) · [tools_lua.md](tools_lua.md) · [lua_bin_status.md](lua_bin_status.md) · [LUA/README.md](../LUA/README.md)
 
 ---
 
@@ -19,41 +18,31 @@ Pełny runtime: **[runtime_pl.md](runtime_pl.md)** · narzędzia: **[tools_lua.m
 ```bash
 git clone https://github.com/Maciej-EriAmo/KarmazynOs
 cd KarmazynOs
-pip install numpy          # opcjonalne
+pip install numpy   # opcjonalne
 ```
 
-**Źródło Lua:** monorepo `LUA/` (kanon).
+Kanon Lua: monorepo **`LUA/`**.
 
 ---
 
-## 1. Start systemu
+## Start
 
 ```bash
 python karmazyn_boot.py
+python karmazyn_boot.py --demo
+python karmazyn_boot.py --project LUA/examples/hello
 ```
 
 ```text
 karmazyn> x = 10
 karmazyn> return x * 2
-20
 karmazyn> :tool ls
-karmazyn> :help
+karmazyn> return karmazyn._VERSION
 ```
 
-```bash
-python karmazyn_boot.py --demo
-python karmazyn_boot.py --project LUA/examples/hello
-python karmazyn_boot.py --lisp          # mini-Lisp
-```
-
----
-
-## 2. Projekt wieloplikowy
+CLI bez pełnego OS:
 
 ```bash
-python karmazyn_boot.py --project LUA/examples/hello
-# :check | :run | require "lib.greeter"
-
 cd LUA
 python run_lua.py run examples/hello
 ```
@@ -62,26 +51,22 @@ python run_lua.py run examples/hello
 
 ---
 
-## 3. Narzędzia (`lua_bin`)
+## Narzędzia
 
 ```text
 karmazyn> :tool
 karmazyn> :tool whoami
-karmazyn> :tool step
-karmazyn> :tool kedit
 ```
 
-**26/28** w smoke; **skip / deprecated w automatyzacji:** `top`, `nano` (tylko ręcznie).
+26/28 w smoke; `top` / `nano` tylko ręcznie.
 
 ---
 
-## 4. Bramka 0.9
+## Bramka 1.0
 
 ```bash
 python software/test_lua_release.py
-# RELEASE GATE OK  karmazyn_lua 0.9.1
-
-python software/lua_bin_matrix.py
+# RELEASE GATE OK  karmazyn_lua 1.0.0
 ```
 
 ---
@@ -90,8 +75,8 @@ python software/lua_bin_matrix.py
 
 | | |
 |--|--|
-| **0.9.1** | domyślny gość + tools + fix reach/path po recenzji |
-| **1.0** | stabilny kontrakt hosta bez breaking bez major |
+| **1.0.0** | stabilny gość + host API 1.x + tools |
+| **2.0** | ewentualne breaking w kontraktach |
 | **Nie jest** | pełna Lua 5.5 / ambient Uniks |
 
 Archiwum ksh → `archiwum/`.

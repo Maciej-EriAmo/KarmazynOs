@@ -1,19 +1,33 @@
-# karmazyn_lua **0.9.1**
+# karmazyn_lua **1.0.0**
 
-Interpreter Lua **5.5 (podzbiór)** na substracie KarmazynOS — **domyślny gość skryptowy**.
+Interpreter Lua **5.5 (podzbiór)** na substracie KarmazynOS — **stabilny domyślny gość skryptowy**.
 
 | | |
 |--|--|
-| **Status** | **0.9.1** — używalny na co dzień w bootcie, projektach i `:tool` |
+| **Status** | **1.0.0** (stable) |
 | **Sandbox** | **bąbel** — brak ambient FS |
-| **Źródło kanoniczne** | `KarmazynOs/LUA/` |
+| **Host API** | `karmazyn._VERSION` **1.0.0** (frozen na 1.x) |
+| **Źródło** | monorepo `KarmazynOs/LUA/` |
 | **Regresja** | `python software/test_lua_release.py` |
-| **Macierz tools** | 26 pass / 2 skip (`top`, `nano`) — [lua_bin_status.md](../Documents/lua_bin_status.md) |
+| **Tools** | 26 pass / 2 skip (`top`, `nano` — ręcznie) |
+
+## Co znaczy 1.0
+
+**Stabilne w 1.x (breaking → 2.0):**
+
+- montaż gościa: `mount` / `mount_session` / boot `mount_evaluator`
+- sandbox: brak `dofile` / ambient FS / `os.execute`
+- projekt: searchers preload → memory → project; `strict-project`
+- host: global `karmazyn.*` (atomy, step, recall, ui, agents/holograms sesji)
+- CLI: `run_lua.py` / `python -m karmazyn_lua`
+- bramka: unit + host smoke + kombajn + lua_bin matrix
+
+**Celowo poza 1.0:** pełna Lua 5.5 PUC-Rio, ambient Uniks, pełny PCA hologramów.
 
 ## Szybki start
 
 ```bash
-# monorepo KarmazynOs
+cd KarmazynOs
 python karmazyn_boot.py
 python karmazyn_boot.py --project LUA/examples/hello
 python software/test_lua_release.py
@@ -23,47 +37,35 @@ python run_lua.py run examples/hello
 ```
 
 ```text
-karmazyn> return _VERSION          -- etykieta zgodności Lua 5.5
 karmazyn> :tool ls
-karmazyn> :tool whoami
+karmazyn> return karmazyn._VERSION
 ```
 
 ## Architektura
 
 | Warstwa | Rola |
 |---------|------|
-| Host | CLI / boot / `EditorBridge` — FS, projekt, `lua_bin` |
-| searchers | preload → memory → project |
-| Gość | eval / `require` / `load` — bez `dofile` |
-| `karmazyn.*` | host API (`software/karmazyn_host.py`, `karmazyn._VERSION`) |
+| Host | boot / CLI / `EditorBridge` — FS, projekt, lua_bin |
+| searchers | [1] preload · [2] memory · [3] project |
+| Gość | eval / require / load |
+| reach-GC | `register_env_of` / `register_extra_reach` (`name=guest`) |
 
-## Known limits (0.9.x)
+## Known limits
 
-1. Podzbiór Lua 5.5 — nie pełne PUC-Rio.
-2. Brak ambient FS / `os.execute` (cel sandboxa).
-3. `generate_from_idea` — wektor placeholder (nie pełny PCA).
-4. Agenci / hologramy — rejestr sesji hosta, nie pełny runtime paperów HSS.
-5. **`top`**, **`nano`** — **DEPRECATED w automatyzacji**; ręcznie OK.
-6. **`karmazyn._VERSION` = 0.9.0** — surface z gościem; zamrożenie przy **1.0**.
-
-## 0.9.1 (hotfixes po recenzji)
-
-- reach: `register_env_of` / `register_extra_reach` (`name=guest`)
-- portable discovery jądra (`_paths.py`)
-- host `_VERSION` = `0.9.0` (nie 1.0.0 przed zamrożeniem)
-
-## Do 1.0
-
-- stabilny kontrakt `karmazyn.*` bez breaking bez major
-- opcjonalnie kontrolowany tryb testowy nano/top
+1. Podzbiór Lua 5.5.
+2. Brak ambient FS (cel).
+3. `generate_from_idea` — placeholder wektor.
+4. Agenci/hologramy — rejestr sesji hosta.
+5. `top` / `nano` — nie w automatyce (pętla / edytor).
+6. Linie runtime nie zawsze w każdym `error()` (parse mocny).
 
 ## Testy
 
 | Komenda | Co |
 |---------|-----|
-| `software/test_lua_release.py` | bramka 0.9.x (unit + host + kombajn + matrix) |
+| `software/test_lua_release.py` | bramka 1.0 |
 | `software/lua_bin_matrix.py` | macierz 28 narzędzi |
 | `LUA/_run_tests.py` | unit |
 | `LUA/kombajn_run.py` | kombajn |
 
-Dokumentacja: [tools_lua.md](../Documents/tools_lua.md) · [START.PL.MD](../Documents/START.PL.MD)
+Changelog: [CHANGELOG.md](CHANGELOG.md) · tools: [../Documents/tools_lua.md](../Documents/tools_lua.md)

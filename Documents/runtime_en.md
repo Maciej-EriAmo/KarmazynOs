@@ -3,7 +3,7 @@
 **Kernel:** `karmazyn_kernel` v1.1.0  
 **Boot:** `karmazyn_boot` v0.5  
 **Native substrate (Rust):** phase 0/1 — reach-GC law + C ABI  
-**Lua guest:** `karmazyn_lua` **0.9.1** (project host, `karmazyn.*`, lua_bin matrix 26/28)
+**Lua guest:** `karmazyn_lua` **1.0.0** stable (project host, `karmazyn.*` 1.0.0, matrix 26/28)
 
 This document describes the **current** monorepo runtime (not archived `shell.py` / `studio.py` under `archiwum/`).  
 Full Polish guide: **[runtime_pl.md](runtime_pl.md)**.

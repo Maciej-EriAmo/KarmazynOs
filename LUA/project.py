@@ -267,11 +267,15 @@ def clear_memory_module(ev, name=None):
             mods.pop(name, None)
 
 
-def attach_lua_bin(ev, lua_bin_dir, as_tools=True, as_module_root=True):
-    """Zamontuj katalog lua_bin: tools (preload) + opcjonalnie extra module root.
+def attach_lua_bin(ev, lua_bin_dir, as_tools=True, as_module_root=None):
+    """Zamontuj katalog lua_bin: tools (preload) + opcjonalnie module root.
 
-    Skrypty z api hosta (karmazyn.*) mogą nie działać bez bindings — to OK;
-    ładują się jako źródła require/preload.
+    as_module_root:
+      None  — True tylko gdy ev.project już istnieje (nie nadpisuj :project)
+      True  — dodaj do module_roots projektu; bez projektu tylko preload
+      False — wyłącznie package.preload (tools)
+
+    Nie tworzy mini-ProjectSpec z root=lua_bin (to myliło :project / :run).
     """
     from .lib import install_tools
 
@@ -280,16 +284,15 @@ def attach_lua_bin(ev, lua_bin_dir, as_tools=True, as_module_root=True):
     path = os.path.abspath(lua_bin_dir)
     if as_tools:
         install_tools(ev, path)
+    if as_module_root is None:
+        as_module_root = getattr(ev, "project", None) is not None
     if as_module_root:
         spec = getattr(ev, "project", None)
         if spec is not None:
-            # rozszerz module_roots na żywo
             if path not in spec.module_roots:
                 spec.module_roots.append(path)
                 spec.module_roots_real.append(_norm_real(path))
             install_project_searcher(ev, spec)
-        else:
-            # mini-projekt „wirtualny”: root = lua_bin
-            mini = ProjectSpec.from_root(path, strict=False)
-            install_project_searcher(ev, mini)
+        # bez projektu: tylko preload — ev.project zostaje None
+    ev._lua_bin = path
     return ev

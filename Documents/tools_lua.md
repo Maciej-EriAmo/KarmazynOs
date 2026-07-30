@@ -1,6 +1,6 @@
 # Jak pisać narzędzie Lua na KarmazynOS
 
-**karmazyn_lua 0.9.1** · host API `karmazyn._VERSION` = **0.9.0** (surface gościa; zamrożenie przy 1.0)
+**karmazyn_lua 1.0.0** · host API `karmazyn._VERSION` = **1.0.0** (frozen on 1.x)
 
 **Sandbox = bąbel.** Skrypt nie widzi dysku hosta. Widzi **global `karmazyn`**
 wstrzyknięty przez hosta przy starcie bootu.
