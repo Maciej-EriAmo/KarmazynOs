@@ -80,6 +80,17 @@ python run_lua.py check examples/hello
 
 **Sandbox = bąbel:** gość nie ma dostępu do dysku; host montuje katalog projektu.
 
+### Narzędzia OS (`lua_bin` + `karmazyn.*`)
+
+```text
+karmazyn> :tool           # lista
+karmazyn> :tool ls
+karmazyn> :tool whoami
+karmazyn> :tool step      # pyta o liczbę ticków
+```
+
+API hosta i jak pisać tool: [tools_lua.md](tools_lua.md).
+
 ---
 
 ## Testy (opcjonalnie)
@@ -88,6 +99,7 @@ python run_lua.py check examples/hello
 python -m unittest test_substrate -q
 python test_substrate_compat.py -v    # Python ↔ Rust (po cargo build --release)
 cd LUA && python _run_tests.py        # gość Lua (~151)
+cd software && python test_host_tools.py -v   # karmazyn.* + lua_bin smoke
 ```
 
 ---

@@ -237,9 +237,10 @@ Wersje: [../VERSION.txt](../VERSION.txt).
 | `strict-project` (run tylko pod rootem) | ✅ |
 | Błędy `@plik:linia:kolumna:` (parse) | ✅ |
 | Pełne `dofile` / ambient FS | ❌ celowo (sandbox = bąbel) |
-| Pełne host API `karmazyn.*` w `lua_bin` | ⏳ kolejna faza |
+| Host API `karmazyn.*` + `:tool` + smoke `lua_bin` | ✅ (`software/karmazyn_host.py`) |
+| Numery linii w błędach parse + runtime (chunk) | ✅ |
 
-Szczegóły pakietu: [../LUA/README.md](../LUA/README.md).
+Szczegóły pakietu: [../LUA/README.md](../LUA/README.md) · narzędzia: [tools_lua.md](tools_lua.md).
 
 ---
 

@@ -123,11 +123,18 @@ class LuaLib:
 
 def _libs_for_caps(allowed):
     """allowed: zbiór krótkich nazw → lista zaimportowanych modułów."""
+    import importlib
+    import os
+    import sys
+    # katalog z plikami karmazyn_lua_math.py itd. = katalog lib.py
+    here = os.path.dirname(os.path.abspath(__file__))
+    if here and here not in sys.path:
+        sys.path.insert(0, here)
     mods = []
     for short in allowed:
         modname = _LIB_ALIAS.get(short, short)
         try:
-            mods.append(__import__(modname))
+            mods.append(importlib.import_module(modname))
         except ImportError:
             pass
     return mods

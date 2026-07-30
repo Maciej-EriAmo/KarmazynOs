@@ -65,10 +65,21 @@ kind, text = sess.run()
 | `editor_bridge.py` | most edytora |
 | `karmazyn_lua_*.py` | biblioteki std (bloki) |
 
+## Host API i narzędzia
+
+Przy boocie OS instalowany jest global `karmazyn` (`software/karmazyn_host.py`).
+Skrypty w monorepo `lua_bin/` uruchamiasz:
+
+```text
+karmazyn> :tool ls
+```
+
+Zob. [../Documents/tools_lua.md](../Documents/tools_lua.md).
+
 ## Status
 
 - Język + metatabele + liby + GC: **v1**
 - Multi-file / CLI / boot / memory / strict-project: **v1**
-- Pełne host bindings `karmazyn.*` dla `lua_bin`: **kolejna faza**
+- Host bindings `karmazyn.*` + smoke narzędzi: **v1** (agenci/hologramy = stub)
 
 Zasada Karmazynu: **bezpieczeństwo na granicy bąbla**, nie w magii ścieżek OS.

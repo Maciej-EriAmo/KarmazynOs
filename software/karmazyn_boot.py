@@ -153,6 +153,9 @@ def _ensure_karmazyn_lua():
         # klasyczny import (site-packages / PYTHONPATH)
         import karmazyn_lua  # noqa: F401
         return sys.modules["karmazyn_lua"]
+    # katalog pakietu na sys.path — bloki lib (karmazyn_lua_math, …) importują się po nazwie
+    if root not in sys.path:
+        sys.path.insert(0, root)
     pkg = types.ModuleType("karmazyn_lua")
     pkg.__path__ = [root]
     pkg.__file__ = os.path.join(root, "__init__.py")
@@ -288,6 +291,13 @@ def mount_evaluator(store, kind=None, project=None, tools=None, caps=None,
                 attach_lua_bin(ev, lua_bin)
             except Exception:
                 pass
+        # host API: global `karmazyn` (bindings Store → Lua)
+        try:
+            from karmazyn_host import install_karmazyn_host
+            install_karmazyn_host(ev, store=store)
+            ev._lua_bin = lua_bin
+        except Exception as hex_:
+            ev._host_install_error = hex_
         _GUEST_KIND = "lua"
         return ev
     except Exception as e:
@@ -351,9 +361,10 @@ class KarmazynShell:
             kod
             + "OS : :info | :stats | :tick [n>=1] | :gc | :ls [stan] | :env | :tools\n"
             "     :project [path] | :run [file] | :reload [mod] | :check\n"
+            "     :tool <name>   — skrypt z lua_bin/<name>.lua (host API karmazyn.*)\n"
             "     :guest [lua|exec] | :find <q> | :new <S> <E> | :exit\n"
             "     :gc studzi WSZYSTKO: sieroty gina, korzenie jako retained-TOMB (:ls tomb)\n"
-            "     projekt = mapa host→bąbel (require z plików); gość bez ambient FS"
+            "     projekt = mapa host→bąbel; sandbox=bąbel; host montuje karmazyn.*"
         )
 
     def _m_guest(self, a):
@@ -500,6 +511,38 @@ class KarmazynShell:
         if not errs:
             return "check: OK"
         return "check FAIL:\n" + "\n".join(errs)
+
+    def _m_tool(self, a):
+        """Uruchom skrypt narzędzia z lua_bin (host API karmazyn.*)."""
+        if _GUEST_KIND != "lua":
+            return "gosc exec: :tool tylko dla Lua"
+        if not a:
+            # lista narzędzi
+            root = getattr(self.ev, "_lua_bin", None) or _lua_bin_dir()
+            if not root or not os.path.isdir(root):
+                return "uzycie: :tool <name>  (brak lua_bin)"
+            names = sorted(
+                fn[:-4] for fn in os.listdir(root)
+                if fn.endswith(".lua") and not fn.startswith(".")
+            )
+            if not names:
+                return f"(pusto w {root})"
+            return "lua_bin:\n  " + "\n  ".join(names) + "\n  uzycie: :tool ls"
+        name = a[0]
+        try:
+            from karmazyn_host import run_lua_tool
+            ret = run_lua_tool(
+                self.ev, name,
+                lua_bin=getattr(self.ev, "_lua_bin", None) or _lua_bin_dir(),
+            )
+            return self.ev.format_run_result(ret=ret)
+        except FileNotFoundError as e:
+            return str(e)
+        except Exception as e:
+            from karmazyn_lua.values import LuaError
+            if isinstance(e, LuaError):
+                return self.ev.format_run_result(err=e)
+            return f"blad :tool: {type(e).__name__}: {e}"
 
     def _m_info(self, a):
         i = kernel_info()
@@ -700,6 +743,13 @@ def boot(verbose_events=False, log=None, project=None):
             log.ok("projekt Lua", spec.root)
         elif project:
             log.warn("projekt Lua", f"ustawiono {project}, ale searcher nieaktywny")
+        if getattr(evaluator, "host", None) is not None:
+            log.ok("host API", "global karmazyn.* (Store bindings)")
+        elif getattr(evaluator, "_host_install_error", None):
+            log.warn("host API", str(evaluator._host_install_error))
+        lb = getattr(evaluator, "_lua_bin", None)
+        if lb:
+            log.ok("lua_bin", lb)
 
     # 4. shell
     t = time.perf_counter()

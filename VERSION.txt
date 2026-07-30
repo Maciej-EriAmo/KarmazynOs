@@ -5,6 +5,8 @@ Wersja jadra (karmazyn_kernel.__version__): 1.1.0  (FIX v1.1 + v1.2 + S15 dual-e
 Boot: karmazyn_boot v0.5+ (gość Lua; :project / :run / :reload / :check; --project)
 Native substrate (Rust): 0.1.0-karmazyn-substrate (faza 0/1)
 Lua guest: project host (searchers preload|memory|project), CLI run_lua.py
+Host API: software/karmazyn_host.py → global karmazyn.*; :tool <lua_bin>
+Smoke: software/test_host_tools.py
 
 Jadro (kernel/) - ZRODLO PRAWDY (Python, domyslne w boot):
   karmazyn_atom.py

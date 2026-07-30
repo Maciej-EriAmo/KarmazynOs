@@ -90,6 +90,13 @@ class Parser:
         self._validate_gotos(stmts)
         return stmts
 
+    @staticmethod
+    def _unwrap_stmt(s):
+        """Zdejmij tag ("@", line, stmt) jeśli obecny."""
+        if isinstance(s, tuple) and s and s[0] == "@":
+            return s[2]
+        return s
+
     def _validate_gotos(self, stmts):
         """Lua: goto nie może wejść w zakres zmiennej local (w tym samym bloku).
 
@@ -100,20 +107,22 @@ class Parser:
         """
         labels = {}
         for i, s in enumerate(stmts):
-            if s[0] == "label":
-                name = s[1]
+            real = self._unwrap_stmt(s)
+            if real[0] == "label":
+                name = real[1]
                 if name in labels:
                     self._err(f"etykieta '::{name}::' już zdefiniowana w bloku")
                 labels[name] = i
         for i, s in enumerate(stmts):
-            if s[0] != "goto":
+            real = self._unwrap_stmt(s)
+            if real[0] != "goto":
                 continue
-            name = s[1]
+            name = real[1]
             j = labels.get(name)
             if j is None or j <= i:
                 continue                              # wstecz lub etykieta na zewnątrz
             for k in range(i + 1, j):
-                sk = stmts[k]
+                sk = self._unwrap_stmt(stmts[k])
                 if sk[0] == "local":
                     nm = sk[1][0] if sk[1] else "?"
                     self._err(
@@ -126,6 +135,14 @@ class Parser:
 
     # ── instrukcje ──
     def parse_statement(self):
+        line = getattr(self.peek(), "line", 1) or 1
+        stmt = self._parse_statement_raw()
+        # tag lokalizacji: ("@", line, real_stmt) — ewaluator odwinie
+        if stmt is not None and not (isinstance(stmt, tuple) and stmt and stmt[0] == "@"):
+            return ("@", line, stmt)
+        return stmt
+
+    def _parse_statement_raw(self):
         if self.at_kw("local"):
             # 'local function NAME' vs zwykłe 'local NAME' / atrybuty
             nxt = self.toks[self.i + 1]

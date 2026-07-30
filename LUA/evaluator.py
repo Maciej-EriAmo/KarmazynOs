@@ -70,6 +70,8 @@ class Evaluator:
         self._io_input = []                      # wirtualne linie io.read
         self._active_envs = []                   # stos bąbli wywołań (extra_reach GC)
         self._call_stack = []                    # nazwy ramek do traceback (najstarsza→0)
+        self._cur_line = None                    # linia bieżącej instrukcji (parser "@")
+        self._cur_chunk = None                   # nazwa chunka (compile/run)
         # root + aktywne ramki wywołań — inaczej settle w środku skryptu zżyna locale
         prev_extra = getattr(store, "_extra_reach", None)
         def _extra():
@@ -771,13 +773,26 @@ class Evaluator:
             clear_out = not as_module
         if clear_out:
             self._out = []
-        fn = self.compile_chunk(source, chunkname=chunkname, env=env)
-        ret = self._call(fn, list(args) if args is not None else [])
-        if as_module:
-            if not ret:
-                return True
-            return ret[0] if ret[0] is not None else True
-        return ret
+        prev_chunk = self._cur_chunk
+        self._cur_chunk = chunkname if isinstance(chunkname, str) else prev_chunk
+        try:
+            fn = self.compile_chunk(source, chunkname=chunkname, env=env)
+            ret = self._call(fn, list(args) if args is not None else [])
+            if as_module:
+                if not ret:
+                    return True
+                return ret[0] if ret[0] is not None else True
+            return ret
+        except LuaError as e:
+            # dołóż lokalizację jeśli brak
+            msg = _tostring(e.lua_value)
+            prefix = self._loc_prefix()
+            if prefix and isinstance(msg, str) and prefix not in msg[: max(8, len(prefix) + 4)]:
+                if not msg.startswith(chunkname or ""):
+                    raise LuaError(prefix + msg, value=prefix + msg) from e
+            raise
+        finally:
+            self._cur_chunk = prev_chunk
 
     def run_file(self, path, chunkname=None, args=None, as_module=False, clear_out=None):
         """Host: odczytaj plik z dysku i run_source. Gość nigdy nie woła tego sam."""
@@ -829,7 +844,8 @@ class Evaluator:
                 except _Goto as g:
                     # etykieta na poziomie chunka? (jak _exec_block)
                     for j, s in enumerate(block):
-                        if s[0] == "label" and s[1] == g.name:
+                        _ln, core = self._stmt_core(s)
+                        if core[0] == "label" and core[1] == g.name:
                             i = j + 1
                             break
                     else:
@@ -839,7 +855,8 @@ class Evaluator:
                         raise LuaError("goto: przekroczono limit skoków")
                     continue
                 # tylko gołe wyrażenie pokazuje wartość (nawet nil); reszta = pusto
-                display = val if stmt[0] == "exprstat" else _NOVAL
+                _ln, core = self._stmt_core(stmt)
+                display = val if core[0] == "exprstat" else _NOVAL
         except _Return as r:
             return "\t".join(_tostring(v) for v in r.value) if r.value else ""
         except _Break:
@@ -850,7 +867,12 @@ class Evaluator:
             # nieprzechwycony błąd: pokaż traceback jeśli jest
             if getattr(e, "traceback", None):
                 return "blad: " + e.traceback
-            return "blad: " + _tostring(e.lua_value)
+            msg = _tostring(e.lua_value)
+            prefix = self._loc_prefix()
+            if prefix and isinstance(msg, str) and not msg.startswith(prefix.rstrip(": ")):
+                if not (msg.startswith("@") or (len(msg) > 2 and msg[0].isdigit())):
+                    msg = prefix + msg
+            return "blad: " + msg
         except RecursionError:
             return "blad: za głęboka rekurencja"
         except Exception as e:                       # nigdy nie leci w hosta
@@ -897,6 +919,24 @@ class Evaluator:
             except Exception as ex:
                 raise LuaError(f"__close: {ex}")
 
+    @staticmethod
+    def _stmt_core(stmt):
+        """Zdejmij ("@", line, stmt) → (line|None, real_stmt)."""
+        if isinstance(stmt, tuple) and stmt and stmt[0] == "@":
+            return stmt[1], stmt[2]
+        return None, stmt
+
+    def _loc_prefix(self):
+        """Prefiks lokalizacji do komunikatu błędu runtime."""
+        parts = []
+        if self._cur_chunk:
+            parts.append(str(self._cur_chunk))
+        if self._cur_line is not None:
+            parts.append(str(self._cur_line))
+        if not parts:
+            return ""
+        return ":".join(parts) + ": "
+
     def _exec_block(self, block, env):
         last = None
         i = 0
@@ -910,7 +950,8 @@ class Evaluator:
                 except _Goto as g:
                     # skocz do ::etykiety:: w TYM bloku; brak -> propaguj (close)
                     for j, s in enumerate(block):
-                        if s[0] == "label" and s[1] == g.name:
+                        _ln, core = self._stmt_core(s)
+                        if core[0] == "label" and core[1] == g.name:
                             i = j + 1
                             break
                     else:
@@ -957,6 +998,9 @@ class Evaluator:
 
     def _exec_stmt(self, stmt, env):
         self._budget_tick(1)
+        line, stmt = self._stmt_core(stmt)
+        if line is not None:
+            self._cur_line = line
         tag = stmt[0]
         if tag == "local":
             # AST: ("local", names, inits, attrs) — attrs opcjonalne (wstecz: 3-el.)
@@ -1416,7 +1460,8 @@ class Evaluator:
                     i += 1
                 except _Goto as g:
                     for j, s in enumerate(block):
-                        if s[0] == "label" and s[1] == g.name:
+                        _ln, core = self._stmt_core(s)
+                        if core[0] == "label" and core[1] == g.name:
                             i = j + 1
                             break
                     else:
@@ -1435,6 +1480,9 @@ class Evaluator:
 
     def _exec_stmt_gen(self, stmt, env):
         """Wersja generatorowa: większość instrukcji = sync; call-path przez gen."""
+        line, stmt = self._stmt_core(stmt)
+        if line is not None:
+            self._cur_line = line
         tag = stmt[0]
         # instrukcje z potencjalnym yield w wyrażeniach / ciele
         if tag in ("local", "global", "global_star", "localfunc", "return", "break",
