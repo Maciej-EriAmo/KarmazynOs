@@ -1,7 +1,8 @@
 # KarmazynOS — Runtime (kanon 2026)
 
 **Jądro:** `karmazyn_kernel` v1.1.0  
-**Boot:** `karmazyn_boot` v0.5  
+**Boot:** `karmazyn_boot` v0.5+  
+**Gość Lua:** `karmazyn_lua` **0.8.0-alpha** (`LUA/`, gate: `software/test_lua_release.py`)  
 **Substrat native (Rust):** faza 0/1 — prawo reach-GC + C ABI  
 
 Ten dokument opisuje **aktualny** runtime monorepo (nie archiwalny `shell.py` / `studio.py` w `archiwum/`).

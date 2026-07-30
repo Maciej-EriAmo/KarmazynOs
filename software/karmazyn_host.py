@@ -3,14 +3,16 @@
 Sandbox = bąbel: gość woła tylko jawnie wstrzyknięte funkcje.
 Host ma Store + (opcjonalnie) kolejkę io_input / stdin.
 
-Minimalny surface pod lua_bin/* (ls, cat, touch, df, free, step, …).
-Funkcje spoza jądra (agenci, hologramy, fs/cache pełne) zwracają puste/stub.
+Surface v1 (karmazyn_lua 0.8.0-alpha): lua_bin tools + session agents/holograms.
 """
 
 from __future__ import annotations
 
 import os
 import time
+
+# wersja surface hosta (nie mylić z jądrem / z __version__ pakietu Lua)
+HOST_API_VERSION = "1.0.0-alpha"
 
 
 # typowe T dla warstw FSM (wystarczająco w progu state_for_T)
@@ -583,6 +585,9 @@ def install_karmazyn_host(ev, store=None, boot_t0=None):
     bind_fn(ui, "progress_bar", host.progress_bar)
     bind_fn(ui, "draw_frame", host.draw_frame)
     host._set(k, "ui", ui)
+
+    # etykieta wersji surface (string w tabeli karmazyn)
+    host._set(k, "_VERSION", HOST_API_VERSION)
 
     # global
     atom = store.atom_new("lib", "karmazyn", value=k)
