@@ -6,3 +6,8 @@ __pycache__/
 *.pyo
 .Python
 .pytest_cache/
+
+# accidental notes dropped into tool dirs
+lua_bin/*.txt
+*.tmp
+
