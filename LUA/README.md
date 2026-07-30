@@ -69,3 +69,8 @@ karmazyn> return karmazyn._VERSION
 | `LUA/kombajn_run.py` | kombajn |
 
 Changelog: [CHANGELOG.md](CHANGELOG.md) · tools: [../Documents/tools_lua.md](../Documents/tools_lua.md)
+
+## Dalsza ewolucja (1.1) — bliżej PUC-Rio bez zmiany fizyki
+
+- [lua_arch_for_programmers.md](../Documents/lua_arch_for_programmers.md) — różnice architektoniczne dla programistów  
+- [lua_puc_gap_plan.md](../Documents/lua_puc_gap_plan.md) — plan: debug, integer/float, weak/__gc, string, coroutine, puc-subset
