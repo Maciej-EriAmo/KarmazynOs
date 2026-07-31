@@ -72,8 +72,8 @@ def main() -> int:
         print(f"[FAIL] version: {e}")
         return 1
     print(f"  version = {ver}")
-    if not str(ver).startswith("1.0."):
-        print(f"[FAIL] oczekiwano wersji 1.0.x, jest {ver!r}")
+    if not (str(ver).startswith("1.0.") or str(ver).startswith("1.1.")):
+        print(f"[FAIL] oczekiwano wersji 1.0.x / 1.1.x, jest {ver!r}")
         return 1
     print("[ OK ] version")
 
@@ -106,6 +106,16 @@ def main() -> int:
         print("[FAIL] kombajn")
     else:
         print("[ OK ] kombajn")
+
+    # 4b) puc_subset (1.1)
+    puc = os.path.join(LUA, "puc_subset_run.py")
+    if os.path.isfile(puc):
+        rc = _run("puc_subset (LUA/puc_subset_run.py)", [sys.executable, "puc_subset_run.py"], cwd=LUA)
+        if rc != 0:
+            fails += 1
+            print("[FAIL] puc_subset")
+        else:
+            print("[ OK ] puc_subset")
 
     # 5) lua_bin matrix (pass tools; skip top/nano)
     rc = _run(

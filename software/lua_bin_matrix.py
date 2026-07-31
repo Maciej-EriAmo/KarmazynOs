@@ -66,7 +66,7 @@ TOOL_SPEC = {
     "recall": ("pass", lambda s, h: (s.create_atom("m_rec", "q", "pamiec semantyczna", 0.9) or True) and ["pamiec"], "resonance"),
     "consolidate": ("pass", lambda s, h: (s.create_atom("m_con", "S", "keep", 0.9) or True) and ["m_con"], "to bubble"),
     "kill": ("pass", lambda s, h: (h.spawn_agent("tmp", "t", ["phi"]), ["1"])[-1] if h else ["1"], "delete agent"),
-    "idea": ("pass", lambda s, h: (h.create_hologram("h1", "tema"), ["h1", "prompt"])[-1], "vector from hologram"),
+    "idea": ("pass", lambda s, h: (h.create_hologram("h1", "tema"), ["h1", "prompt"])[-1], "STUB vector placeholder (generate_from_idea)"),
     "kedit": ("pass", lambda s, h: (s.create_atom("m_ke", "S", "old", 0.8) or True) and ["m_ke", "4"], "exit only path"),
     # skip
     "top": ("skip", None, "DEPRECATED in automation — infinite loop; manual only"),

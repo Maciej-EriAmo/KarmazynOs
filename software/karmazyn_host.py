@@ -3,26 +3,71 @@
 Sandbox = bąbel: gość woła tylko jawnie wstrzyknięte funkcje.
 Host ma Store + (opcjonalnie) kolejkę io_input / stdin.
 
-Surface 1.0 (karmazyn_lua 1.0.0): lua_bin tools + session agents/holograms.
+Surface 1.1 (karmazyn_lua 1.1.0): lua_bin tools + session agents/holograms + T-scale 1.1.
 Zamrożony kontrakt hosta na serii 1.x — breaking dopiero w 2.0.
 """
 
 from __future__ import annotations
 
 import os
+import re
 import time
 
-# surface host = 1.0.0 (zamrożony na serii 1.x z pakietem 1.0.0)
-HOST_API_VERSION = "1.0.0"
+# surface host = 1.1.0 (seria 1.x z pakietem gościa 1.1.0)
+HOST_API_VERSION = "1.1.0"
+
+# atom_new (silnik / heap Lua) dostaje publiczne id a0,a1,… — to NIE jest surface create_atom (Φ).
+# Kernel ma dwie powierzchnie (engine_native vs AtomStore); host listuje tylko AtomStore.
+_ENGINE_SID_RE = re.compile(r"^a\d+$")
 
 
-# typowe T dla warstw FSM (wystarczająco w progu state_for_T)
-_STATE_T = {
-    "HOT": 0.95,
-    "WARM": 0.45,
-    "COLD": 0.05,
-    "TOMB": 0.001,
-}
+def _kernel_T():
+    """Progi T z jądra 1.1+ — skala substratu 0..T_MAX (domyślnie 100). Bez przeliczeń 0..1."""
+    try:
+        import karmazyn_kernel as kk
+        return {
+            "HOT": float(getattr(kk, "T_HOT", 70.0)),
+            "WARM": float(getattr(kk, "T_WARM", 30.0)),
+            "INIT": float(getattr(kk, "T_INIT", 50.0)),
+            "TOMB": float(getattr(kk, "T_TOMB", 2.0)),
+            "MAX": float(getattr(kk, "T_MAX", 100.0)),
+            "COLD": float(getattr(kk, "T_TOMB", 2.0)) + 3.0,
+        }
+    except Exception:
+        return {"HOT": 70.0, "WARM": 30.0, "INIT": 50.0, "TOMB": 2.0, "MAX": 100.0, "COLD": 5.0}
+
+
+def _abs_T(t, default=None):
+    """T bezwzględne na skali jądra. None → T_INIT. Bez mapowania 0..1 (to maskowało błędy tools)."""
+    kt = _kernel_T()
+    if default is None:
+        default = kt["INIT"]
+    if t is None:
+        return float(default)
+    try:
+        T = float(t)
+    except (TypeError, ValueError):
+        return float(default)
+    tmax = kt["MAX"]
+    if T < 0.0:
+        T = 0.0
+    if T > tmax:
+        T = tmax
+    return T
+
+
+def _state_T_map():
+    kt = _kernel_T()
+    return {
+        "HOT": kt["HOT"],
+        "WARM": kt["WARM"],
+        "COLD": kt["COLD"],
+        "TOMB": max(0.001, kt["TOMB"] * 0.5),
+    }
+
+
+def _is_engine_sid(aid) -> bool:
+    return isinstance(aid, str) and bool(_ENGINE_SID_RE.match(aid))
 
 
 class KarmazynHost:
@@ -38,6 +83,10 @@ class KarmazynHost:
         self._fs = {}              # (bubble, file_id) -> content
         self._cache = {}           # name -> {E, S, ...}
         self._screen = []          # clear_screen marker for tests
+        # surface Φ: id z create_atom/clone (nie heap Lua / atom_new)
+        self._phi_ids = set()
+        # jeden proxy na id — bez ponownej alokacji bąbli przy każdym list_atoms
+        self._proxy_by_id = {}
 
     # ── pomocnicze: tabele Lua ─────────────────────────────────────────
     def _tbl(self):
@@ -53,77 +102,167 @@ class KarmazynHost:
         return t
 
     def _atom_proxy(self, atom):
-        """Tabela z __index: pola i metody atomu (live)."""
-        t = self._tbl()
+        """Tabela z __index: pola i metody atomu (live po id).
+
+        Cache per id: ponowne list_atoms/get_atom NIE alokuje nowych bąbli/atomów
+        w Store (wcześniej każdy list = nowe proxy = eksplozja heapu silnika).
+        """
+        aid = getattr(atom, "id", None)
+        if not isinstance(aid, str) or not aid:
+            return None
+        cached = self._proxy_by_id.get(aid)
+        if cached is not None:
+            return cached
+
         store = self.store
         host = self
+
+        def _live():
+            return store.get_atom(aid)
 
         def idx(_tbl, key=None, *_):
             if key is None:
                 return None
+            a = _live()
+            if a is None:
+                return None
             if key == "id":
-                return atom.id
+                return aid
             if key == "S":
-                return atom.S
+                return a.S
             if key == "E":
-                return atom.E
+                return a.E
             if key == "state":
-                return atom.state
+                return a.state
             if key == "age":
                 try:
-                    return float(atom.age())
+                    return float(a.age())
                 except Exception:
                     return 0.0
             if key == "T_raw":
-                return float(atom.T)
+                return float(a.T)
 
             if key == "get_T":
                 def get_T(*_a):
-                    return float(atom.T)
+                    cur = _live()
+                    return float(cur.T) if cur is not None else 0.0
                 return get_T
+
+            if key == "get_T_frac":
+                def get_T_frac(*_a):
+                    cur = _live()
+                    if cur is None:
+                        return 0.0
+                    tmax = _kernel_T()["MAX"] or 100.0
+                    return max(0.0, min(1.0, float(cur.T) / float(tmax)))
+                return get_T_frac
 
             if key == "set_E":
                 def set_E(new_e=None, *_a):
+                    cur = _live()
+                    if cur is None:
+                        return False
                     if new_e is not None:
-                        atom.E = str(new_e)
-                        if hasattr(atom, "touch_write"):
-                            atom.touch_write()
+                        cur.E = str(new_e)
+                        if hasattr(cur, "touch_write"):
+                            cur.touch_write()
                     return True
                 return set_E
 
             if key == "set_state":
                 def set_state(layer=None, *_a):
-                    if not isinstance(layer, str):
+                    cur = _live()
+                    if cur is None or not isinstance(layer, str):
                         return False
                     u = layer.upper()
-                    if u not in _STATE_T:
+                    sm = _state_T_map()
+                    if u not in sm:
                         return False
-                    atom.T = float(_STATE_T[u])
-                    if hasattr(atom, "_update_state"):
-                        atom._update_state()
+                    cur.T = float(sm[u])
+                    if hasattr(cur, "_update_state"):
+                        cur._update_state()
                     return True
                 return set_state
 
             if key == "refresh":
                 def refresh(*_a):
-                    if hasattr(atom, "heat"):
-                        atom.heat(0.5)
-                    elif hasattr(atom, "touch"):
-                        atom.touch(2.0)
-                    return True
+                    cur = _live()
+                    if cur is None:
+                        return False
+                    try:
+                        store.heat(cur)
+                        return True
+                    except TypeError:
+                        pass
+                    except Exception:
+                        pass
+                    if hasattr(cur, "heat"):
+                        try:
+                            cur.heat()
+                            return True
+                        except TypeError:
+                            try:
+                                cur.heat(10.0)
+                                return True
+                            except Exception:
+                                pass
+                    if hasattr(cur, "touch"):
+                        cur.touch(2.0)
+                        return True
+                    return False
                 return refresh
 
             if key == "consolidate":
                 def consolidate(*_a):
-                    return host.consolidate(atom.id)
+                    return host.consolidate(aid)
                 return consolidate
 
             return None
 
+        t = self._tbl()
         mt = self._tbl()
         self._set(mt, "__index", idx)
         self.ev._set_metatable(t, mt)
+        self._proxy_by_id[aid] = t
         return t
+
+    def _track_phi(self, aid: str) -> None:
+        if isinstance(aid, str) and aid and not _is_engine_sid(aid):
+            self._phi_ids.add(aid)
+
+    def _untrack_phi(self, aid: str) -> None:
+        self._phi_ids.discard(aid)
+        self._proxy_by_id.pop(aid, None)
+
+    def _reconcile_phi_ids(self) -> list:
+        """Zwróć żywe atomy surface Φ.
+
+        Źródła:
+          1) rejestr hosta (create/clone przez karmazyn.*)
+          2) store.create_atom z testów/boot — publiczne id ≠ aN (kontrakt AtomStore)
+        Nigdy nie listujemy heapu Lua (atom_new → a0,a1,…).
+        """
+        live = []
+        seen = set()
+        # odkryj create_atom spoza hosta (np. test_host_tools: store.create_atom)
+        try:
+            for a in self.store.atoms():
+                aid = getattr(a, "id", None)
+                if not isinstance(aid, str) or _is_engine_sid(aid):
+                    continue
+                self._phi_ids.add(aid)
+        except Exception:
+            pass
+        for aid in list(self._phi_ids):
+            a = self.store.get_atom(aid)
+            if a is None:
+                self._untrack_phi(aid)
+                continue
+            if aid in seen:
+                continue
+            seen.add(aid)
+            live.append(a)
+        return live
 
     # ── API powierzchni ────────────────────────────────────────────────
     def read_line(self, prompt=None, *_):
@@ -191,36 +330,52 @@ class KarmazynHost:
         return t
 
     def list_atoms(self, state=None, *_):
+        """Lista atomów surface Φ (create_atom), nie heapu Lua.
+
+        state: HOT|WARM|COLD|TOMB albo ALL (debug: cały store.atoms, łącznie z aN).
+        """
         st = state if isinstance(state, str) and state else None
         if isinstance(st, str) and st.upper() == "ALL":
-            st = None
-        try:
-            atoms = self.store.atoms(st)
-        except Exception:
-            atoms = self.store.atoms()
-        return self._arr([self._atom_proxy(a) for a in atoms])
+            try:
+                atoms = list(self.store.atoms())
+            except Exception:
+                atoms = []
+            return self._arr([p for a in atoms if (p := self._atom_proxy(a)) is not None])
+
+        want = st.upper() if isinstance(st, str) else None
+        out = []
+        for a in self._reconcile_phi_ids():
+            if want and str(getattr(a, "state", "")).upper() != want:
+                continue
+            p = self._atom_proxy(a)
+            if p is not None:
+                out.append(p)
+        return self._arr(out)
 
     def get_atom(self, aid=None, *_):
         if not isinstance(aid, str) or not aid:
             return None
         atom = self.store.get_atom(aid)
         if atom is None:
+            self._untrack_phi(aid)
             return None
+        if not _is_engine_sid(aid):
+            self._track_phi(aid)
         return self._atom_proxy(atom)
 
-    def create_atom(self, aid=None, s=None, e=None, t=0.8, *_):
+    def create_atom(self, aid=None, s=None, e=None, t=None, *_):
         if not isinstance(aid, str) or not aid:
             return "brak id"
+        if _is_engine_sid(aid):
+            return f"id {aid!r} zarezerwowane dla silnika (atom_new); użyj innej nazwy"
         S = "" if s is None else str(s)
         E = "" if e is None else str(e)
-        try:
-            T = float(t) if t is not None else 0.8
-        except (TypeError, ValueError):
-            T = 0.8
+        T = _abs_T(t)
         try:
             if self.store.has_atom(aid):
                 return f"atom o id {aid!r} już istnieje"
             self.store.create_atom(aid, S, E, T)
+            self._track_phi(aid)
             atom = self.store.get_atom(aid)
             return self._atom_proxy(atom) if atom else "błąd create"
         except Exception as ex:
@@ -230,20 +385,27 @@ class KarmazynHost:
         if not isinstance(aid, str):
             return False
         try:
-            return bool(self.store.delete_atom(aid))
+            ok = bool(self.store.delete_atom(aid))
+            self._untrack_phi(aid)
+            return ok
         except Exception:
+            self._untrack_phi(aid)
             return False
 
     def clone_atom(self, src=None, dst=None, *_):
         if not isinstance(src, str) or not isinstance(dst, str):
             return "złe id"
+        if _is_engine_sid(dst):
+            return f"id {dst!r} zarezerwowane dla silnika"
         a = self.store.get_atom(src)
         if a is None:
             return f"brak źródła {src}"
         try:
             if self.store.has_atom(dst):
                 self.store.delete_atom(dst)
+                self._untrack_phi(dst)
             self.store.create_atom(dst, a.S, a.E, float(a.T))
+            self._track_phi(dst)
             return self._atom_proxy(self.store.get_atom(dst))
         except Exception as ex:
             return str(ex)
@@ -601,6 +763,14 @@ def install_karmazyn_host(ev, store=None, boot_t0=None):
 
     # etykieta wersji surface (string w tabeli karmazyn)
     host._set(k, "_VERSION", HOST_API_VERSION)
+
+    # progi termiczne jądra (skala substratu) — do wizualizacji w Lua
+    kt = _kernel_T()
+    host._set(k, "T_MAX", kt["MAX"])
+    host._set(k, "T_HOT", kt["HOT"])
+    host._set(k, "T_WARM", kt["WARM"])
+    host._set(k, "T_INIT", kt["INIT"])
+    host._set(k, "T_TOMB", kt["TOMB"])
 
     # global
     atom = store.atom_new("lib", "karmazyn", value=k)

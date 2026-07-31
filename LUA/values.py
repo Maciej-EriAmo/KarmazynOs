@@ -338,13 +338,14 @@ class LuaFunction:
 
 class LuaThread:
     """Wątek korutyny (coroutine). status: suspended|running|normal|dead."""
-    __slots__ = ("fn", "status", "gen", "name")
+    __slots__ = ("fn", "status", "gen", "name", "closed")
 
     def __init__(self, fn, name="thread"):
         self.fn = fn
         self.status = "suspended"
         self.gen = None           # generator _call_gen po first resume
         self.name = name
+        self.closed = False       # coroutine.close
 
 
 def lua_env_of(v):

@@ -1,0 +1,18 @@
+{
+  "description": "KarmazynLua puc-subset 1.1.2",
+  "tests": [
+    {"file": "arith.lua", "status": "pass"},
+    {"file": "tables.lua", "status": "pass"},
+    {"file": "strings.lua", "status": "pass"},
+    {"file": "coro.lua", "status": "pass"},
+    {"file": "sandbox.lua", "status": "pass"},
+    {"file": "multi.lua", "status": "pass"},
+    {"file": "meta.lua", "status": "pass"},
+    {"file": "pcall.lua", "status": "pass"},
+    {"file": "bit.lua", "status": "pass"},
+    {"file": "goto.lua", "status": "pass"},
+    {"file": "load.lua", "status": "pass"},
+    {"file": "weak.lua", "status": "pass"},
+    {"file": "nested_gc.lua", "status": "pass"}
+  ]
+}

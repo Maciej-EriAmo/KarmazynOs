@@ -1,28 +1,30 @@
-# karmazyn_lua **1.0.0**
+# karmazyn_lua **1.1.2**
 
-Interpreter Lua **5.5 (podzbiór)** na substracie KarmazynOS — **stabilny domyślny gość skryptowy**.
+Interpreter Lua **5.5 (podzbiór)** na substracie KarmazynOS — **produkcyjny domyślny gość skryptowy**.
 
 | | |
 |--|--|
-| **Status** | **1.0.0** (stable) |
+| **Status** | **1.1.2** (production guest) |
 | **Sandbox** | **bąbel** — brak ambient FS |
-| **Host API** | `karmazyn._VERSION` **1.0.0** (frozen na 1.x) |
+| **Host API** | `karmazyn._VERSION` **1.1.0** (seria 1.x) |
 | **Źródło** | monorepo `KarmazynOs/LUA/` |
-| **Regresja** | `python software/test_lua_release.py` |
+| **Regresja** | `python release_1_1.py` · `software/test_lua_release.py` |
 | **Tools** | 26 pass / 2 skip (`top`, `nano` — ręcznie) |
+| **Kontrakt** | [CONTRACT_1.1.md](CONTRACT_1.1.md) · [RELEASE_1.1.0.md](RELEASE_1.1.0.md) |
 
-## Co znaczy 1.0
+## Co znaczy 1.1
 
 **Stabilne w 1.x (breaking → 2.0):**
 
 - montaż gościa: `mount` / `mount_session` / boot `mount_evaluator`
-- sandbox: brak `dofile` / ambient FS / `os.execute`
+- sandbox: brak `dofile` / ambient FS / `os.execute` / C modules / bytecode
 - projekt: searchers preload → memory → project; `strict-project`
 - host: global `karmazyn.*` (atomy, step, recall, ui, agents/holograms sesji)
+- debug subset + `coroutine.isyieldable` / `close`
 - CLI: `run_lua.py` / `python -m karmazyn_lua`
-- bramka: unit + host smoke + kombajn + lua_bin matrix
+- bramka: unit + kombajn + puc_subset + host smoke + lua_bin matrix
 
-**Celowo poza 1.0:** pełna Lua 5.5 PUC-Rio, ambient Uniks, pełny PCA hologramów.
+**Celowo poza 1.x:** pełna Lua PUC-Rio, ambient Uniks, C API, pełny PCA hologramów.
 
 ## Szybki start
 
@@ -63,14 +65,25 @@ karmazyn> return karmazyn._VERSION
 
 | Komenda | Co |
 |---------|-----|
-| `software/test_lua_release.py` | bramka 1.0 |
+| `LUA/release_1_1.py` | bramka 1.1.0 |
+| `software/test_lua_release.py` | bramka monorepo |
 | `software/lua_bin_matrix.py` | macierz 28 narzędzi |
 | `LUA/_run_tests.py` | unit |
 | `LUA/kombajn_run.py` | kombajn |
+| `LUA/puc_subset_run.py` | subset testów stylu PUC |
 
 Changelog: [CHANGELOG.md](CHANGELOG.md) · tools: [../Documents/tools_lua.md](../Documents/tools_lua.md)
 
-## Dalsza ewolucja (1.1) — bliżej PUC-Rio bez zmiany fizyki
+## 1.1 — bliżej PUC-Rio (bez zmiany fizyki)
 
-- [lua_arch_for_programmers.md](../Documents/lua_arch_for_programmers.md) — różnice architektoniczne dla programistów  
-- [lua_puc_gap_plan.md](../Documents/lua_puc_gap_plan.md) — plan: debug, integer/float, weak/__gc, string, coroutine, puc-subset
+Zaimplementowane (patrz [GAP_CLOSE_PLAN.md](GAP_CLOSE_PLAN.md) / [CHANGELOG](CHANGELOG.md)):
+
+- `debug.getinfo|getlocal|setlocal|getupvalue|setupvalue`
+- `coroutine.isyieldable` / `close`
+- `collectgarbage("step")`; `string.dump` zabronione
+- `puc_subset/` + `python puc_subset_run.py`
+
+Nadal poza zakresem: C modules, ambient FS, bytecode, pełny `debug.sethook`.
+
+- [lua_arch_for_programmers.md](../Documents/lua_arch_for_programmers.md)  
+- [lua_puc_gap_plan.md](../Documents/lua_puc_gap_plan.md)

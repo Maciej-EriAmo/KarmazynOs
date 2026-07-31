@@ -251,6 +251,103 @@ end
 check_eq("require.searcher", require("kombajn_s2").from, "kombajn_s2")
 
 ------------------------------------------------------------
+-- 18. Faza A/B/C: debug.* / coro close / dump forbid / cg.step
+------------------------------------------------------------
+check_eq("dbg.getinfo.type", type(debug.getinfo), "function")
+check_eq("dbg.getlocal.type", type(debug.getlocal), "function")
+check_eq("dbg.getupvalue.type", type(debug.getupvalue), "function")
+local function _gi_probe()
+  local info = debug.getinfo(1, "nS")
+  return type(info) == "table" and type(info.name) == "string"
+    and type(info.source) == "string" and info.what ~= nil
+end
+check("dbg.getinfo.fields", _gi_probe())
+local function _gl_probe(a)
+  local n, v = debug.getlocal(1, 1)
+  return n == "a" and v == 77
+end
+check("dbg.getlocal.param", _gl_probe(77))
+local function _sl_probe()
+  local x = 1
+  debug.setlocal(1, 1, 9)
+  return x == 9
+end
+check("dbg.setlocal", _sl_probe())
+-- upvalues = wiązania env domknięcia (wiele lokalnych chunka) — szukamy wartości 3
+local _uv = 3
+local function _gu_probe()
+  return _uv
+end
+local gu_ok = false
+for i = 1, 64 do
+  local un, uv = debug.getupvalue(_gu_probe, i)
+  if un == nil then break end
+  if uv == 3 then gu_ok = true; break end
+end
+check("dbg.getupvalue", gu_ok)
+check_eq("co.isyieldable.type", type(coroutine.isyieldable), "function")
+check("co.isyieldable.main", coroutine.isyieldable() == false)
+local co_c = coroutine.create(function()
+  return coroutine.isyieldable()
+end)
+local ok_c, iy = coroutine.resume(co_c)
+check("co.isyieldable.in", ok_c == true and iy == true)
+local co_cl = coroutine.create(function()
+  coroutine.yield(1)
+  return 2
+end)
+coroutine.resume(co_cl)
+local ok_close = coroutine.close(co_cl)
+check("co.close", ok_close == true)
+check("co.close.status", coroutine.status(co_cl) == "dead")
+local ok_rs = coroutine.resume(co_cl)
+check("co.close.dead", ok_rs == false)
+check("cg.step", collectgarbage("step", 1) == true)
+local ok_dump, err_dump = pcall(function()
+  return string.dump(function() end)
+end)
+check("str.dump.forbid", ok_dump == false and type(err_dump) == "string")
+
+------------------------------------------------------------
+-- 19. weak / __gc (produkcja 1.1)
+-- (locale na scope chunka / funkcji — nie zagnieżdżony do…end po GC)
+------------------------------------------------------------
+local weak_holder = {}
+setmetatable(weak_holder, { __mode = "v" })
+local function _weak_drop()
+  local payload = { n = 1 }
+  weak_holder.k = payload
+end
+_weak_drop()
+collectgarbage("collect")
+check("weak.v", weak_holder.k == nil)
+
+local gc_n = 0
+local function _gc_drop()
+  local t = {}
+  setmetatable(t, { __gc = function() gc_n = gc_n + 1 end })
+end
+_gc_drop()
+collectgarbage("collect")
+check("gc.finalizer", gc_n >= 1)
+
+------------------------------------------------------------
+-- 20. P0: nested block + GC (1.1.1)
+------------------------------------------------------------
+do
+  local nest_x = 42
+  collectgarbage("collect")
+  check_eq("p0.nested_do", nest_x, 42)
+end
+local nest_s = 0
+for i = 1, 2 do
+  local k = i * 10
+  collectgarbage("collect")
+  nest_s = nest_s + k
+end
+check_eq("p0.nested_for", nest_s, 30)
+
+------------------------------------------------------------
 -- Raport
 ------------------------------------------------------------
 print("========== KOMBAJN KarmazynLua ==========")

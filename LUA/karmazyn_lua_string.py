@@ -591,12 +591,17 @@ def register(lib):
         vals.append(i + 1)  # next position (1-based)
         return vals
 
+    def b_dump(*_):
+        # sandbox: bytecode omija audyt chunków hosta — celowo niedostępne
+        raise Error("string.dump: niedostępne w sandboxie (brak bytecode)")
+
     for name, fn in (
         ("len", b_len), ("sub", b_sub), ("byte", b_byte), ("char", b_char),
         ("rep", b_rep), ("reverse", b_reverse), ("lower", b_lower), ("upper", b_upper),
         ("format", b_format), ("find", b_find), ("match", b_match),
         ("gmatch", b_gmatch), ("gsub", b_gsub),
         ("pack", b_pack), ("unpack", b_unpack), ("packsize", b_packsize),
+        ("dump", b_dump),
     ):
         lib.set(t, name, fn)
 

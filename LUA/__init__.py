@@ -1,10 +1,10 @@
 """karmazyn_lua — interpreter Lua 5.5 (podzbiór) na substracie KarmazynOS.
 
-Wersja: 1.0.0 — stabilny domyślny gość skryptowy (sandbox = bąbel).
+Wersja: 1.1.2 — produkcyjny gość; count GC, __gc diag, puc_subset+.
 """
 
-__version__ = "1.0.0"
-__version_info__ = (1, 0, 0)
+__version__ = "1.1.2"
+__version_info__ = (1, 1, 2)
 
 from .lib import mount, LuaLib, install_env_of, resolve_caps, install_tools
 from .values import lua_env_of, compose_phi

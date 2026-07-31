@@ -39,6 +39,13 @@ def _src():
         "__main__.py",
         "run_lua.py",
         "editor_bridge.py",
+        # runnery / dema (host+kernel) — nie kontrakt gościa
+        "memviz_run.py",
+        "net_compat_run.py",
+        "net_fetch_compat.py",
+        "puc_subset_run.py",
+        "kombajn_run.py",
+        "release_1_1.py",
     }
     if path:
         d = list(path)[0]
@@ -91,11 +98,12 @@ class I_Language(unittest.TestCase):
         self.assertEqual(self.r("'single' .. \"double\""), "singledouble")
 
     def test_locals_globals(self):
-        self.r("local x = 10")
-        self.assertEqual(self.r("x + 5"), "15")
-        self.r("g = 42")                                     # niezadeklarowana -> globalna
+        # local żyje tylko w tej linii (eval_line izoluje scope — 1.1.1)
+        self.assertEqual(self.r("local x = 10; return x + 5"), "15")
+        self.r("g = 42")                                     # wolna nazwa -> _ENV/G
         self.assertEqual(self.r("g"), "42")
-        self.r("x = x + 1")                                  # mutacja w miejscu
+        self.r("x = 10")                                     # global
+        self.r("x = x + 1")
         self.assertEqual(self.r("x"), "11")
 
     def test_tables_array_hash_nested(self):
@@ -421,8 +429,14 @@ class I2_Functions(unittest.TestCase):
         self.assertEqual(self.r("h()"), "42")
 
     def test_recursion_local_function(self):
-        self.r("local function fact(n) if n<=1 then return 1 else return n*fact(n-1) end end")
-        self.assertEqual(self.r("fact(5)"), "120")
+        # cała definicja + wywołanie w jednym eval_line (local nie przechodzi między liniami)
+        self.assertEqual(
+            self.r(
+                "local function fact(n) if n<=1 then return 1 else return n*fact(n-1) end end; "
+                "return fact(5)"
+            ),
+            "120",
+        )
 
     def test_higher_order_and_anonymous(self):
         self.r("function apply(f, x) return f(x) end")
@@ -967,6 +981,156 @@ class IV_Libraries(unittest.TestCase):
         self.assertEqual(self.r("local ok,v = coroutine.resume(co); return ok,v"), "true\t30")
         self.assertEqual(self.r("return coroutine.status(co)"), "dead")
 
+    def test_debug_getinfo_getlocal(self):
+        self.assertEqual(self.r("return type(debug.getinfo)"), "function")
+        self.assertEqual(
+            self.r(
+                "local function f(a) local n,v=debug.getlocal(1,1); return n,v end; "
+                "return f(42)"
+            ),
+            "a\t42",
+        )
+        out = self.r(
+            "local function f() return debug.getinfo(1,'nS').what end; return f()"
+        )
+        self.assertIn(out, ("Lua", "main"), out)
+
+    def test_debug_setlocal_upvalue(self):
+        self.assertEqual(
+            self.r(
+                "local function f() local x=1; debug.setlocal(1,1,7); return x end; "
+                "return f()"
+            ),
+            "7",
+        )
+        # run_source: domknięcie na scope chunka (nie G z eval_line)
+        ev = ev_fresh()
+        ret = ev.run_source(
+            "local u=5\n"
+            "local function f() return u end\n"
+            "local n, v = debug.getupvalue(f, 1)\n"
+            "return type(n), v\n",
+            chunkname="@uv.lua",
+        )
+        self.assertEqual(ret, ["string", 5])
+
+    def test_coroutine_isyieldable_close(self):
+        self.assertEqual(self.r("return coroutine.isyieldable()"), "false")
+        self.assertEqual(
+            self.r(
+                "local co=coroutine.create(function() return coroutine.isyieldable() end); "
+                "local ok,v=coroutine.resume(co); return ok,v"
+            ),
+            "true\ttrue",
+        )
+        self.assertEqual(
+            self.r(
+                "local co=coroutine.create(function() coroutine.yield(1) end); "
+                "coroutine.resume(co); coroutine.close(co); "
+                "return coroutine.status(co)"
+            ),
+            "dead",
+        )
+
+    def test_string_dump_forbidden(self):
+        out = self.r("return string.dump(function() end)")
+        self.assertTrue(out.startswith("blad"), out)
+        self.assertIn("dump", out.lower())
+
+    def test_collectgarbage_step(self):
+        self.assertEqual(self.r('return collectgarbage("step", 1)'), "true")
+        self.assertEqual(self.r('return collectgarbage("isrunning")'), "true")
+
+    def test_collectgarbage_count_is_guest_scale(self):
+        """count ≈ KB grafu gościa — nie rośnie do setek bez powodu na pustym skrypcie."""
+        ev = ev_fresh()
+        # świeży env: count w KB powinno być umiarkowane (graf G, nie cały store.atoms)
+        c = float(ev.eval_line('return collectgarbage("count")'))
+        self.assertGreater(c, 0.0)
+        self.assertLess(c, 50.0, f"count={c} wygląda na cały heap Store")
+        ev.eval_line("t = {} for i=1,20 do t[i] = {i} end")
+        c2 = float(ev.eval_line('return collectgarbage("count")'))
+        self.assertGreaterEqual(c2, c)
+
+    def test_debug_no_host_escape_keys(self):
+        for bad in ("getregistry", "sethook", "debug", "getuservalue"):
+            self.assertEqual(
+                self.r(f"return type(debug.{bad})"),
+                "nil",
+                bad,
+            )
+
+    def test_error_includes_chunk_line_in_traceback(self):
+        """1.1: nieprzechwycony error ma chunk:line w tracebacku; pcall — czysty msg."""
+        ev = ev_fresh()
+        try:
+            ev.run_source(
+                "local function f()\n  error('boom')\nend\nreturn f()\n",
+                chunkname="@errline.lua",
+            )
+            self.fail("expected LuaError")
+        except Exception as e:
+            from karmazyn_lua.values import LuaError
+            self.assertIsInstance(e, LuaError)
+            tb = e.traceback or str(e)
+            self.assertIn("boom", tb)
+            self.assertIn("stack traceback", tb)
+            # lokalizacja w nagłówku lub ramce
+            self.assertTrue(
+                "@errline" in tb or "errline" in tb,
+                tb,
+            )
+        self.assertEqual(
+            self.r('local ok,e=pcall(function() error("czysty") end); return e'),
+            "czysty",
+        )
+
+    def test_weak_values_cleared_on_collect(self):
+        """__mode='v': wartość-tabela nieosiągalna znika po collectgarbage."""
+        ev = ev_fresh()
+        ret = ev.run_source(
+            """
+            local holder = {}
+            setmetatable(holder, { __mode = "v" })
+            do
+              local payload = { n = 1 }
+              holder.key = payload
+            end
+            assert(holder.key ~= nil)
+            collectgarbage("collect")
+            return holder.key == nil
+            """,
+            chunkname="@weak_v.lua",
+        )
+        self.assertEqual(ret, [True])
+
+    def test_gc_finalizer_runs_once(self):
+        """__gc wołany gdy tabela traci reach (po collect)."""
+        ev = ev_fresh()
+        ret = ev.run_source(
+            """
+            local n = 0
+            local function make()
+              local t = {}
+              setmetatable(t, {
+                __gc = function(self)
+                  n = n + 1
+                end
+              })
+              return t
+            end
+            do
+              local x = make()
+              x = nil
+            end
+            collectgarbage("collect")
+            collectgarbage("collect")
+            return n >= 1
+            """,
+            chunkname="@gc_fin.lua",
+        )
+        self.assertEqual(ret, [True])
+
     def test_utf8_and_table_move(self):
         self.assertEqual(self.r('return utf8.char(65,66)'), "AB")
         self.assertEqual(self.r('return utf8.len("abc")'), "3")
@@ -1147,6 +1311,65 @@ class III_GuestContract(unittest.TestCase):
         self.assertEqual(names2.get("env_of", []).count("guest"), 1)
         self.assertEqual(len(names2.get("env_of", [])), n_env)
         self.assertEqual(names2.get("extra_reach", []).count("guest"), 1)
+
+    def test_locals_survive_collectgarbage(self):
+        """extra_reach ramek: locale (w tym local function) żyją po GC."""
+        ev = ev_fresh()
+        ret = ev.run_source(
+            """
+            local function check(name, cond)
+              if not cond then error(name) end
+            end
+            local x = 42
+            collectgarbage("collect")
+            check("alive", true)
+            return x, type(check)
+            """,
+            chunkname="@gc_locals.lua",
+        )
+        self.assertEqual(ret, [42, "function"])
+
+    def test_nested_block_locals_survive_gc(self):
+        """P0-1: locale do/for po collectgarbage nie giną (extra_reach bloków)."""
+        ev = ev_fresh()
+        ret = ev.run_source(
+            """
+            do
+              local x = 42
+              collectgarbage("collect")
+              return x
+            end
+            """,
+            chunkname="@nested_gc.lua",
+        )
+        self.assertEqual(ret, [42])
+        ret2 = ev.run_source(
+            """
+            local s = 0
+            for i = 1, 3 do
+              local k = i * 10
+              collectgarbage("collect")
+              s = s + k
+            end
+            return s
+            """,
+            chunkname="@for_gc.lua",
+        )
+        self.assertEqual(ret2, [60])
+
+    def test_eval_line_does_not_pollute_G(self):
+        """P0-2: local w eval_line nie zostaje na G między liniami."""
+        ev = ev_fresh()
+        self.assertEqual(ev.eval_line("local z = 9; return z"), "9")
+        # kolejna linia: z nie jest globalem
+        out = ev.eval_line("return z")
+        self.assertTrue(
+            out.startswith("blad") or out == "nil",
+            f"oczekiwano błędu lub nil, jest {out!r}",
+        )
+        # global nadal działa między liniami
+        self.assertEqual(ev.eval_line("g_keep = 7; return g_keep"), "7")
+        self.assertEqual(ev.eval_line("return g_keep"), "7")
 
 
 # =====================================================================

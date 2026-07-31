@@ -58,7 +58,8 @@ class Evaluator:
         self._weak_tables = []                   # tabele z __mode
         self._io_input = []                      # wirtualne linie io.read
         self._active_envs = []                   # stos bąbli wywołań (extra_reach GC)
-        self._call_stack = []                    # nazwy ramek do traceback (najstarsza→0)
+        # ramki: dict {name, what, fn, scope, source} — najstarsza→0, najnowsza→-1
+        self._call_stack = []
         self._cur_line = None                    # linia bieżącej instrukcji (parser "@")
         self._cur_chunk = None                   # nazwa chunka (compile/run)
         self._register_reach_hooks()
@@ -72,11 +73,32 @@ class Evaluator:
             return lua_env_of(v)
 
         def _guest_extra_reach():
+            # Bubble.bindings trzyma publiczne sid (np. "a12"). Substrat w
+            # register_extra_reach robi int(getattr(x,"id",x)) — string sid
+            # wywala ValueError i rama ginie z reach → locale chunka po
+            # collectgarbage stają się "undeclared global". Zwracamy core aid.
             ids = []
+            resolve = getattr(store, "_aid", None)
+            get_atom = getattr(store, "get_atom", None)
             for env in self._active_envs:
                 try:
-                    for aid in list(env.bindings.values()):
-                        ids.append(aid)
+                    for raw in list(env.bindings.values()):
+                        core = None
+                        if resolve is not None:
+                            try:
+                                core = resolve(raw)
+                            except Exception:
+                                core = None
+                        if core is None and get_atom is not None:
+                            atom = get_atom(raw)
+                            if atom is not None:
+                                core = getattr(atom, "_aid", None)
+                        if core is None:
+                            try:
+                                core = int(getattr(raw, "id", raw))
+                            except Exception:
+                                continue
+                        ids.append(int(core))
                 except Exception:
                     pass
             return ids
@@ -181,15 +203,16 @@ class Evaluator:
 
         # ── obsługa błędów (poziom języka, nie biblioteka) ──
         def b_error(msg=None, level=1, *_):
-            # string → lua_value = msg; traceback osobno (pcall widzi czysty msg)
-            # level: pomiń N ramek przy budowie stacka (jak Lua)
+            # string → lua_value = msg (pcall widzi czysty msg);
+            # traceback ma lokalizację chunk:line + stack
             if isinstance(msg, str) or msg is None:
                 m = "error" if msg is None else msg
                 try:
                     lv = 1 if level is None else int(level)
                 except (TypeError, ValueError):
                     lv = 1
-                tb = self._format_traceback(m, lv)
+                head = self._error_head(m)
+                tb = self._format_traceback(head, lv)
                 raise LuaError(m, value=m, traceback=tb)
             raise LuaError(_tostring(msg), value=msg)
 
@@ -198,11 +221,11 @@ class Evaluator:
                 if len(args) > 1:
                     m = args[1]
                     if isinstance(m, str):
-                        tb = self._format_traceback(m, 1)
+                        tb = self._format_traceback(self._error_head(m), 1)
                         raise LuaError(m, value=m, traceback=tb)
                     raise LuaError(_tostring(m), value=m)
                 m = "assertion failed!"
-                raise LuaError(m, value=m, traceback=self._format_traceback(m, 1))
+                raise LuaError(m, value=m, traceback=self._format_traceback(self._error_head(m), 1))
             return list(args)                            # sukces: zwraca WSZYSTKIE argumenty
 
         def b_pcall(f=None, *args):
@@ -373,6 +396,8 @@ class Evaluator:
         def b_status(co=None, *_):
             if not isinstance(co, LuaThread):
                 raise LuaError("coroutine.status: oczekiwano thread")
+            if getattr(co, "closed", False):
+                return "dead"
             if co is self._coro and co.status == "running":
                 return "running"
             return co.status
@@ -382,6 +407,23 @@ class Evaluator:
                 return [None, False]                     # main thread
             return [self._coro, True]
 
+        def b_isyieldable(*_):
+            return self._coro is not None
+
+        def b_close(co=None, *_):
+            if not isinstance(co, LuaThread):
+                raise LuaError("coroutine.close: oczekiwano thread")
+            if co is self._coro:
+                raise LuaError("cannot close a running coroutine")
+            if getattr(co, "closed", False) or co.status == "dead":
+                co.closed = True
+                co.status = "dead"
+                return [True]
+            co.closed = True
+            co.status = "dead"
+            co.gen = None
+            return [True]
+
         def b_yield(*args):
             # obsłużone w _call_gen przez wartownik; tu tylko błąd sync
             raise LuaError("attempt to yield from outside a coroutine")
@@ -389,7 +431,7 @@ class Evaluator:
         def b_resume(co=None, *args):
             if not isinstance(co, LuaThread):
                 return [False, "coroutine expected"]
-            if co.status == "dead":
+            if getattr(co, "closed", False) or co.status == "dead":
                 return [False, "cannot resume dead coroutine"]
             if co.status == "running":
                 return [False, "cannot resume running coroutine"]
@@ -449,6 +491,7 @@ class Evaluator:
         for n, fn in (
             ("create", b_create), ("resume", b_resume), ("yield", b_yield),
             ("status", b_status), ("wrap", b_wrap), ("running", b_running),
+            ("isyieldable", b_isyieldable), ("close", b_close),
         ):
             a = self.store.atom_new("builtin", "co." + n, value=fn)
             # bind via table field helpers after G exists — use raw bind
@@ -516,11 +559,34 @@ class Evaluator:
             pkg.bind("s:" + n, a)
         pa = self.store.atom_new("lib", "package", value=pkg)
         self.G.bind("package", pa)
-        # debug.traceback (minimalny debug — bez reszty API)
+        # debug.* — subset read/mutate locale Lua; zero Store/host escape
+        def b_getinfo(level_or_fn=None, what=None, *_):
+            return self._debug_getinfo(level_or_fn, what)
+
+        def b_getlocal(level=None, index=None, *_):
+            return self._debug_getlocal(level, index)
+
+        def b_setlocal(level=None, index=None, value=None, *_):
+            return self._debug_setlocal(level, index, value)
+
+        def b_getupvalue(fn=None, index=None, *_):
+            return self._debug_getupvalue(fn, index)
+
+        def b_setupvalue(fn=None, index=None, value=None, *_):
+            return self._debug_setupvalue(fn, index, value)
+
         dbg = self.store.bubble_new("table")
-        dta = self.store.atom_new("field", "s:traceback", value=b_traceback)
-        dta.metadata["k"] = "traceback"
-        dbg.bind("s:traceback", dta)
+        for n, fn in (
+            ("traceback", b_traceback),
+            ("getinfo", b_getinfo),
+            ("getlocal", b_getlocal),
+            ("setlocal", b_setlocal),
+            ("getupvalue", b_getupvalue),
+            ("setupvalue", b_setupvalue),
+        ):
+            ka = self.store.atom_new("field", "s:" + n, value=fn)
+            ka.metadata["k"] = n
+            dbg.bind("s:" + n, ka)
         da = self.store.atom_new("lib", "debug", value=dbg)
         self.G.bind("debug", da)
         # coroutine table
@@ -577,24 +643,66 @@ class Evaluator:
         self.G.bind("io", ia)
         self._declared_globals.add("io")
 
-        # collectgarbage — mapowanie na gc_step substratu
-        def b_collectgarbage(opt=None, *_):
+        # collectgarbage — mapowanie na gc_step / settle substratu (nie omija T×reach)
+        def b_collectgarbage(opt=None, arg=None, *_):
             if opt is None or opt == "collect":
                 self.gc_step()
                 return 0
             if opt == "count":
-                return float(len(self.store.atoms()))
+                # KB-ish: atomy osiągalne z G + live envs (nie cały heap silnika aN)
+                return self._guest_live_atom_count() / 1024.0
             if opt == "isrunning":
                 return True
+            if opt == "step":
+                # jeden krok settle + weak/__gc (arg ignorowany lub liczba ticków)
+                try:
+                    n = 1 if arg is None else max(1, int(arg))
+                except (TypeError, ValueError):
+                    n = 1
+                try:
+                    self.store.settle(n)
+                except Exception:
+                    pass
+                self.gc_step()
+                return True
+            if opt == "stop" or opt == "restart" or opt == "setpause" or opt == "setstepmul":
+                # no-op kompatybilny — GC steruje substrat
+                return 0
             return 0
         cga = self.store.atom_new("builtin", "collectgarbage", value=b_collectgarbage)
         self.G.bind("collectgarbage", cga)
         self._declared_globals.add("collectgarbage")
 
+    def _guest_live_atom_count(self):
+        """Liczba atomów w grafie gościa (G + active envs + domknięcia) — metryka count."""
+        seen_bub = set()
+        aids = set()
+        stack = [self.G]
+        for env in self._active_envs:
+            if isinstance(env, Bubble):
+                stack.append(env)
+        while stack:
+            b = stack.pop()
+            bid = id(b)
+            if bid in seen_bub:
+                continue
+            seen_bub.add(bid)
+            for kn in _own_keys(b):
+                atom = _own_atom(b, kn)
+                if atom is None:
+                    continue
+                aids.add(getattr(atom, "id", id(atom)))
+                v = atom.metadata.get("v")
+                if isinstance(v, Bubble):
+                    stack.append(v)
+                elif isinstance(v, LuaFunction) and isinstance(getattr(v, "env", None), Bubble):
+                    stack.append(v.env)
+        return float(len(aids))
+
     def gc_step(self):
         """Krok GC gościa: słabe tabele + finalizery __gc + settle substratu.
 
-        1) wyczyść wpisy weak (klucz/wartość-tabela nieosiągalna z G)
+        1) wyczyść wpisy weak (klucz/wartość-tabela nieosiągalna z G + live envs)
         2) settle store (reach-GC atomów)
         3) wywołaj __gc dla finalizerów, których tabela zginęła z reach
         """
@@ -604,12 +712,6 @@ class Evaluator:
         except Exception:
             pass
         # weak clear
-        live_ids = set()
-        try:
-            for a in self.store.atoms():
-                live_ids.add(a.id if hasattr(a, "id") else id(a))
-        except Exception:
-            live_ids = None
         still_weak = []
         for tb in self._weak_tables:
             if not isinstance(tb, Bubble):
@@ -628,19 +730,17 @@ class Evaluator:
                 k = atom.metadata.get("k")
                 v = atom.metadata.get("v")
                 drop = False
-                if weak_k and isinstance(k, Bubble):
-                    # klucz-tabela: drop jeśli nie ma już żadnych wiązań żyjących?
-                    # uproszczenie: drop jeśli store nie ma atomów pól klucza i nie w roots
-                    if live_ids is not None and not self._bubble_reachable(k):
-                        drop = True
+                if weak_k and isinstance(k, Bubble) and not self._bubble_reachable(k):
+                    drop = True
                 if weak_v and isinstance(v, Bubble) and not self._bubble_reachable(v):
                     drop = True
                 if drop:
                     _own_unbind(tb, kn)
             still_weak.append(tb)
         self._weak_tables = still_weak
-        # finalizers
+        # finalizers — błędy nie giną w ciszy (zbierane; po pętli raport)
         remain = []
+        gc_errors = []
         for tb in self._finalizers:
             if self._bubble_reachable(tb):
                 remain.append(tb)
@@ -652,27 +752,37 @@ class Evaluator:
             if gc is not None:
                 try:
                     self._call(gc, [tb])
-                except Exception:
-                    pass
+                except LuaError as e:
+                    gc_errors.append(e)
+                except Exception as ex:
+                    gc_errors.append(LuaError(f"__gc: {ex}"))
         self._finalizers = remain
         try:
             self.store.settle(50)
         except Exception:
             pass
+        if gc_errors:
+            # nie zrywaj sesji w środku vacuum — ostatni błąd do hosta / kolejnego pcall
+            self._last_gc_error = gc_errors[-1]
+            # widoczne w stdout sesji (diagnostyka)
+            for e in gc_errors:
+                self._out.append("[__gc error] " + _tostring(e.lua_value))
 
     def _bubble_reachable(self, tb):
-        """Czy bąbel jest osiągalny z korzeni Store (uproszczenie: w roots lub
-        ma parent chain do roota / jest w bindings żywej ścieżki)."""
+        """Czy bąbel osiągalny z G, store.roots oraz live call/block envs."""
         if tb is None or not isinstance(tb, Bubble):
             return False
         if tb is self.G:
             return True
-        roots = getattr(self.store, "roots", None) or []
-        if tb in roots:
-            return True
-        # BFS z G
-        seen = set()
+        roots = list(getattr(self.store, "roots", None) or [])
         stack = [self.G]
+        for r in roots:
+            if isinstance(r, Bubble):
+                stack.append(r)
+        for env in self._active_envs:
+            if isinstance(env, Bubble):
+                stack.append(env)
+        seen = set()
         while stack:
             b = stack.pop()
             bid = id(b)
@@ -688,7 +798,7 @@ class Evaluator:
                 v = atom.metadata.get("v")
                 if isinstance(v, Bubble):
                     stack.append(v)
-                elif isinstance(v, LuaFunction) and isinstance(v.env, Bubble):
+                elif isinstance(v, LuaFunction) and isinstance(getattr(v, "env", None), Bubble):
                     stack.append(v.env)
         return False
 
@@ -787,12 +897,20 @@ class Evaluator:
                 return ret[0] if ret[0] is not None else True
             return ret
         except LuaError as e:
-            # dołóż lokalizację jeśli brak
+            # pcall/xpcall: czysty lua_value; nieprzechwycony: zachowaj traceback
+            # (z chunk:line w nagłówku). Nie nadpisuj value prefiksem lokalizacji.
+            if getattr(e, "traceback", None):
+                raise
             msg = _tostring(e.lua_value)
             prefix = self._loc_prefix()
             if prefix and isinstance(msg, str) and prefix not in msg[: max(8, len(prefix) + 4)]:
-                if not msg.startswith(chunkname or ""):
-                    raise LuaError(prefix + msg, value=prefix + msg) from e
+                if not (isinstance(chunkname, str) and msg.startswith(chunkname)):
+                    head = prefix + msg
+                    raise LuaError(
+                        msg,
+                        value=e.lua_value,
+                        traceback=self._format_traceback(head, 1),
+                    ) from e
             raise
         finally:
             self._cur_chunk = prev_chunk
@@ -831,18 +949,31 @@ class Evaluator:
 
     # ── publiczne: jedna linia/chunk -> string ──
     def eval_line(self, line):
+        """Jedna linia REPL: izolowany scope (jak chunk), _ENV=G — nie brudzi G localami.
+
+        P0-2: wcześniej locale lądowały na G i wyciekały między liniami.
+        """
         self._out = []
-        self._call_stack.append("stdin")
+        # scope jak compile_chunk: parent=None, wolne nazwy → _ENV (=G)
+        scope = self.store.bubble_new("stdin", parent=None)
+        ea = self.store.atom_new("var", "_ENV", value=self.G)
+        scope.bind("_ENV", ea)
+        stdin_fr = {
+            "name": "stdin", "what": "main", "fn": None,
+            "scope": scope, "source": "=stdin", "currentline": None,
+        }
+        self._call_stack.append(stdin_fr)
+        self._push_live_env(scope)
+        display = _NOVAL
         try:
             toks = tokenize(line)
             block = Parser(toks).parse_chunk()
-            display = _NOVAL
             i = 0
             jumps = 0
             while i < len(block):
                 stmt = block[i]
                 try:
-                    val = self._exec_stmt(stmt, self.G)
+                    val = self._exec_stmt(stmt, scope)
                     i += 1
                 except _Goto as g:
                     # etykieta na poziomie chunka? (jak _exec_block)
@@ -881,7 +1012,8 @@ class Evaluator:
         except Exception as e:                       # nigdy nie leci w hosta
             return f"blad: {type(e).__name__}: {e}"
         finally:
-            if self._call_stack and self._call_stack[-1] == "stdin":
+            self._pop_live_env(scope)
+            if self._call_stack and self._call_stack[-1] is stdin_fr:
                 self._call_stack.pop()
         if self._out:
             return "\n".join(self._out)
@@ -939,6 +1071,37 @@ class Evaluator:
         if not parts:
             return ""
         return ":".join(parts) + ": "
+
+    def _error_head(self, msg):
+        """Pierwsza linia błędu: opcjonalnie chunk:line: message (dla tracebacku)."""
+        prefix = self._loc_prefix()
+        m = msg if isinstance(msg, str) else _tostring(msg)
+        if prefix and prefix not in m[: max(8, len(prefix) + 4)]:
+            return prefix + m
+        return m
+
+    def _touch_frame_line(self, line):
+        """Aktualizuj linię na szczycie stacka (debug + traceback)."""
+        if line is None:
+            return
+        self._cur_line = line
+        if self._call_stack and isinstance(self._call_stack[-1], dict):
+            self._call_stack[-1]["currentline"] = line
+
+    def _push_live_env(self, env):
+        """Zarejestruj bąbel zakresu w extra_reach (call + bloki do/for/if/…)."""
+        if env is not None:
+            self._active_envs.append(env)
+
+    def _pop_live_env(self, env):
+        if self._active_envs and self._active_envs[-1] is env:
+            self._active_envs.pop()
+
+    def _block_env(self, parent, label):
+        """Nowy bąbel bloku + extra_reach na czas życia bloku (caller: try/finally pop)."""
+        inner = self.store.bubble_new(label, parent=parent)
+        self._push_live_env(inner)
+        return inner
 
     def _exec_block(self, block, env):
         last = None
@@ -1003,7 +1166,7 @@ class Evaluator:
         self._budget_tick(1)
         line, stmt = self._stmt_core(stmt)
         if line is not None:
-            self._cur_line = line
+            self._touch_frame_line(line)
         tag = stmt[0]
         if tag == "local":
             # AST: ("local", names, inits, attrs) — attrs opcjonalne (wstecz: 3-el.)
@@ -1086,27 +1249,38 @@ class Evaluator:
         if tag == "exprstat":
             return self._eval(stmt[1], env)
         if tag == "do":
-            inner = self.store.bubble_new("do", parent=env)
-            return self._exec_block(stmt[1], inner)
+            inner = self._block_env(env, "do")
+            try:
+                return self._exec_block(stmt[1], inner)
+            finally:
+                self._pop_live_env(inner)
         if tag == "if":
             _, branches, els = stmt
             for cond, blk in branches:
                 if _truthy(self._eval(cond, env)):
-                    inner = self.store.bubble_new("if", parent=env)
-                    return self._exec_block(blk, inner)
+                    inner = self._block_env(env, "if")
+                    try:
+                        return self._exec_block(blk, inner)
+                    finally:
+                        self._pop_live_env(inner)
             if els is not None:
-                inner = self.store.bubble_new("else", parent=env)
-                return self._exec_block(els, inner)
+                inner = self._block_env(env, "else")
+                try:
+                    return self._exec_block(els, inner)
+                finally:
+                    self._pop_live_env(inner)
             return None
         if tag == "while":
             _, cond, blk = stmt
             guard = 0
             while _truthy(self._eval(cond, env)):
-                inner = self.store.bubble_new("while", parent=env)
+                inner = self._block_env(env, "while")
                 try:
                     self._exec_block(blk, inner)
                 except _Break:
                     break
+                finally:
+                    self._pop_live_env(inner)
                 guard += 1
                 if guard > _LOOP_GUARD:
                     raise LuaError("pętla while przekroczyła limit iteracji")
@@ -1116,13 +1290,15 @@ class Evaluator:
             _, blk, cond = stmt
             guard = 0
             while True:
-                inner = self.store.bubble_new("repeat", parent=env)
+                inner = self._block_env(env, "repeat")
                 try:
                     self._exec_block(blk, inner)
+                    if _truthy(self._eval(cond, inner)):
+                        break
                 except _Break:
                     break
-                if _truthy(self._eval(cond, inner)):     # warunek w zakresie bloku!
-                    break
+                finally:
+                    self._pop_live_env(inner)
                 guard += 1
                 if guard > _LOOP_GUARD:
                     raise LuaError("pętla repeat przekroczyła limit iteracji")
@@ -1148,13 +1324,15 @@ class Evaluator:
             i = start
             guard = 0
             while (step > 0 and i <= limit) or (step < 0 and i >= limit):
-                inner = self.store.bubble_new("for", parent=env)
+                inner = self._block_env(env, "for")
                 atom = self.store.atom_new("var", name, value=i)
                 inner.bind(name, atom)
                 try:
                     self._exec_block(blk, inner)
                 except _Break:
                     break
+                finally:
+                    self._pop_live_env(inner)
                 i += step
                 guard += 1
                 if guard > _LOOP_GUARD:
@@ -1177,7 +1355,7 @@ class Evaluator:
                     if first is None:
                         break
                     ctrl = first
-                    inner = self.store.bubble_new("forin", parent=env)
+                    inner = self._block_env(env, "forin")
                     for idx, nm in enumerate(names):
                         v = results[idx] if idx < len(results) else None
                         atom = self.store.atom_new("var", nm, value=v)
@@ -1186,6 +1364,8 @@ class Evaluator:
                         self._exec_block(blk, inner)
                     except _Break:
                         break
+                    finally:
+                        self._pop_live_env(inner)
                     guard += 1
                     if guard > _LOOP_GUARD:
                         raise LuaError("pętla for-in przekroczyła limit iteracji")
@@ -1372,8 +1552,34 @@ class Evaluator:
             return getattr(fn, "__name__", None) or "builtin"
         return "?"
 
+    def _make_frame(self, fn, scope=None):
+        """Rekord ramki na _call_stack (traceback + debug.*)."""
+        name = self._frame_label(fn)
+        if isinstance(fn, LuaFunction):
+            what = "main" if (fn.name or "").startswith("@") or (fn.name or "").startswith("=") else "Lua"
+            source = fn.name if isinstance(fn.name, str) else "=(lua)"
+        elif callable(fn):
+            what = "C"
+            source = "=[C]"
+        else:
+            what = "C"
+            source = "=[C]"
+        return {
+            "name": name,
+            "what": what,
+            "fn": fn,
+            "scope": scope,
+            "source": source,
+            "currentline": self._cur_line,
+        }
+
+    def _frame_name(self, fr):
+        if isinstance(fr, dict):
+            return fr.get("name") or "?"
+        return str(fr) if fr is not None else "?"
+
     def _format_traceback(self, msg=None, level=1):
-        """Uproszczony stack traceback (nazwy funkcji / chunków, bez numerów linii)."""
+        """Uproszczony stack traceback (nazwy funkcji / chunków)."""
         try:
             lv = max(1, int(level))
         except (TypeError, ValueError):
@@ -1382,7 +1588,6 @@ class Evaluator:
         if msg is not None and msg is not False:
             lines.append(_tostring(msg) if not isinstance(msg, str) else msg)
         lines.append("stack traceback:")
-        # _call_stack: [0]=najstarsza … [-1]=najnowsza; Lua pokazuje od najnowszej
         stack = list(reversed(self._call_stack))
         skip = lv - 1
         shown = stack[skip:] if skip < len(stack) else []
@@ -1390,8 +1595,198 @@ class Evaluator:
             lines.append("\t[C]: in ?")
         else:
             for fr in shown:
-                lines.append(f"\t{fr}")
+                nm = self._frame_name(fr)
+                if isinstance(fr, dict) and fr.get("what") == "C":
+                    lines.append(f"\t[C]: in {nm}")
+                else:
+                    src = fr.get("source") if isinstance(fr, dict) else None
+                    ln = fr.get("currentline") if isinstance(fr, dict) else None
+                    if src and ln is not None:
+                        lines.append(f"\t{src}:{ln}: in {nm}")
+                    elif src:
+                        lines.append(f"\t{src}: in {nm}")
+                    else:
+                        lines.append(f"\t{nm}")
         return "\n".join(lines)
+
+    # ── debug.* (subset; bez escape do Store / host path) ──
+    def _debug_resolve_level(self, level):
+        """Lua: level 0 = getinfo, 1 = caller… → indeks w _call_stack."""
+        try:
+            lv = int(level)
+        except (TypeError, ValueError):
+            raise LuaError("debug: zły level")
+        # stack[-1] = bieżąca (zwykle C getinfo/getlocal)
+        idx = len(self._call_stack) - 1 - lv
+        if idx < 0 or idx >= len(self._call_stack):
+            return None
+        return self._call_stack[idx]
+
+    def _debug_info_table(self, fields):
+        t = self.store.bubble_new("table")
+        for k, v in fields.items():
+            if v is None and k not in ("func",):
+                continue
+            atom = self.store.atom_new("field", "s:" + k, value=v)
+            atom.metadata["k"] = k
+            t.bind("s:" + k, atom)
+        return t
+
+    def _short_src(self, source):
+        if not isinstance(source, str) or not source:
+            return "[C]"
+        # nie ujawniaj absolutnych ścieżek hosta — tylko chunkname
+        s = source
+        if s.startswith("@"):
+            s = s[1:]
+        if len(s) > 60:
+            s = "..." + s[-57:]
+        return s
+
+    def _debug_getinfo(self, level_or_fn=None, what=None, *_):
+        what = what if isinstance(what, str) and what else "flnStu"
+        fr = None
+        fn = None
+        if isinstance(level_or_fn, LuaFunction) or callable(level_or_fn):
+            fn = level_or_fn
+            fr = {
+                "name": self._frame_label(fn),
+                "what": "Lua" if isinstance(fn, LuaFunction) else "C",
+                "fn": fn,
+                "scope": None,
+                "source": fn.name if isinstance(fn, LuaFunction) else "=[C]",
+                "currentline": None,
+            }
+        else:
+            fr = self._debug_resolve_level(1 if level_or_fn is None else level_or_fn)
+            if fr is None:
+                return None
+            if not isinstance(fr, dict):
+                fr = {"name": str(fr), "what": "Lua", "fn": None, "scope": None,
+                      "source": "?", "currentline": None}
+            fn = fr.get("fn")
+
+        fields = {}
+        if "n" in what:
+            fields["name"] = fr.get("name")
+            fields["namewhat"] = "global" if fr.get("what") == "main" else "local"
+        if "S" in what:
+            src = fr.get("source") or "=[C]"
+            fields["source"] = src if isinstance(src, str) else "=[C]"
+            fields["short_src"] = self._short_src(fields["source"])
+            fields["what"] = fr.get("what") or "Lua"
+            fields["linedefined"] = -1
+            fields["lastlinedefined"] = -1
+        if "l" in what:
+            cl = fr.get("currentline")
+            if cl is None:
+                cl = self._cur_line
+            fields["currentline"] = int(cl) if cl is not None else -1
+        if "u" in what:
+            nups = 0
+            if isinstance(fn, LuaFunction) and isinstance(fn.env, Bubble):
+                nups = len([k for k in _own_keys(fn.env) if not str(k).startswith("@")])
+            fields["nups"] = nups
+            fields["nparams"] = (
+                len([p for p in fn.params if p != "..."])
+                if isinstance(fn, LuaFunction) else 0
+            )
+            fields["isvararg"] = (
+                isinstance(fn, LuaFunction) and "..." in fn.params
+            )
+        if "f" in what:
+            fields["func"] = fn
+        if "t" in what:
+            fields["istailcall"] = False
+        return self._debug_info_table(fields)
+
+    def _scope_locals(self, scope):
+        """Lista (name, atom) locale ramki (własne wiązania, bez @meta/@tbc)."""
+        if scope is None or not isinstance(scope, Bubble):
+            return []
+        out = []
+        for kn in _own_keys(scope, skip={_META_KEY, _TBC_KEY}):
+            atom = _own_atom(scope, kn)
+            if atom is None:
+                continue
+            # param/var: nazwa = kn (bez prefiksu s: — locale to surowe nazwy)
+            name = kn
+            if name.startswith("s:"):
+                name = name[2:]
+            if name.startswith("@"):
+                continue
+            out.append((name, atom))
+        return out
+
+    def _debug_getlocal(self, level=None, index=None, *_):
+        fr = self._debug_resolve_level(1 if level is None else level)
+        if fr is None or not isinstance(fr, dict):
+            return []
+        try:
+            idx = int(index)
+        except (TypeError, ValueError):
+            raise LuaError("debug.getlocal: zły indeks")
+        locs = self._scope_locals(fr.get("scope"))
+        if idx < 1 or idx > len(locs):
+            return []
+        name, atom = locs[idx - 1]
+        return [name, atom.metadata.get("v")]
+
+    def _debug_setlocal(self, level=None, index=None, value=None, *_):
+        fr = self._debug_resolve_level(1 if level is None else level)
+        if fr is None or not isinstance(fr, dict):
+            return None
+        try:
+            idx = int(index)
+        except (TypeError, ValueError):
+            raise LuaError("debug.setlocal: zły indeks")
+        locs = self._scope_locals(fr.get("scope"))
+        if idx < 1 or idx > len(locs):
+            return None
+        name, atom = locs[idx - 1]
+        if atom.metadata.get("const"):
+            raise LuaError(f"próba przypisania do stałej '{name}'")
+        atom.metadata["v"] = value
+        return name
+
+    def _upvalue_list(self, fn):
+        """Upvalues domknięcia ≈ własne wiązania fn.env (model bąbla, nie sloty PUC).
+
+        Pomijamy _ENV (zawsze obecne na wrapie chunka) — mniej mylące niż „pierwszy
+        upvalue = _ENV”.
+        """
+        if not isinstance(fn, LuaFunction) or not isinstance(fn.env, Bubble):
+            return []
+        return [(n, a) for n, a in self._scope_locals(fn.env) if n != "_ENV"]
+
+    def _debug_getupvalue(self, fn=None, index=None, *_):
+        if not isinstance(fn, LuaFunction):
+            return []
+        try:
+            idx = int(index)
+        except (TypeError, ValueError):
+            raise LuaError("debug.getupvalue: zły indeks")
+        ups = self._upvalue_list(fn)
+        if idx < 1 or idx > len(ups):
+            return []
+        name, atom = ups[idx - 1]
+        return [name, atom.metadata.get("v")]
+
+    def _debug_setupvalue(self, fn=None, index=None, value=None, *_):
+        if not isinstance(fn, LuaFunction):
+            return None
+        try:
+            idx = int(index)
+        except (TypeError, ValueError):
+            raise LuaError("debug.setupvalue: zły indeks")
+        ups = self._upvalue_list(fn)
+        if idx < 1 or idx > len(ups):
+            return None
+        name, atom = ups[idx - 1]
+        if atom.metadata.get("const"):
+            raise LuaError(f"próba przypisania do stałej '{name}'")
+        atom.metadata["v"] = value
+        return name
 
     def _call(self, fn, args):
         return self._sync_drive(self._call_gen(fn, list(args)))
@@ -1407,9 +1802,9 @@ class Evaluator:
 
         if isinstance(fn, LuaFunction):
             scope = self.store.bubble_new("call", parent=fn.env)
-            self._active_envs.append(scope)
-            label = self._frame_label(fn)
-            self._call_stack.append(label)
+            self._push_live_env(scope)
+            frame = self._make_frame(fn, scope=scope)
+            self._call_stack.append(frame)
             named = [p for p in fn.params if p != "..."]
             for i, p in enumerate(named):
                 v = args[i] if i < len(args) else None
@@ -1429,20 +1824,19 @@ class Evaluator:
             finally:
                 if is_va:
                     self._va_stack.pop()
-                if self._active_envs and self._active_envs[-1] is scope:
-                    self._active_envs.pop()
-                if self._call_stack and self._call_stack[-1] == label:
+                self._pop_live_env(scope)
+                if self._call_stack and self._call_stack[-1] is frame:
                     self._call_stack.pop()
             return []
         if callable(fn):
             # pcall/xpcall i inne: synchroniczne (yield przez C-boundary → błąd w _sync_drive)
-            label = self._frame_label(fn)
-            self._call_stack.append(label)
+            frame = self._make_frame(fn, scope=None)
+            self._call_stack.append(frame)
             try:
                 r = fn(*args)
                 return r if isinstance(r, list) else [r]
             finally:
-                if self._call_stack and self._call_stack[-1] == label:
+                if self._call_stack and self._call_stack[-1] is frame:
                     self._call_stack.pop()
         if isinstance(fn, Bubble):
             mm = self._metamethod(fn, "__call")
@@ -1485,7 +1879,7 @@ class Evaluator:
         """Wersja generatorowa: większość instrukcji = sync; call-path przez gen."""
         line, stmt = self._stmt_core(stmt)
         if line is not None:
-            self._cur_line = line
+            self._touch_frame_line(line)
         tag = stmt[0]
         # instrukcje z potencjalnym yield w wyrażeniach / ciele
         if tag in ("local", "global", "global_star", "localfunc", "return", "break",
@@ -1539,27 +1933,38 @@ class Evaluator:
                 env.bind(name, atom)
             return None
         if tag == "do":
-            inner = self.store.bubble_new("do", parent=env)
-            return (yield from self._exec_block_gen(stmt[1], inner))
+            inner = self._block_env(env, "do")
+            try:
+                return (yield from self._exec_block_gen(stmt[1], inner))
+            finally:
+                self._pop_live_env(inner)
         if tag == "if":
             _, branches, els = stmt
             for cond, blk in branches:
                 if _truthy((yield from self._eval_gen(cond, env))):
-                    inner = self.store.bubble_new("if", parent=env)
-                    return (yield from self._exec_block_gen(blk, inner))
+                    inner = self._block_env(env, "if")
+                    try:
+                        return (yield from self._exec_block_gen(blk, inner))
+                    finally:
+                        self._pop_live_env(inner)
             if els is not None:
-                inner = self.store.bubble_new("else", parent=env)
-                return (yield from self._exec_block_gen(els, inner))
+                inner = self._block_env(env, "else")
+                try:
+                    return (yield from self._exec_block_gen(els, inner))
+                finally:
+                    self._pop_live_env(inner)
             return None
         if tag == "while":
             _, cond, blk = stmt
             guard = 0
             while _truthy((yield from self._eval_gen(cond, env))):
-                inner = self.store.bubble_new("while", parent=env)
+                inner = self._block_env(env, "while")
                 try:
                     yield from self._exec_block_gen(blk, inner)
                 except _Break:
                     break
+                finally:
+                    self._pop_live_env(inner)
                 guard += 1
                 if guard > _LOOP_GUARD:
                     raise LuaError("pętla while przekroczyła limit iteracji")
@@ -1568,13 +1973,15 @@ class Evaluator:
             _, blk, cond = stmt
             guard = 0
             while True:
-                inner = self.store.bubble_new("repeat", parent=env)
+                inner = self._block_env(env, "repeat")
                 try:
                     yield from self._exec_block_gen(blk, inner)
+                    if _truthy((yield from self._eval_gen(cond, inner))):
+                        break
                 except _Break:
                     break
-                if _truthy((yield from self._eval_gen(cond, inner))):
-                    break
+                finally:
+                    self._pop_live_env(inner)
                 guard += 1
                 if guard > _LOOP_GUARD:
                     raise LuaError("pętla repeat przekroczyła limit iteracji")
@@ -1589,13 +1996,15 @@ class Evaluator:
             i = start
             guard = 0
             while (step > 0 and i <= limit) or (step < 0 and i >= limit):
-                inner = self.store.bubble_new("for", parent=env)
+                inner = self._block_env(env, "for")
                 atom = self.store.atom_new("var", name, value=i)
                 inner.bind(name, atom)
                 try:
                     yield from self._exec_block_gen(blk, inner)
                 except _Break:
                     break
+                finally:
+                    self._pop_live_env(inner)
                 i += step
                 guard += 1
                 if guard > _LOOP_GUARD:
@@ -1616,7 +2025,7 @@ class Evaluator:
                     if first is None:
                         break
                     ctrl = first
-                    inner = self.store.bubble_new("forin", parent=env)
+                    inner = self._block_env(env, "forin")
                     for idx, nm in enumerate(names):
                         v = results[idx] if idx < len(results) else None
                         atom = self.store.atom_new("var", nm, value=v)
@@ -1625,6 +2034,8 @@ class Evaluator:
                         yield from self._exec_block_gen(blk, inner)
                     except _Break:
                         break
+                    finally:
+                        self._pop_live_env(inner)
                     guard += 1
                     if guard > _LOOP_GUARD:
                         raise LuaError("pętla for-in przekroczyła limit iteracji")
