@@ -210,11 +210,11 @@ Crimson Loop               ⏳  introspection layer
 
 ## License
 
-Source code in this repository is licensed under the **[MIT License](LICENSE)**.
+Source code in this repository (including `archiwum/`) is licensed under the **[MIT License](LICENSE)**.
 
-Previously released under GPL-3.0; relicensed to MIT as of 2026-07-07. Forks created before that date may remain under GPL at the discretion of their maintainers.
+Previously released under GPL-3.0; relicensed to MIT as of 2026-07-07 (archiwum legacy GPL notice replaced 2026-07-31). Forks created under GPL before relicensing may remain under GPL at the discretion of their maintainers.
 
-Academic papers and Zenodo publications retain their original licenses (see DOI links above). Related project: [Cynober DB / DBase](https://github.com/Maciej-EriAmo/DBase) (MIT).
+Academic papers and Zenodo publications retain their original licenses (see DOI links above). Related projects (also MIT): [holonOs](https://github.com/Maciej-EriAmo/holonOs), [DBase](https://github.com/Maciej-EriAmo/DBase), [Luneta](https://github.com/Maciej-EriAmo/Luneta).
 
 ---
 
