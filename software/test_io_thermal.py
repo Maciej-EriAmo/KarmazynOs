@@ -190,6 +190,22 @@ class IoThermalNative(unittest.TestCase):
         out = shell.feed(":io")
         self.assertIn("stage=1", out)
 
+    def test_native_host_string_id_alias(self):
+        """Product: Lua/tools używają string id; core = u32 — host mapuje."""
+        store = _open_native()
+        self.assertIsNotNone(store)
+        ev = boot.mount_evaluator(store, kind="lua")
+        host = getattr(ev, "host", None)
+        self.assertIsNotNone(host)
+        proxy = host.create_atom("tool_x", "S", "hello", 50.0)
+        self.assertNotIsInstance(proxy, str, msg=proxy)
+        got = host.get_atom("tool_x")
+        self.assertIsNotNone(got)
+        # real id w Store jest int
+        real = host._resolve_aid("tool_x")
+        self.assertIsInstance(real, int)
+        self.assertTrue(store.has_atom(real))
+
 
 if __name__ == "__main__":
     unittest.main()

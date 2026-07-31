@@ -1,9 +1,10 @@
 # Plan budowy i wdrożenia KarmazynOs
 
-**Status:** plan roboczy  
+**Status:** plan roboczy · **L1 host:** gate + `scripts/dry_run_l1.ps1` (2026-07-31)  
 **Data:** 2026-07-31  
 **Wzór:** Gentoo stages + Dual-track (Product native / Lab python)  
-**Kompilator Product:** `rustc` + cargo · **Mapa:** `rust_substrate_map.md`
+**Kompilator Product:** `rustc` + cargo · **Mapa:** `rust_substrate_map.md`  
+**Język:** L2+ (GRUB/ISO/kentry) = plan, nie nośnik — nie raportować jako „done”.
 
 Powiązania: `io_stage1.md`, `studio_sdl.md`, `grub_loader_plan.md`, `runtime_pl.md`, `VERSION.txt`.
 

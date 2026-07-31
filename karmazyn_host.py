@@ -86,10 +86,46 @@ class KarmazynHost:
         self._fs = {}              # (bubble, file_id) -> content
         self._cache = {}           # name -> {E, S, ...}
         self._screen = []          # clear_screen marker for tests
-        # surface Φ: id z create_atom/clone (nie heap Lua / atom_new)
+        # surface Φ: logiczne id (string) z create_atom/clone — nie heap Lua aN
         self._phi_ids = set()
+        # Product native (u32): logiczna nazwa → realne id Store (int)
+        # Python Store: zwykle 1:1 string; alias i tak nieszkodliwy
+        self._id_alias = {}
         # jeden proxy na id — bez ponownej alokacji bąbli przy każdym list_atoms
         self._proxy_by_id = {}
+
+    def _resolve_aid(self, aid):
+        """Logical id (Lua/tools) → id Store (str | int)."""
+        if aid is None:
+            return None
+        if aid in self._id_alias:
+            return self._id_alias[aid]
+        if isinstance(aid, str) and aid in self._id_alias:
+            return self._id_alias[aid]
+        return aid
+
+    def _register_alias(self, logical, real) -> None:
+        if logical is None or real is None:
+            return
+        key = str(logical)
+        if not key or _is_engine_sid(key):
+            return
+        self._id_alias[key] = real
+        self._phi_ids.add(key)
+
+    def _store_has(self, aid) -> bool:
+        real = self._resolve_aid(aid)
+        try:
+            return bool(self.store.has_atom(real))
+        except (TypeError, ValueError):
+            return False
+
+    def _store_get(self, aid):
+        real = self._resolve_aid(aid)
+        try:
+            return self.store.get_atom(real)
+        except (TypeError, ValueError):
+            return None
 
     # ── pomocnicze: tabele Lua ─────────────────────────────────────────
     def _tbl(self):
@@ -104,16 +140,21 @@ class KarmazynHost:
             self._set(t, i, v)
         return t
 
-    def _atom_proxy(self, atom):
+    def _atom_proxy(self, atom, logical_id=None):
         """Tabela z __index: pola i metody atomu (live po id).
 
         Cache per id: ponowne list_atoms/get_atom NIE alokuje nowych bąbli/atomów
         w Store (wcześniej każdy list = nowe proxy = eksplozja heapu silnika).
+
+        logical_id: publiczne id z Lua/tools (string); real id w Store może być u32.
         """
-        aid = getattr(atom, "id", None)
-        if not isinstance(aid, str) or not aid:
+        real = getattr(atom, "id", None)
+        if real is None:
             return None
-        cached = self._proxy_by_id.get(aid)
+        # klucze cache: preferuj logiczne string id (surface Φ)
+        pub = logical_id if isinstance(logical_id, str) and logical_id else real
+        cache_key = pub if isinstance(pub, str) else str(real)
+        cached = self._proxy_by_id.get(cache_key)
         if cached is not None:
             return cached
 
@@ -121,7 +162,10 @@ class KarmazynHost:
         host = self
 
         def _live():
-            return store.get_atom(aid)
+            try:
+                return store.get_atom(real)
+            except (TypeError, ValueError):
+                return None
 
         def idx(_tbl, key=None, *_):
             if key is None:
@@ -130,7 +174,8 @@ class KarmazynHost:
             if a is None:
                 return None
             if key == "id":
-                return aid
+                # tools/Lua widzą logiczne id gdy znamy alias
+                return pub if isinstance(pub, str) else real
             if key == "S":
                 return a.S
             if key == "E":
@@ -145,6 +190,8 @@ class KarmazynHost:
             if key == "T_raw":
                 return float(a.T)
 
+            if key == "store_id":
+                return real
             if key == "get_T":
                 def get_T(*_a):
                     cur = _live()
@@ -217,7 +264,9 @@ class KarmazynHost:
 
             if key == "consolidate":
                 def consolidate(*_a):
-                    return host.consolidate(aid)
+                    # preferuj logiczne id (surface)
+                    lid = pub if isinstance(pub, str) else str(real)
+                    return host.consolidate(lid)
                 return consolidate
 
             return None
@@ -226,7 +275,7 @@ class KarmazynHost:
         mt = self._tbl()
         self._set(mt, "__index", idx)
         self.ev._set_metatable(t, mt)
-        self._proxy_by_id[aid] = t
+        self._proxy_by_id[cache_key] = t
         return t
 
     def _track_phi(self, aid: str) -> None:
@@ -234,36 +283,45 @@ class KarmazynHost:
             self._phi_ids.add(aid)
 
     def _untrack_phi(self, aid: str) -> None:
-        self._phi_ids.discard(aid)
-        self._proxy_by_id.pop(aid, None)
+        key = str(aid) if aid is not None else ""
+        self._phi_ids.discard(key)
+        self._id_alias.pop(key, None)
+        self._proxy_by_id.pop(key, None)
 
     def _reconcile_phi_ids(self) -> list:
         """Zwróć żywe atomy surface Φ.
 
         Źródła:
           1) rejestr hosta (create/clone przez karmazyn.*)
-          2) store.create_atom z testów/boot — publiczne id ≠ aN (kontrakt AtomStore)
+          2) store.create_atom — Python: string id; native: u32 + metadata _requested_id
         Nigdy nie listujemy heapu Lua (atom_new → a0,a1,…).
         """
         live = []
         seen = set()
-        # odkryj create_atom spoza hosta (np. test_host_tools: store.create_atom)
         try:
             for a in self.store.atoms():
-                aid = getattr(a, "id", None)
-                if not isinstance(aid, str) or _is_engine_sid(aid):
-                    continue
-                self._phi_ids.add(aid)
+                rid = getattr(a, "id", None)
+                md = getattr(a, "metadata", None) or {}
+                req = None
+                try:
+                    req = md.get("_requested_id") if hasattr(md, "get") else None
+                except Exception:
+                    req = None
+                if req is not None and str(req) and not _is_engine_sid(str(req)):
+                    self._register_alias(str(req), rid)
+                elif isinstance(rid, str) and not _is_engine_sid(rid):
+                    self._phi_ids.add(rid)
         except Exception:
             pass
         for aid in list(self._phi_ids):
-            a = self.store.get_atom(aid)
+            a = self._store_get(aid)
             if a is None:
                 self._untrack_phi(aid)
                 continue
-            if aid in seen:
+            key = str(aid)
+            if key in seen:
                 continue
-            seen.add(aid)
+            seen.add(key)
             live.append(a)
         return live
 
@@ -372,13 +430,13 @@ class KarmazynHost:
     def get_atom(self, aid=None, *_):
         if not isinstance(aid, str) or not aid:
             return None
-        atom = self.store.get_atom(aid)
+        atom = self._store_get(aid)
         if atom is None:
             self._untrack_phi(aid)
             return None
         if not _is_engine_sid(aid):
             self._track_phi(aid)
-        return self._atom_proxy(atom)
+        return self._atom_proxy(atom, logical_id=aid)
 
     def create_atom(self, aid=None, s=None, e=None, t=None, *_):
         if not isinstance(aid, str) or not aid:
@@ -389,12 +447,16 @@ class KarmazynHost:
         E = "" if e is None else str(e)
         T = _abs_T(t)
         try:
-            if self.store.has_atom(aid):
+            if self._store_has(aid):
                 return f"atom o id {aid!r} już istnieje"
-            self.store.create_atom(aid, S, E, T)
-            self._track_phi(aid)
-            atom = self.store.get_atom(aid)
-            return self._atom_proxy(atom) if atom else "błąd create"
+            ret = self.store.create_atom(aid, S, E, T)
+            # native: ret = u32; python: ret = string id
+            real = ret if ret is not None else aid
+            self._register_alias(aid, real)
+            atom = self._store_get(aid)
+            if atom is None:
+                return "błąd create"
+            return self._atom_proxy(atom, logical_id=aid)
         except Exception as ex:
             return str(ex)
 
@@ -402,7 +464,8 @@ class KarmazynHost:
         if not isinstance(aid, str):
             return False
         try:
-            ok = bool(self.store.delete_atom(aid))
+            real = self._resolve_aid(aid)
+            ok = bool(self.store.delete_atom(real))
             self._untrack_phi(aid)
             return ok
         except Exception:
@@ -414,28 +477,30 @@ class KarmazynHost:
             return "złe id"
         if _is_engine_sid(dst):
             return f"id {dst!r} zarezerwowane dla silnika"
-        a = self.store.get_atom(src)
+        a = self._store_get(src)
         if a is None:
             return f"brak źródła {src}"
         try:
-            if self.store.has_atom(dst):
-                self.store.delete_atom(dst)
-                self._untrack_phi(dst)
-            self.store.create_atom(dst, a.S, a.E, float(a.T))
-            self._track_phi(dst)
-            return self._atom_proxy(self.store.get_atom(dst))
+            if self._store_has(dst):
+                self.delete_atom(dst)
+            ret = self.store.create_atom(dst, a.S, a.E, float(a.T))
+            real = ret if ret is not None else dst
+            self._register_alias(dst, real)
+            atom = self._store_get(dst)
+            return self._atom_proxy(atom, logical_id=dst) if atom else "błąd clone"
         except Exception as ex:
             return str(ex)
 
     def consolidate(self, aid=None, *_):
         if not isinstance(aid, str):
             return None
-        atom = self.store.get_atom(aid)
+        atom = self._store_get(aid)
         if atom is None:
             return None
         label = f"bubble_{aid}"
+        real = self._resolve_aid(aid)
         try:
-            self.store.create_bubble(label, atom_ids=[aid], root=True)
+            self.store.create_bubble(label, atom_ids=[real], root=True)
             return label
         except Exception:
             try:

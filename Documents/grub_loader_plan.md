@@ -1,6 +1,7 @@
 # GRUB jako program ładujący KarmazynOs — lista i plan
 
-**Status:** plan roboczy (Product / Dual-track C→B)  
+**Status:** 📋 **PLAN TYLKO — NIE ZAIMPLEMENTOWANE** (L2/L3 w `build_deploy_plan.md`)  
+**Nie mylić z L1 Product host** (boot na hoście Python/Rust DLL).  
 **Data:** 2026-07-31  
 **Powiązania:** `runtime_pl.md`, `ARCHITECTURE.pl.md`, `bubble_network_assumptions.md` §9, `native/README.md`, sekwencja `software/karmazyn_boot.py`
 
