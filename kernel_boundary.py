@@ -37,6 +37,8 @@ KERNEL = {
     "karmazyn_substrate",
     "karmazyn_atomstore",
     "karmazyn_kernel",      # publiczna fasada — czesc powierzchni jadra
+    "karmazyn_backend",     # przełącznik native|python — część jadra (enterprise 2026-07)
+    "karmazyn_substrate_native",  # most Rust (PyO3/ctypes) — implementacja substratu
 }
 
 INTERNAL_PREFIXES = ("karmazyn_", "luneta")

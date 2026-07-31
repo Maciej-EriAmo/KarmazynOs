@@ -930,8 +930,31 @@ class NativeStore:
         return hits[:k]
 
     def create_atom(self, id, S, E, T=T_INIT, **kwargs):
+        """Utwórz atom. Na native id kanoniczne = u32 z core.
+
+        String ``id`` NIE staje się kluczem Store (Rust = u32).
+        Zapisujemy ``_requested_id`` / opcjonalnie mapę hosta.
+        Gdy ``strict_ids=True`` w kwargs lub env KARMAZYN_STRICT_IDS=1:
+        string niebędący cyframi → ValueError (enterprise loud fail).
+        """
+        strict = bool(kwargs.pop("strict_ids", False))
+        if os.environ.get("KARMAZYN_STRICT_IDS", "").strip().lower() in (
+            "1", "true", "yes", "on",
+        ):
+            strict = True
         value = kwargs.pop("value", None)
         meta = kwargs.pop("metadata", None) or {}
+        req = id
+        if isinstance(id, str) and not id.isdigit():
+            if strict:
+                raise ValueError(
+                    f"NativeStore.create_atom: id={id!r} nie jest u32; "
+                    f"użyj atom_new() albo name_to_aid (Stage1). "
+                    f"Ustaw strict_ids=False by zapisać tylko _requested_id."
+                )
+        elif isinstance(id, str) and id.isdigit():
+            # jawne u32 jako string — i tak core nada własne id; nie udajemy
+            pass
         atom = self.atom_new(
             S, E, T=T, value=value if value is not None else meta.get("v")
         )
@@ -941,7 +964,7 @@ class NativeStore:
                     atom.metadata[mk] = mv
         if kwargs:
             atom.metadata.update(kwargs)
-        atom.metadata["_requested_id"] = id
+        atom.metadata["_requested_id"] = req
         return atom.id
 
     def create_bubble(self, label, atom_ids=None, root=False):

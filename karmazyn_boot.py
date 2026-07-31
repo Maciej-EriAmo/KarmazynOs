@@ -47,13 +47,14 @@ import types
 from karmazyn_kernel import Store, kernel_info
 
 try:
-    from karmazyn_backend import (
+    # fasada jadra (enterprise: nie importuj wnetrza backend z software)
+    from karmazyn_kernel import (
         open_store,
-        native_available,
         substrate_backend,
         apply_cli_substrate_flags,
-        backend_info,
+        substrate_backend_info as backend_info,
     )
+    from karmazyn_kernel import native_substrate_available as native_available
 except Exception:  # pragma: no cover
     open_store = None
     native_available = lambda: False
@@ -236,13 +237,14 @@ def _lua_bin_dir():
 
 
 def mount_evaluator(store, kind=None, project=None, tools=None, caps=None,
-                    lua_bin=None):
+                    lua_bin=None, io=None, thermal=None):
     """Montuje warstwe wykonawcza na Store.
 
     Domyslnie karmazyn_lua. Alternatywa: karmazyn_exec (mini-Lisp).
     Wymus: kind= | KARMAZYN_GUEST=lua|exec | CLI --lua / --lisp
     project: root projektu (searcher hosta) | KARMAZYN_PROJECT | None
     lua_bin: katalog narzędzi OS (preload) | KARMAZYN_LUA_BIN | monorepo lua_bin
+    io / thermal: IoPort + ThermalSurface (I/O × matryca termiczna)
     Kontrakt: eval_line(str)->str, .env = Bubble korzenia (reach-GC).
     Haki reach: register_env_of / register_extra_reach (name='guest').
     """
@@ -251,7 +253,12 @@ def mount_evaluator(store, kind=None, project=None, tools=None, caps=None,
     if prefer == "exec":
         import karmazyn_exec
         _GUEST_KIND = "exec"
-        return karmazyn_exec.Evaluator(store, env_label="repl")
+        ev = karmazyn_exec.Evaluator(store, env_label="repl")
+        if io is not None:
+            ev.io = io
+        if thermal is not None:
+            ev.thermal = thermal
+        return ev
     try:
         kl = _ensure_karmazyn_lua()
         tools = tools if tools is not None else _tools_dir()
@@ -291,10 +298,14 @@ def mount_evaluator(store, kind=None, project=None, tools=None, caps=None,
                 attach_lua_bin(ev, lua_bin)
             except Exception:
                 pass
+        if io is not None:
+            ev.io = io
+        if thermal is not None:
+            ev.thermal = thermal
         # host API: global `karmazyn` (bindings Store → Lua)
         try:
             from karmazyn_host import install_karmazyn_host
-            install_karmazyn_host(ev, store=store)
+            install_karmazyn_host(ev, store=store, io=io, thermal=thermal)
             ev._lua_bin = lua_bin
         except Exception as hex_:
             ev._host_install_error = hex_
@@ -308,26 +319,44 @@ def mount_evaluator(store, kind=None, project=None, tools=None, caps=None,
         _GUEST_KIND = "exec"
         ev = karmazyn_exec.Evaluator(store, env_label="repl")
         ev._lua_mount_error = e
+        if io is not None:
+            ev.io = io
+        if thermal is not None:
+            ev.thermal = thermal
         return ev
 
 
 class KarmazynShell:
     """Prompt: kod -> warstwa wykonawcza; ':...' -> komendy systemu."""
 
-    def __init__(self, store, evaluator, verbose_events=False, project=None):
+    def __init__(self, store, evaluator, verbose_events=False, project=None,
+                 io=None, thermal=None):
         self.store = store
         self.ev = evaluator
         self.env = getattr(evaluator, "env", None) or getattr(evaluator, "G", None)
         # root projektu hosta (mapa → bąbel); None = tylko preload/tools
         self.project_root = project or _project_from_env()
+        self.io = io or getattr(evaluator, "io", None)
+        self.thermal = thermal or getattr(evaluator, "thermal", None)
         if verbose_events:
-            store.events.on("vacuum_decay",
-                            lambda a: print(f"  [GC] vacuum_decay: {a.id} ({a.E})"))
+            def _gc_line(a):
+                msg = f"  [GC] vacuum_decay: {a.id} ({a.E})"
+                if self.io is not None:
+                    self.io.write(msg + "\n")
+                else:
+                    print(msg)
+            store.events.on("vacuum_decay", _gc_line)
 
     def feed(self, line: str) -> str:
         line = line.strip()
         if not line:
             return ""
+        # interakcja z shell = heat na fokusie konsoli (matryca)
+        if self.thermal is not None and line:
+            try:
+                self.thermal.heat_input()
+            except Exception:
+                pass
         if line.startswith(":"):
             return self._meta(line[1:].split())
         return self.ev.eval_line(line)
@@ -359,11 +388,12 @@ class KarmazynShell:
             )
         return (
             kod
-            + "OS : :info | :stats | :tick [n>=1] | :gc | :ls [stan] | :env | :tools\n"
+            + "OS : :info | :stats | :io | :hot | :tick [n>=1] | :gc | :ls [stan] | :env | :tools\n"
             "     :project [path] | :run [file] | :reload [mod] | :check\n"
             "     :tool <name>   — skrypt z lua_bin/<name>.lua (host API karmazyn.*)\n"
             "     :guest [lua|exec] | :find <q> | :new <S> <E> | :exit\n"
             "     :gc studzi WSZYSTKO: sieroty gina, korzenie jako retained-TOMB (:ls tomb)\n"
+            "     I/O = IoPort × matryca T (VESA/kbd = adaptery, nie jądro)\n"
             "     projekt = mapa host→bąbel; sandbox=bąbel; host montuje karmazyn.*"
         )
 
@@ -548,10 +578,63 @@ class KarmazynShell:
         i = kernel_info()
         sub = i.get("substrate") or {}
         be = sub.get("backend") or type(self.store).__name__
-        return (f"KarmazynOS jadro v{i['version']}  D={i['vec_dim']}  "
-                f"HRR={'on' if i['hrr_active'] else 'off (zero-dep)'}\n"
-                f"substrat: {be}  store={type(self.store).__name__}\n"
-                f"prawo: {i['law']}")
+        lines = [
+            f"KarmazynOS jadro v{i['version']}  D={i['vec_dim']}  "
+            f"HRR={'on' if i['hrr_active'] else 'off (zero-dep)'}",
+            f"substrat: {be}  store={type(self.store).__name__}",
+            f"prawo: {i['law']}",
+        ]
+        if self.thermal is not None:
+            st = self.thermal.stats()
+            lines.append(
+                f"io: stage={st.get('stage')} backend={st.get('io')}  focus={st.get('focus')}  "
+                f"T_console={st.get('T_console')}  T_kbd={st.get('T_keyboard')}  "
+                f"T_display={st.get('T_display')}"
+            )
+            n2a = st.get("name_to_aid") or {}
+            if n2a:
+                lines.append("io_ids: " + " ".join(f"{k}→{v}" for k, v in n2a.items()))
+        elif self.io is not None:
+            lines.append(f"io: {getattr(self.io, 'name', type(self.io).__name__)} (bez matrycy)")
+        return "\n".join(lines)
+
+    def _m_io(self, a):
+        """Stan portu I/O + matrycy termicznej (adaptery poza jądrem)."""
+        if self.thermal is None and self.io is None:
+            return "io: brak (boot bez ThermalSurface)"
+        parts = []
+        if self.thermal is not None:
+            st = self.thermal.stats()
+            n2a = st.get("name_to_aid") or {}
+            id_lines = "\n".join(f"  {k} → aid={v}" for k, v in n2a.items())
+            parts.append(
+                f"stage={st.get('stage')} backend={st.get('io')}  focus={st.get('focus')}\n"
+                f"{id_lines}\n"
+                f"  T_console={st.get('T_console')}  T_kbd={st.get('T_keyboard')}  "
+                f"T_display={st.get('T_display')}\n"
+                "  heat: input/hit/visible(jawne) → Store; tick stygnie; empty≠heat"
+            )
+        else:
+            parts.append(f"backend={getattr(self.io, 'name', type(self.io).__name__)}")
+        return "\n".join(parts)
+
+    def _m_hot(self, a):
+        """Projekcja gorących atomów (DisplayList-lite; VESA tylko blituje)."""
+        if self.thermal is None:
+            return "hot: brak ThermalSurface"
+        try:
+            limit = int(a[0]) if a else 12
+        except ValueError:
+            limit = 12
+        recs = self.thermal.project_hot(limit=limit, mark_visible=False)
+        if not recs:
+            return "hot: (pusto — nic powyżej WARM)"
+        lines = [
+            f"  {r['T']:5.1f} {r['state']:4} {str(r.get('name') or r['id']):16} "
+            f"{r['S']}:{r['E'][:40]}"
+            for r in recs
+        ]
+        return "hot (matryca T):\n" + "\n".join(lines)
 
     def _m_stats(self, a):
         return str(self.store.stats())
@@ -678,10 +761,13 @@ def boot(verbose_events=False, log=None, project=None):
     else:
         log.warn("HRR (wektory)", "wylaczone — brak numpy (tryb zero-dep)")
 
-    # 2. substrat (Store + reach-GC) — native Rust domyślnie; Python = referencja
+    # 2. substrat (Store + reach-GC) — Python lub Rust (KARMAZYN_SUBSTRATE)
     t = time.perf_counter()
     try:
+        # Domyślnie: native jeśli DLL jest i nie wymuszono python
         if open_store is not None:
+            if os.environ.get("KARMAZYN_SUBSTRATE") is None and native_available():
+                os.environ["KARMAZYN_SUBSTRATE"] = "native"
             store = open_store(thermal=True)
             backend = substrate_backend()
             if backend == "both":
@@ -690,13 +776,8 @@ def boot(verbose_events=False, log=None, project=None):
             store = Store(thermal=True)
             backend = "python"
     except Exception as e:
-        # native fail → twardy fallback na pure-Python reference Store
-        want_native = False
-        try:
-            want_native = substrate_backend() == "native"
-        except Exception:
-            want_native = False
-        if open_store is not None and want_native:
+        # native fail → twardy fallback na Python, z ostrzeżeniem
+        if open_store is not None and substrate_backend() == "native":
             try:
                 log.warn("substrat native", f"{type(e).__name__}: {e} → fallback python")
                 os.environ["KARMAZYN_SUBSTRATE"] = "python"
@@ -711,22 +792,46 @@ def boot(verbose_events=False, log=None, project=None):
     sub_detail = f"backend={backend}, prawo: {i['law']}"
     if backend == "native":
         try:
-            from karmazyn_backend import backend_info as _bi
-            bi = _bi() or {}
-            ver = bi.get("native_version") or "?"
-            bridge = bi.get("native_bridge") or getattr(store, "native_backend", "?")
-            sub_detail = f"backend=native/{bridge} ({ver}), prawo: {i['law']}"
+            ver = (backend_info() or {}).get("native_version") or "?"
+            sub_detail = f"backend=native ({ver}), prawo: {i['law']}"
         except Exception:
-            bridge = getattr(store, "native_backend", "?")
-            sub_detail = f"backend=native/{bridge}, prawo: {i['law']}"
-    else:
-        sub_detail = f"backend=python (reference), prawo: {i['law']}"
+            pass
     log.ok("substrat (Store, reach-GC)", sub_detail, _ms(t))
+
+    # 2b. I/O × matryca termiczna — Stage 1 (Gentoo): twarde FAIL, bez cichej degradacji
+    #    KARMAZYN_IO_OPTIONAL=1 → WARN + shell bez matrycy (rescue only)
+    t = time.perf_counter()
+    io = None
+    thermal = None
+    _io_optional = os.environ.get("KARMAZYN_IO_OPTIONAL", "").strip().lower() in (
+        "1", "true", "yes", "on",
+    )
+    try:
+        from karmazyn_io import resolve_io, attach_thermal, ThermalMountError
+        io = resolve_io()
+        thermal = attach_thermal(store, io=io)
+        st = thermal.stats()
+        log.ok(
+            "I/O × matryca T",
+            f"stage=1 backend={st.get('io')}  names={list((st.get('name_to_aid') or {}).keys())}",
+            _ms(t),
+        )
+    except Exception as e:
+        if _io_optional:
+            log.warn(
+                "I/O × matryca T",
+                f"{type(e).__name__}: {e} — OPTIONAL, shell bez matrycy",
+                _ms(t),
+            )
+            io = thermal = None
+        else:
+            log.fail("I/O × matryca T", f"{type(e).__name__}: {e}")
+            raise BootError("I/O × matryca T nie wstala (Stage 1)") from e
 
     # 3. warstwa wykonawcza (montaz: env_of + korzen) — domyslnie Lua
     t = time.perf_counter()
     try:
-        evaluator = mount_evaluator(store, project=project)
+        evaluator = mount_evaluator(store, project=project, io=io, thermal=thermal)
     except Exception as e:
         log.fail("warstwa wykonawcza", f"{type(e).__name__}: {e}")
         raise BootError("warstwa wykonawcza nie wstala") from e
@@ -762,6 +867,7 @@ def boot(verbose_events=False, log=None, project=None):
     t = time.perf_counter()
     shell = KarmazynShell(
         store, evaluator, verbose_events=verbose_events, project=project,
+        io=io, thermal=thermal,
     )
     log.ok("shell", "prompt gotowy", _ms(t))
 
@@ -800,20 +906,41 @@ def repl(interval=2.0):
     threading.Thread(target=_scheduler, args=(store, interval, stop), daemon=True).start()
     log.ok("scheduler termiczny", f"tick co {interval:g}s (tlo, pod Store.lock)")
 
-    print("  " + "-" * 56)
-    print("  start zakonczony. Wpisz kod albo ':help'.\n")
+    if shell.io is not None:
+        shell.io.write("  " + "-" * 56 + "\n")
+        shell.io.write("  start zakonczony. Wpisz kod albo ':help'.\n\n")
+    else:
+        print("  " + "-" * 56)
+        print("  start zakonczony. Wpisz kod albo ':help'.\n")
     try:
         while True:
-            out = shell.feed(input("karmazyn> "))
+            # read bez heat — feed() grzeje raz (anti double-heat z thermal.read_line)
+            if shell.io is not None:
+                line = shell.io.read_line("karmazyn> ")
+            else:
+                line = input("karmazyn> ")
+            out = shell.feed(line)
             if out == "__EXIT__":
                 break
             if out:
-                print(out)
+                if shell.thermal is not None:
+                    shell.thermal.write(out + ("" if out.endswith("\n") else "\n"))
+                elif shell.io is not None:
+                    shell.io.write(out + ("" if out.endswith("\n") else "\n"))
+                else:
+                    print(out)
     except (EOFError, KeyboardInterrupt):
-        print()
+        if shell.io is not None:
+            shell.io.write("\n")
+        else:
+            print()
     finally:
         stop.set()
-    print("Zamykanie KarmazynOS.")
+    msg = "Zamykanie KarmazynOS."
+    if shell.io is not None:
+        shell.io.write(msg + "\n")
+    else:
+        print(msg)
 
 
 def demo():
@@ -895,6 +1022,19 @@ def _apply_cli_project_flags(argv):
 if __name__ == "__main__":
     _apply_cli_guest_flags(sys.argv)
     _apply_cli_project_flags(sys.argv)
+    if "--studio" in sys.argv or "--sdl" in sys.argv:
+        # tryb Studio: SDL2 × matryca T (software/karmazyn_studio.py)
+        try:
+            from karmazyn_studio import main as studio_main
+        except ImportError:
+            # monorepo: software/ na path
+            _here = os.path.dirname(os.path.abspath(__file__))
+            if _here not in sys.path:
+                sys.path.insert(0, _here)
+            from karmazyn_studio import main as studio_main
+        # przekaż resztę flag (--python / --check)
+        rest = [a for a in sys.argv[1:] if a not in ("--studio", "--sdl")]
+        raise SystemExit(studio_main(rest))
     if "--demo" in sys.argv:
         demo()
     else:

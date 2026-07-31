@@ -1,0 +1,4 @@
+# lokalna piaskownica — nie commitować sesji
+work/
+*.pyc
+__pycache__/

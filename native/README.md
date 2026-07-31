@@ -8,6 +8,9 @@
 | Fearless concurrency around `tick` + hooks | Python already has the guest; we need a safe core |
 | Clean C ABI + PyO3 for Python hosts | Dual language only where needed |
 
+**Z0 — write Rust for the substrate first.**  
+Kernel law (T × reach × GC) is implemented **here** (`atom.rs` / `store.rs`), not prototyped in Python and ported later. Python reference and PyO3/ctypes are **mirrors and seams**. Order: crate → `cargo test` → FFI → host.
+
 Python guests (Lua / mini-Lisp) stay on the **seams**:
 `register_env_of` / `register_extra_reach` / `eval_line`.  
 This crate owns: **atoms, bubbles, roots, tick, vacuum vs retained TOMB**.
@@ -190,6 +193,8 @@ Full drop-in (`metadata`, `EventBus`, HRR, `Bubble` subclass) is
 
 ## Docs
 
+- **Mapa Rust ↔ substrat:** [../Documents/rust_substrate_map.md](../Documents/rust_substrate_map.md)
 - PL: [../Documents/runtime_pl.md](../Documents/runtime_pl.md)
 - EN: [../Documents/runtime_en.md](../Documents/runtime_en.md)
 - Architecture: [../Documents/ARCHITECTURE.pl.md](../Documents/ARCHITECTURE.pl.md) §5
+- I/O Stage 1: [../Documents/io_stage1.md](../Documents/io_stage1.md)

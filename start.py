@@ -89,6 +89,8 @@ def menu() -> int:
         print("  4) Boot demo  (Python)")
         print("  5) Sprawdź native (smoke + GC)")
         print("  6) Tylko Rust core (cargo test + hello_store)")
+        print("  7) Studio SDL2  (matryca T + shell)  ← native")
+        print("  8) Studio SDL2  (python reference)")
         print("  0) Wyjście")
         print("-" * 56)
         choice = input("  wybór: ").strip()
@@ -110,6 +112,10 @@ def menu() -> int:
             code = _rust_only()
             print(f"  exit={code}")
             continue
+        if choice == "7":
+            return _boot("native", ["--studio"])
+        if choice == "8":
+            return _boot("python", ["--studio", "--python"])
         print("  nieznany wybór")
 
 
@@ -120,6 +126,7 @@ def main(argv=None) -> int:
     ap.add_argument("--demo", action="store_true")
     ap.add_argument("--native-check", action="store_true")
     ap.add_argument("--rust-only", action="store_true")
+    ap.add_argument("--studio", action="store_true", help="Studio SDL2 × matryca T")
     ap.add_argument("--menu", action="store_true", help="wymuś menu")
     args, rest = ap.parse_known_args(argv)
 
@@ -127,6 +134,10 @@ def main(argv=None) -> int:
         return _native_check()
     if args.rust_only:
         return _rust_only()
+    if args.studio:
+        sub = "python" if args.python else "native"
+        extra = ["--studio"] + (["--python"] if args.python else []) + list(rest)
+        return _boot(sub, extra)
     if args.rust or args.python or args.demo:
         sub = "python" if args.python else "native"
         extra = ["--demo"] if args.demo else list(rest)
