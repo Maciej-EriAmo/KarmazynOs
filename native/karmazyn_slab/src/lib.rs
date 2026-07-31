@@ -14,7 +14,6 @@
 //!   cold + reachable → retained TOMB
 
 #![no_std]
-#![allow(dead_code)]
 
 // ── thermal / id primitives (no String — host Atom stays in substrate) ─────
 
@@ -213,12 +212,13 @@ impl SlabBubble {
 // ── SlabStore ──────────────────────────────────────────────────────────────
 
 /// Minimal fixed store with **reach-GC** (same law as production Store).
+///
+/// Slot allocation: **scan free** (`used == false`). Monotonic `next_*` was
+/// wrong after vacuum — full table + reaps left no way to allocate again.
 pub struct SlabStore {
     atoms: [SlabAtom; MAX_ATOMS],
     bubbles: [SlabBubble; MAX_BUBBLES],
     roots: [Option<Bid>; MAX_ROOTS],
-    next_atom: u32,
-    next_bubble: u32,
     root_len: usize,
     decay: f64,
     pub reaped: u64,
@@ -236,8 +236,6 @@ impl SlabStore {
             atoms: [SlabAtom::empty(); MAX_ATOMS],
             bubbles: [SlabBubble::empty(); MAX_BUBBLES],
             roots: [None; MAX_ROOTS],
-            next_atom: 0,
-            next_bubble: 0,
             root_len: 0,
             decay: DECAY_DEFAULT,
             reaped: 0,
@@ -247,25 +245,58 @@ impl SlabStore {
         }
     }
 
+    /// Full wipe (demo / freestanding restart). BSS-sized; not for hot path.
+    pub fn reset(&mut self) {
+        *self = Self::new();
+    }
+
     pub fn set_decay(&mut self, decay: f64) {
-        self.decay = if decay < 0.0 { DECAY_DEFAULT } else { decay };
+        self.decay = if !(decay > 0.0) {
+            // NaN, ≤0 → default
+            DECAY_DEFAULT
+        } else {
+            decay
+        };
+    }
+
+    pub fn decay(&self) -> f64 {
+        self.decay
+    }
+
+    /// First free atom slot, or `None` if table full.
+    fn alloc_atom_slot(&self) -> Option<usize> {
+        for i in 0..MAX_ATOMS {
+            if !self.atoms[i].used {
+                return Some(i);
+            }
+        }
+        None
+    }
+
+    /// First free bubble slot, or `None` if table full.
+    /// Note: bubbles are not auto-vacuumed (only atoms); freelist helps if
+    /// caller uses [`Self::bubble_drop`] or `reset`.
+    fn alloc_bubble_slot(&self) -> Option<usize> {
+        for i in 0..MAX_BUBBLES {
+            if !self.bubbles[i].used {
+                return Some(i);
+            }
+        }
+        None
     }
 
     pub fn atom_new(&mut self, s: &str, e: &str, t: f64) -> Option<AtomId> {
-        if (self.next_atom as usize) >= MAX_ATOMS {
-            return None;
-        }
-        let id = self.next_atom;
-        self.next_atom = self.next_atom.saturating_add(1);
-        let slot = &mut self.atoms[id as usize];
-        *slot = SlabAtom {
+        let id = self.alloc_atom_slot()? as AtomId;
+        let t = if t.is_nan() { T_INIT } else { t };
+        self.atoms[id as usize] = SlabAtom {
             used: true,
             s: FixedLabel::from_str(s),
             e: FixedLabel::from_str(e),
-            t: clamp_t(if t.is_nan() { T_INIT } else { t }),
+            t: clamp_t(t),
             value_token: 0,
             env_bubble: None,
         };
+        self.retained[id as usize] = false;
         Some(id)
     }
 
@@ -284,6 +315,11 @@ impl SlabStore {
         if !self.has_atom(id) {
             return false;
         }
+        let amount = if amount.is_nan() || amount < 0.0 {
+            0.0
+        } else {
+            amount
+        };
         let a = &mut self.atoms[id as usize];
         a.t = clamp_t(a.t + amount);
         true
@@ -293,22 +329,61 @@ impl SlabStore {
         if !self.has_atom(id) {
             return false;
         }
+        if let Some(b) = bid {
+            if (b as usize) >= MAX_BUBBLES || !self.bubbles[b as usize].used {
+                return false;
+            }
+        }
         self.atoms[id as usize].env_bubble = bid;
         true
     }
 
     pub fn bubble_new(&mut self, parent: Option<Bid>) -> Option<Bid> {
-        if (self.next_bubble as usize) >= MAX_BUBBLES {
-            return None;
+        if let Some(p) = parent {
+            if (p as usize) >= MAX_BUBBLES || !self.bubbles[p as usize].used {
+                return None;
+            }
         }
-        let id = self.next_bubble;
-        self.next_bubble = self.next_bubble.saturating_add(1);
+        let id = self.alloc_bubble_slot()? as Bid;
         self.bubbles[id as usize] = SlabBubble {
             used: true,
             parent,
             binds: [BindSlot::empty(); MAX_BINDS],
         };
         Some(id)
+    }
+
+    /// Drop a non-root bubble (explicit free for freelist reuse).
+    /// Returns false if missing, is root, or still has used binds.
+    pub fn bubble_drop(&mut self, bid: Bid) -> bool {
+        let bi = bid as usize;
+        if bi >= MAX_BUBBLES || !self.bubbles[bi].used {
+            return false;
+        }
+        for r in 0..self.root_len {
+            if self.roots[r] == Some(bid) {
+                return false;
+            }
+        }
+        for slot in &self.bubbles[bi].binds {
+            if slot.used {
+                return false;
+            }
+        }
+        // clear env_bubble refs pointing here
+        for a in self.atoms.iter_mut() {
+            if a.env_bubble == Some(bid) {
+                a.env_bubble = None;
+            }
+        }
+        // clear parent links
+        for b in self.bubbles.iter_mut() {
+            if b.parent == Some(bid) {
+                b.parent = None;
+            }
+        }
+        self.bubbles[bi] = SlabBubble::empty();
+        true
     }
 
     pub fn bind(&mut self, bid: Bid, name: &str, aid: AtomId) -> bool {
@@ -607,21 +682,6 @@ mod tests {
     }
 
     #[test]
-    fn unset_root_then_reap() {
-        let mut s = SlabStore::new();
-        s.set_decay(0.1);
-        let aid = s.atom_new("x", "y", 50.0).unwrap();
-        let bid = s.bubble_new(None).unwrap();
-        s.bind(bid, "v", aid);
-        s.set_root(bid);
-        s.settle(20);
-        assert!(s.has_atom(aid));
-        s.unset_root(bid);
-        s.settle(20);
-        assert!(!s.has_atom(aid) || s.reaped >= 1);
-    }
-
-    #[test]
     fn env_bubble_extends_reach() {
         let mut s = SlabStore::new();
         s.set_decay(0.1);
@@ -663,13 +723,80 @@ mod tests {
     }
 
     #[test]
+    fn freelist_reuses_after_vacuum() {
+        let mut s = SlabStore::new();
+        s.set_decay(0.1);
+        // fill all atom slots
+        for _ in 0..MAX_ATOMS {
+            assert!(s.atom_new("s", "e", 5.0).is_some());
+        }
+        assert!(s.atom_new("s", "e", 5.0).is_none());
+        // no roots → all orphans vacuum after cool
+        s.settle(40);
+        assert_eq!(s.count_atoms(), 0, "all orphans vacuumed");
+        assert!(s.reaped >= MAX_ATOMS as u64);
+        // freelist must allow full refill
+        for i in 0..MAX_ATOMS {
+            assert!(s.atom_new("s", "reuse", 50.0).is_some(), "reuse i={i}");
+        }
+        assert!(s.atom_new("s", "e", 50.0).is_none());
+    }
+
+    #[test]
+    fn heat_ignores_negative() {
+        let mut s = SlabStore::new();
+        let id = s.atom_new("a", "b", 50.0).unwrap();
+        let t0 = s.get_t(id).unwrap();
+        assert!(s.heat(id, -20.0));
+        assert_eq!(s.get_t(id).unwrap(), t0);
+    }
+
+    #[test]
+    fn bubble_drop_frees_slot() {
+        let mut s = SlabStore::new();
+        // fill all bubbles
+        for _ in 0..MAX_BUBBLES {
+            assert!(s.bubble_new(None).is_some());
+        }
+        assert!(s.bubble_new(None).is_none());
+        // drop id 0 (empty binds, not root)
+        assert!(s.bubble_drop(0));
+        assert!(s.bubble_new(None).is_some());
+    }
+
+    #[test]
+    fn set_env_rejects_dead_bubble() {
+        let mut s = SlabStore::new();
+        let aid = s.atom_new("a", "b", 50.0).unwrap();
+        assert!(!s.set_env_bubble(aid, Some(99)));
+        assert!(!s.set_env_bubble(aid, Some(0))); // bubble 0 not created
+    }
+
+    #[test]
+    fn unset_root_then_reap_strict() {
+        let mut s = SlabStore::new();
+        s.set_decay(0.1);
+        let aid = s.atom_new("x", "y", 50.0).unwrap();
+        let bid = s.bubble_new(None).unwrap();
+        s.bind(bid, "v", aid);
+        s.set_root(bid);
+        s.settle(20);
+        assert!(s.has_atom(aid));
+        s.unset_root(bid);
+        s.settle(20);
+        assert!(!s.has_atom(aid), "after unset_root cold atom must vacuum");
+        assert!(s.reaped >= 1);
+    }
+
+    #[test]
     fn slab_atoms_wrapper_tick_decay() {
         let mut s = SlabAtoms::new();
         let id = s.atom_new("a", "b", 5.0).unwrap();
         for _ in 0..40 {
             s.tick_decay(0.5);
         }
-        assert!(s.reaped() >= 1 || !s.has(id));
+        assert!(!s.has(id));
+        assert!(s.reaped() >= 1);
     }
 
     #[test]

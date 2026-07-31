@@ -98,12 +98,34 @@ pub extern "C" fn _start() -> ! {
     halt_loop()
 }
 
-/// R5: create atom, root, tick, print stats on COM1.
+/// R5: exercise vacuum + retain, print stats. `SLAB_OK` only if both hold.
 fn slab_demo() {
     serial_write(b"SLAB_DEMO\n");
     // SAFETY: single-threaded kentry; no concurrent access.
     let store = unsafe { &mut *ptr::addr_of_mut!(SLAB) };
+    store.reset();
 
+    // ── A: orphan vacuum ────────────────────────────────────────────────
+    store.set_decay(0.1);
+    let Some(orphan) = store.atom_new("O", "orphan", T_INIT) else {
+        serial_write(b"SLAB_ATOM_FAIL\n");
+        return;
+    };
+    store.settle(30);
+    let orphan_gone = !store.has_atom(orphan);
+    let reaped_a = store.reaped;
+    if !orphan_gone || reaped_a == 0 {
+        serial_write(b"SLAB_VACUUM_FAIL\n");
+        serial_write(b"SLAB_ATOMS=");
+        serial_u64(store.count_atoms() as u64);
+        serial_write(b" REAPED=");
+        serial_u64(reaped_a);
+        serial_write(b"\n");
+        return;
+    }
+    serial_write(b"SLAB_VACUUM_OK\n");
+
+    // ── B: rooted retain (same freelist store) ──────────────────────────
     let Some(aid) = store.atom_new("S", "kentry", T_INIT) else {
         serial_write(b"SLAB_ATOM_FAIL\n");
         return;
@@ -116,8 +138,7 @@ fn slab_demo() {
         serial_write(b"SLAB_ROOT_FAIL\n");
         return;
     }
-
-    store.settle(5);
+    store.settle(25);
 
     let atoms = store.count_atoms() as u64;
     let reaped = store.reaped;
@@ -130,7 +151,13 @@ fn slab_demo() {
     serial_write(b" LIVE=");
     serial_u64(live);
     serial_write(b"\n");
-    serial_write(b"SLAB_OK\n");
+
+    // Honest gate: vacuum worked and root retained cold atom
+    if live == 1 && reaped >= 1 && atoms >= 1 {
+        serial_write(b"SLAB_OK\n");
+    } else {
+        serial_write(b"SLAB_FAIL\n");
+    }
 }
 
 /// Walk Multiboot2 info tags; return cmdline bytes (type=1) if present.

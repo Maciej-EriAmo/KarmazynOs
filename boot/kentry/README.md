@@ -4,7 +4,7 @@
 **Robi:**
 - COM1 → `KARMAZYN_KENTRY_OK`
 - Multiboot2 magic / cmdline dump (gdy bootloader)
-- static `karmazyn_slab::SlabStore` — atom / root / tick / `SLAB_ATOMS=… REAPED=… LIVE=…` + `SLAB_OK`
+- static `karmazyn_slab::SlabStore` — orphan vacuum + rooted retain; `SLAB_OK` **tylko** gdy oba OK
 
 **Nie robi:** pełny host `Store` (HashMap), Python, Lua, GUI  
 

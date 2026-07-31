@@ -119,6 +119,10 @@ Wystarczy na: tablice atomów o **stałym limicie** (np. MAX_ATOMS=4096), nie na
 | `Store` (HashMap) vs `SlabStore` dual path | zamierzone do G |
 | QEMU SF.2 | brak qemu w PATH dev |
 | Brak reach hooks dynamicznych na slab | `env_bubble` fixed zamiast callback |
+| Bubble auto-vacuum | brak — tylko `bubble_drop` / `reset` (atomy freelist OK) |
+| `BumpAlloc` nie zasilany przez SlabStore | API osobno; store = fixed tables |
+| Golden T×reach Store vs SlabStore | brak wspólnego scenariusza testowego |
+| f64 w freestanding | SSE2 na x86_64; soft-float nie wymuszony |
 
 ---
 
@@ -175,4 +179,5 @@ cargo build --manifest-path boot/kentry/Cargo.toml --target x86_64-unknown-none 
 
 ---
 
-*Aktualizacja 2026-07-31: R5 — `native/karmazyn_slab` + kentry link.*
+*Aktualizacja 2026-07-31: R5 — `native/karmazyn_slab` + kentry link.*  
+*Recenzja+fix: freelist po vacuum, uczciwy `SLAB_OK`, vacuum+retain demo.*
