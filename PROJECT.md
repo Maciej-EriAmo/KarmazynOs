@@ -44,14 +44,15 @@ python software/karmazyn_studio.py
 
 ---
 
-## Backlog (kolejność)
+## Backlog (kolejność) — zgodnie z planem Rust
 
 1. Utrzymać G0 + dry_run_l1 zielone  
-2. Tag git **l1-host-*** po Twoim OK  
-3. BootConfig (faza B)  
-4. **ISO / GRUB dopiero po L1** — i tylko jako nowa faza, nie „już mamy”  
+2. **Rust roadmap** — `Documents/rust_roadmap_tech.md` (std→alloc→kentry→G)  
+3. **kentry F** — `boot/kentry` marker serial (nie Store)  
+4. BootConfig (faza B host)  
+5. **ISO L2 / GRUB** dopiero świadomie; **Store freestanding G** po designie alokatora (§4 roadmap)  
 
-Szczegóły: `Documents/build_deploy_plan.md`.
+Szczegóły: `Documents/build_deploy_plan.md` · `Documents/rust_roadmap_tech.md`.
 
 ---
 

@@ -194,6 +194,8 @@ Full drop-in (`metadata`, `EventBus`, HRR, `Bubble` subclass) is
 ## Docs
 
 - **Mapa Rust ↔ substrat:** [../Documents/rust_substrate_map.md](../Documents/rust_substrate_map.md)
+- **Roadmapa tech (std→kentry→L4):** [../Documents/rust_roadmap_tech.md](../Documents/rust_roadmap_tech.md)
+- **kentry Multiboot2 (L3 F, marker only):** [../boot/kentry/README.md](../boot/kentry/README.md)
 - PL: [../Documents/runtime_pl.md](../Documents/runtime_pl.md)
 - EN: [../Documents/runtime_en.md](../Documents/runtime_en.md)
 - Architecture: [../Documents/ARCHITECTURE.pl.md](../Documents/ARCHITECTURE.pl.md) §5

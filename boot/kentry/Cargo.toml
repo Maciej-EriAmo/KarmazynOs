@@ -1,0 +1,19 @@
+[package]
+name = "karmazyn_kentry"
+version = "0.1.0"
+edition = "2021"
+authors = ["Maciej Mazur"]
+description = "KarmazynOs Multiboot2 kentry — serial marker only (L3 F). NOT full Store."
+license = "MIT"
+publish = false
+
+[dependencies]
+# zero — no_std freestanding
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
+lto = true
+opt-level = "s"
