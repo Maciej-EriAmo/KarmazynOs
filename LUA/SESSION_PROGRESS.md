@@ -3,11 +3,12 @@
 **Ostatnia aktualizacja:** 2026-07-31  
 **Wersja:** **1.1.2** (production guest)  
 **Workspace roboczy:** `C:\Users\drwis\LUA`  
-**Monorepo git:** `C:\Users\drwis\KarmazynOs` (remote `origin` → GitHub Maciej-EriAmo/KarmazynOs)  
-**Kernel (sibling):** `C:\Users\drwis\Kernel Karmazyn` (często mirror / site-packages path)
+**Monorepo git:** `C:\Users\drwis\KarmazynOs` (remote `origin` → `https://github.com/Maciej-EriAmo/KarmazynOs`)  
+**Ostatni commit:** `7111d54` — *Release karmazyn_lua 1.1.2 production guest.* (pushed to `origin/main`)  
+**Kernel (sibling):** `C:\Users\drwis\Kernel Karmazyn` (host edits + site-packages path)
 
-> **Uwaga:** `C:\Users\drwis\LUA` **nie ma** `.git`. Źródło prawdy do commita = skopiować do `KarmazynOs/LUA` (+ software/lua_bin).  
-> `Kernel Karmazyn\LUA` może być **niezsynchronizowany** — zawsze porównaj `__version__`.
+> **Uwaga:** `C:\Users\drwis\LUA` **nie ma** `.git`. Commit/push idzie z **KarmazynOs** po `robocopy` workspace → `KarmazynOs/LUA`.  
+> `Kernel Karmazyn\LUA` może być **niezsynchronizowany** — porównaj `__version__` przed pracą.
 
 ---
 
