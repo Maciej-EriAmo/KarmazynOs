@@ -16,8 +16,10 @@ jobs:
       - name: Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - name: cargo test (substrate)
-        run: cargo test --manifest-path native/karmazyn_substrate/Cargo.toml
+      - name: cargo test (slab no_std + substrate)
+        run: |
+          cargo test --manifest-path native/karmazyn_slab/Cargo.toml
+          cargo test --manifest-path native/karmazyn_substrate/Cargo.toml
 
       - name: cargo build release
         run: cargo build --release --manifest-path native/karmazyn_substrate/Cargo.toml
@@ -49,7 +51,7 @@ jobs:
         run: |
           rustup target add x86_64-unknown-none
           cargo build --release --manifest-path boot/kentry/Cargo.toml --target x86_64-unknown-none
-          python -c "p='boot/kentry/target/x86_64-unknown-none/release/karmazyn_kentry'; d=open(p,'rb').read(); assert b'KARMAZYN_KENTRY_OK' in d, 'marker missing'"
+          python -c "p='boot/kentry/target/x86_64-unknown-none/release/karmazyn_kentry'; d=open(p,'rb').read(); assert b'KARMAZYN_KENTRY_OK' in d, 'marker missing'; assert b'SLAB_OK' in d, 'SLAB_OK missing (R5)'"
 
       # Full native wheel on Linux CI — best-effort (maturin)
       - name: maturin build (best-effort)

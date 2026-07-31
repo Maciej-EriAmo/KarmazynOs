@@ -35,6 +35,9 @@ function Step($name, $scriptBlock) {
 Write-Host "KarmazynOs gate_product  root=$Root  substrate=$Substrate"
 
 if (-not $SkipCargo) {
+    Step "cargo test (karmazyn_slab)" {
+        cargo test --manifest-path (Join-Path $Root "native\karmazyn_slab\Cargo.toml") -q
+    }
     Step "cargo test (substrate crate)" {
         cargo test --manifest-path (Join-Path $Root "native\karmazyn_substrate\Cargo.toml") -q
     }

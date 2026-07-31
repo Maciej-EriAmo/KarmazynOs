@@ -1,41 +1,13 @@
 //! Atom model + temperature FSM (mirrors karmazyn_atom.py).
+//!
+//! Thermal constants live in `karmazyn_slab` (shared with freestanding kentry).
 
-pub const T_INIT: f64 = 50.0;
-pub const T_MAX: f64 = 100.0;
-pub const T_HOT: f64 = 70.0;
-pub const T_WARM: f64 = 30.0;
-pub const T_TOMB: f64 = 2.0;
-pub const DECAY_DEFAULT: f64 = 0.92;
-pub const HEAT_READ: f64 = 10.0;
+pub use karmazyn_slab::{
+    clamp_t, state_for_t, AtomId, DECAY_DEFAULT, HEAT_READ, T_HOT, T_INIT, T_MAX, T_TOMB, T_WARM,
+};
+
 #[allow(dead_code)]
 pub const HEAT_WRITE: f64 = 5.0;
-
-pub type AtomId = u32;
-
-#[inline]
-pub fn clamp_t(t: f64) -> f64 {
-    if t < 0.0 {
-        0.0
-    } else if t > T_MAX {
-        T_MAX
-    } else {
-        t
-    }
-}
-
-/// HOT / WARM / COLD / TOMB — single source of truth for T classification.
-#[inline]
-pub fn state_for_t(t: f64) -> &'static str {
-    if t >= T_HOT {
-        "HOT"
-    } else if t >= T_WARM {
-        "WARM"
-    } else if t >= T_TOMB {
-        "COLD"
-    } else {
-        "TOMB"
-    }
-}
 
 #[derive(Debug, Clone)]
 pub struct Atom {

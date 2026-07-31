@@ -3,12 +3,13 @@ name = "karmazyn_kentry"
 version = "0.1.0"
 edition = "2021"
 authors = ["Maciej Mazur"]
-description = "KarmazynOs Multiboot2 kentry — serial marker only (L3 F). NOT full Store."
+description = "KarmazynOs Multiboot2 kentry — serial + SlabStore demo (R5)."
 license = "MIT"
 publish = false
 
 [dependencies]
-# zero — no_std freestanding
+# freestanding reach-GC (no_std) — same crate as substrate re-export
+karmazyn_slab = { path = "../../native/karmazyn_slab" }
 
 [profile.dev]
 panic = "abort"

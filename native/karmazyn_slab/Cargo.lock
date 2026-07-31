@@ -5,10 +5,3 @@ version = 4
 [[package]]
 name = "karmazyn_slab"
 version = "0.1.0"
-
-[[package]]
-name = "karmazyn_substrate"
-version = "0.1.0"
-dependencies = [
- "karmazyn_slab",
-]

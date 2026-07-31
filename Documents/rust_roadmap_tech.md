@@ -45,15 +45,16 @@ Powiązania: `rust_substrate_map.md`, `build_deploy_plan.md` §F–G, `native/RE
 
 | Element | Stan |
 |---------|------|
-| `atom.rs` / `store.rs` / `ffi.rs` | ✅ `std`, 0 deps crates.io |
-| `cargo test` | ✅ **13** testów (7 Store + 6 slab R3) |
+| `atom.rs` / `store.rs` / `ffi.rs` | ✅ `std`; thermal const z `karmazyn_slab` |
+| `cargo test` | ✅ slab **12** + substrate Store **7** + reexport smoke |
 | PyO3 `CoreStore` | ✅ most hosta |
 | `u32` AtomId / BubbleId | ✅ |
-| `slab` / `BumpAlloc` / `SlabAtoms` | ✅ R3 — fixed cap, testy; **nie** zastępuje Store |
+| `native/karmazyn_slab` | ✅ R5 — `no_std`, BumpAlloc, SlabStore, reach-GC |
+| `slab` re-export w substrate | ✅ ten sam crate co kentry |
 | `features default=["std"]` | ✅ R4 |
-| `boot/kentry` | ✅ build `x86_64-unknown-none`; marker + cmdline dump (SF.4 partial) |
+| `boot/kentry` | ✅ R5: marker + cmdline + `SLAB_OK` stats |
 | QEMU serial SF.2 | ⏳ brak qemu w PATH na host dev (opcjonalnie) |
-| Store freestanding full GC | ❌ G — po decision reach na slab |
+| Store freestanding full GC | ❌ G — host HashMap Store nadal osobny |
 
 ---
 
@@ -101,13 +102,14 @@ Wystarczy na: tablice atomów o **stałym limicie** (np. MAX_ATOMS=4096), nie na
 
 ### Kryterium „wolno zaczynać G”
 
-- [x] MAX_ATOMS / MAX_BUBBLES ustalone (`slab.rs`: 256 / 64 — stack-safe; static mut na target)  
-- [x] bump + slab w module `slab` (`BumpAlloc`, `SlabStore`)  
-- [x] test host w `cargo test` (slab::tests, **18** łącznie z Store)  
+- [x] MAX_ATOMS / MAX_BUBBLES ustalone (`karmazyn_slab`: 256 / 64 — stack-safe; static mut na target)  
+- [x] bump + slab (`BumpAlloc`, `SlabStore`) w crate `native/karmazyn_slab`  
+- [x] test host: `cargo test` slab + substrate  
 - [x] kentry drukuje marker (R2)  
 - [x] **reach-GC na slab** (root retain / orphan vacuum / env_bubble / unset_root)  
+- [x] **kentry linkuje `SlabStore` (R5)** — serial `SLAB_ATOMS` / `REAPED` / `LIVE` / `SLAB_OK`  
 - [ ] QEMU potwierdza serial (SF.2) — opcjonalne przed G, zalecane  
-- [ ] kentry linkuje `SlabStore` (R5) — następny krok Rust  
+
 
 ### Dług (aktywny)
 
@@ -148,12 +150,14 @@ Wystarczy na: tablice atomów o **stałym limicie** (np. MAX_ATOMS=4096), nie na
 
 ```bash
 # L1 / Z0
+cargo test --manifest-path native/karmazyn_slab/Cargo.toml
 cargo test --manifest-path native/karmazyn_substrate/Cargo.toml
 python scripts/dry_run_l1.py
 
 # kentry (gdy target zainstalowany)
 rustup target add x86_64-unknown-none
 cargo build --manifest-path boot/kentry/Cargo.toml --target x86_64-unknown-none --release
+# ELF musi zawierać KARMAZYN_KENTRY_OK + SLAB_OK
 # QEMU: patrz boot/kentry/README.md
 ```
 
@@ -167,8 +171,8 @@ cargo build --manifest-path boot/kentry/Cargo.toml --target x86_64-unknown-none 
 | **SR.2** | `boot/kentry` w repo; marker string w bin/src |
 | **SR.3** | Doc alokatora (§4) zaakceptowany przed G |
 | **SR.4** | QEMU: serial `KARMAZYN_KENTRY_OK` (gdy toolchain OK) |
-| **SR.5** | (G) atom/tick/stats bez CPython |
+| **SR.5** | (G) atom/tick/stats bez CPython — **R5 partial:** kentry `SLAB_OK` bez CPython |
 
 ---
 
-*Aktualizować przy domknięciu R2–R5 (data + tag).*
+*Aktualizacja 2026-07-31: R5 — `native/karmazyn_slab` + kentry link.*

@@ -14,4 +14,5 @@ if (-not (Test-Path $elf)) { throw "ELF missing: $elf" }
 $bytes = [IO.File]::ReadAllBytes($elf)
 $text = [Text.Encoding]::ASCII.GetString($bytes)
 if ($text -notmatch "KARMAZYN_KENTRY_OK") { throw "marker missing in ELF" }
-Write-Host "OK kentry ELF=$elf size=$($bytes.Length) MARKER=yes"
+if ($text -notmatch "SLAB_OK") { throw "SLAB_OK missing in ELF (R5)" }
+Write-Host "OK kentry ELF=$elf size=$($bytes.Length) MARKER=yes SLAB=yes"

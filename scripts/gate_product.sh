@@ -18,7 +18,8 @@ step() {
 echo "KarmazynOs gate_product  root=$ROOT  substrate=$KARMAZYN_SUBSTRATE"
 
 if [[ "${SKIP_CARGO:-}" != "1" ]]; then
-  step "cargo test" cargo test --manifest-path "$ROOT/native/karmazyn_substrate/Cargo.toml" -q
+  step "cargo test slab" cargo test --manifest-path "$ROOT/native/karmazyn_slab/Cargo.toml" -q
+  step "cargo test substrate" cargo test --manifest-path "$ROOT/native/karmazyn_substrate/Cargo.toml" -q
 fi
 
 step "kernel_boundary" python "$ROOT/kernel_boundary.py" "$ROOT/kernel" "$ROOT/software"

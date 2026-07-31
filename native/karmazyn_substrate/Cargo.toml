@@ -17,7 +17,9 @@ default = ["std"]
 std = []
 
 [dependencies]
-# std only for full Store — no crates.io deps
+# freestanding slab + reach-GC (shared with boot/kentry)
+karmazyn_slab = { path = "../karmazyn_slab" }
+# host Store uses std only — no crates.io deps
 
 [profile.release]
 lto = true

@@ -1,8 +1,8 @@
-//! KarmazynOs kentry — Multiboot2 entry (faza F / R2).
+//! KarmazynOs kentry — Multiboot2 entry (faza F / R2 + R5 slab demo).
 //!
 //! - COM1: `KARMAZYN_KENTRY_OK\n`
 //! - opcjonalnie: dump cmdline z Multiboot2 info (SF.4)
-//! - NIE ładuje Store (L4 G — po slab/alloc w substrate)
+//! - R5: static `SlabStore` — atom / tick / stats (bez CPython)
 //!
 //!   cd boot/kentry
 //!   cargo build --release --target x86_64-unknown-none
@@ -13,6 +13,8 @@
 use core::arch::asm;
 use core::panic::PanicInfo;
 use core::ptr;
+
+use karmazyn_slab::{SlabStore, T_INIT};
 
 /// Multiboot2 header (spec).
 const MB2_MAGIC: u32 = 0xE852_50D6;
@@ -56,6 +58,9 @@ static MULTIBOOT2_HEADER: Multiboot2Header = Multiboot2Header {
 
 pub const KENTRY_OK: &[u8] = b"KARMAZYN_KENTRY_OK\n";
 
+/// Freestanding store — BSS, not stack (R3 stack-size lesson).
+static mut SLAB: SlabStore = SlabStore::new();
+
 #[no_mangle]
 pub extern "C" fn _start() -> ! {
     // Multiboot2: EAX = magic, EBX = &boot_info (32-bit ptr)
@@ -88,7 +93,44 @@ pub extern "C" fn _start() -> ! {
         serial_write(b"MB2_MAGIC_SKIP\n");
     }
 
+    slab_demo();
+
     halt_loop()
+}
+
+/// R5: create atom, root, tick, print stats on COM1.
+fn slab_demo() {
+    serial_write(b"SLAB_DEMO\n");
+    // SAFETY: single-threaded kentry; no concurrent access.
+    let store = unsafe { &mut *ptr::addr_of_mut!(SLAB) };
+
+    let Some(aid) = store.atom_new("S", "kentry", T_INIT) else {
+        serial_write(b"SLAB_ATOM_FAIL\n");
+        return;
+    };
+    let Some(bid) = store.bubble_new(None) else {
+        serial_write(b"SLAB_BUBBLE_FAIL\n");
+        return;
+    };
+    if !store.bind(bid, "v", aid) || !store.set_root(bid) {
+        serial_write(b"SLAB_ROOT_FAIL\n");
+        return;
+    }
+
+    store.settle(5);
+
+    let atoms = store.count_atoms() as u64;
+    let reaped = store.reaped;
+    let live = if store.has_atom(aid) { 1u64 } else { 0u64 };
+
+    serial_write(b"SLAB_ATOMS=");
+    serial_u64(atoms);
+    serial_write(b" REAPED=");
+    serial_u64(reaped);
+    serial_write(b" LIVE=");
+    serial_u64(live);
+    serial_write(b"\n");
+    serial_write(b"SLAB_OK\n");
 }
 
 /// Walk Multiboot2 info tags; return cmdline bytes (type=1) if present.
@@ -143,6 +185,21 @@ fn serial_write(bytes: &[u8]) {
         while !serial_tx_empty() {}
         unsafe { outb(0x3F8, b) };
     }
+}
+
+fn serial_u64(mut n: u64) {
+    let mut buf = [0u8; 20];
+    let mut i = buf.len();
+    if n == 0 {
+        serial_write(b"0");
+        return;
+    }
+    while n > 0 && i > 0 {
+        i -= 1;
+        buf[i] = b'0' + (n % 10) as u8;
+        n /= 10;
+    }
+    serial_write(&buf[i..]);
 }
 
 fn serial_tx_empty() -> bool {
