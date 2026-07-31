@@ -11,8 +11,13 @@ repository = "https://github.com/Maciej-EriAmo/KarmazynOs"
 name = "karmazyn_substrate"
 crate-type = ["cdylib", "rlib"]
 
+[features]
+# default std = L1 host Store (HashMap/String). freestanding path: slab module (R3).
+default = ["std"]
+std = []
+
 [dependencies]
-# std only — easier on Windows without extra crates if needed later
+# std only for full Store — no crates.io deps
 
 [profile.release]
 lto = true

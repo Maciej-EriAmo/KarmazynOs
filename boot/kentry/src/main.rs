@@ -1,26 +1,27 @@
-//! KarmazynOs kentry — Multiboot2 entry (faza F).
+//! KarmazynOs kentry — Multiboot2 entry (faza F / R2).
 //!
-//! MVP: po starcie pisze na COM1: `KARMAZYN_KENTRY_OK\n` i halt loop.
-//! NIE ładuje Store / Pythona / Lua (L4 = osobna faza, po designie alokatora).
+//! - COM1: `KARMAZYN_KENTRY_OK\n`
+//! - opcjonalnie: dump cmdline z Multiboot2 info (SF.4)
+//! - NIE ładuje Store (L4 G — po slab/alloc w substrate)
 //!
-//! Build (Linux lub cross):
-//!   rustup target add x86_64-unknown-none
+//!   cd boot/kentry
 //!   cargo build --release --target x86_64-unknown-none
-//!
-//! Znak sukcesu SF.2: ten string na serialu w QEMU.
 
 #![no_std]
 #![no_main]
 
 use core::arch::asm;
 use core::panic::PanicInfo;
+use core::ptr;
 
-/// Multiboot2 header (spec: magic + arch + header_length + checksum + tags).
-/// https://www.gnu.org/software/grub/manual/multiboot2/multiboot.html
+/// Multiboot2 header (spec).
 const MB2_MAGIC: u32 = 0xE852_50D6;
 const MB2_ARCH_I386: u32 = 0;
-/// Fixed fields (16) + end tag (8) = 24; header must be 8-byte aligned.
 const MB2_HEADER_LEN: u32 = 24;
+/// Bootloader magic in EAX after Multiboot2 handoff.
+const MB2_BOOTLOADER_MAGIC: u32 = 0x36D7_6289;
+const TAG_CMDLINE: u32 = 1;
+const TAG_END: u32 = 0;
 
 #[repr(C, align(8))]
 struct Multiboot2Header {
@@ -28,7 +29,6 @@ struct Multiboot2Header {
     architecture: u32,
     header_length: u32,
     checksum: u32,
-    /// Terminating tag: type=0, flags=0, size=8
     end_type: u16,
     end_flags: u16,
     end_size: u32,
@@ -37,7 +37,6 @@ struct Multiboot2Header {
 const _: () = assert!(core::mem::size_of::<Multiboot2Header>() == 24);
 const _: () = assert!(core::mem::align_of::<Multiboot2Header>() >= 8);
 
-/// magic + architecture + header_length + checksum == 0 (mod 2^32)
 const MB2_CHECKSUM: u32 = (0u32)
     .wrapping_sub(MB2_MAGIC)
     .wrapping_sub(MB2_ARCH_I386)
@@ -55,27 +54,87 @@ static MULTIBOOT2_HEADER: Multiboot2Header = Multiboot2Header {
     end_size: 8,
 };
 
-/// Public marker — must appear in binary / serial (SF.2 / SR.2).
 pub const KENTRY_OK: &[u8] = b"KARMAZYN_KENTRY_OK\n";
 
 #[no_mangle]
 pub extern "C" fn _start() -> ! {
-    // Multiboot2: eax=magic, ebx=info — ignore for MVP
+    // Multiboot2: EAX = magic, EBX = &boot_info (32-bit ptr)
+    let magic: u32;
+    let info_ptr: u32;
+    unsafe {
+        asm!(
+            "mov {m:e}, eax",
+            "mov {i:e}, ebx",
+            m = out(reg) magic,
+            i = out(reg) info_ptr,
+            options(nostack, nomem),
+        );
+    }
+
     serial_init();
     serial_write(KENTRY_OK);
+
+    if magic == MB2_BOOTLOADER_MAGIC && info_ptr != 0 {
+        serial_write(b"MB2_MAGIC_OK\n");
+        if let Some(cmd) = unsafe { mb2_cmdline(info_ptr as usize) } {
+            serial_write(b"CMDLINE=");
+            serial_write(cmd);
+            serial_write(b"\n");
+        } else {
+            serial_write(b"CMDLINE=\n");
+        }
+    } else {
+        // direct jump / non-MB2 entry — still OK marker above
+        serial_write(b"MB2_MAGIC_SKIP\n");
+    }
+
     halt_loop()
 }
 
+/// Walk Multiboot2 info tags; return cmdline bytes (type=1) if present.
+unsafe fn mb2_cmdline(info: usize) -> Option<&'static [u8]> {
+    if info == 0 {
+        return None;
+    }
+    // total_size at offset 0; tags start at offset 8
+    let mut p = info + 8;
+    let end = info + ptr::read_unaligned(info as *const u32) as usize;
+    while p + 8 <= end {
+        let typ = ptr::read_unaligned(p as *const u32);
+        let size = ptr::read_unaligned((p + 4) as *const u32) as usize;
+        if size < 8 {
+            break;
+        }
+        if typ == TAG_END {
+            break;
+        }
+        if typ == TAG_CMDLINE && size > 8 {
+            let s = (p + 8) as *const u8;
+            let max = size - 8;
+            let mut len = 0usize;
+            while len < max {
+                if *s.add(len) == 0 {
+                    break;
+                }
+                len += 1;
+            }
+            return Some(core::slice::from_raw_parts(s, len));
+        }
+        // tags aligned to 8 bytes
+        p += (size + 7) & !7;
+    }
+    None
+}
+
 fn serial_init() {
-    // COM1 0x3F8 — classic PC; enough for QEMU -serial stdio
     unsafe {
-        outb(0x3F8 + 1, 0x00); // disable interrupts
-        outb(0x3F8 + 3, 0x80); // DLAB on
-        outb(0x3F8 + 0, 0x03); // divisor 3 → 38400
         outb(0x3F8 + 1, 0x00);
-        outb(0x3F8 + 3, 0x03); // 8N1
-        outb(0x3F8 + 2, 0xC7); // FIFO
-        outb(0x3F8 + 4, 0x0B); // IRQs, RTS/DSR
+        outb(0x3F8 + 3, 0x80);
+        outb(0x3F8 + 0, 0x03);
+        outb(0x3F8 + 1, 0x00);
+        outb(0x3F8 + 3, 0x03);
+        outb(0x3F8 + 2, 0xC7);
+        outb(0x3F8 + 4, 0x0B);
     }
 }
 

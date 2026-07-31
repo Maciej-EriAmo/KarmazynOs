@@ -46,12 +46,14 @@ Powiązania: `rust_substrate_map.md`, `build_deploy_plan.md` §F–G, `native/RE
 | Element | Stan |
 |---------|------|
 | `atom.rs` / `store.rs` / `ffi.rs` | ✅ `std`, 0 deps crates.io |
-| `cargo test` | ✅ ~7 testów prawa GC |
+| `cargo test` | ✅ **13** testów (7 Store + 6 slab R3) |
 | PyO3 `CoreStore` | ✅ most hosta |
 | `u32` AtomId / BubbleId | ✅ |
-| `no_std` | ❌ nie zaczęte w substrate |
-| `boot/kentry` | 🚧 szkielet Multiboot2 + serial OK string |
-| Alokator freestanding | 📋 tylko w tym dokumencie (§4) |
+| `slab` / `BumpAlloc` / `SlabAtoms` | ✅ R3 — fixed cap, testy; **nie** zastępuje Store |
+| `features default=["std"]` | ✅ R4 |
+| `boot/kentry` | ✅ build `x86_64-unknown-none`; marker + cmdline dump (SF.4 partial) |
+| QEMU serial SF.2 | ⏳ brak qemu w PATH na host dev (opcjonalnie) |
+| Store freestanding full GC | ❌ G — po decision reach na slab |
 
 ---
 
@@ -99,10 +101,12 @@ Wystarczy na: tablice atomów o **stałym limicie** (np. MAX_ATOMS=4096), nie na
 
 ### Kryterium „wolno zaczynać G”
 
-- [ ] MAX_ATOMS / MAX_BUBBLES ustalone  
-- [ ] bump lub slab w osobnym module `alloc_k`  
-- [ ] test host (std) tego samego layoutu slotów **albo** mirror w `cargo test`  
-- [ ] kentry już drukuje marker (R2)
+- [x] MAX_ATOMS / MAX_BUBBLES ustalone (`slab.rs`: 4096 / 1024)  
+- [x] bump + slab w module `slab` (`BumpAlloc`, `SlabAtoms`)  
+- [x] test host w `cargo test` (slab::tests)  
+- [x] kentry drukuje marker (R2)  
+- [ ] reach-GC na slab (nie tylko tick_decay) — **warunek G**  
+- [ ] QEMU potwierdza serial (SF.2) — opcjonalne przed G, zalecane
 
 ---
 

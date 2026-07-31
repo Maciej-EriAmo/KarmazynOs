@@ -9,12 +9,16 @@
 //!   extra_reach()       → lista atom_id
 //!
 //! Python/Lua zostają za szwem (cffi / ctypes). Ten crate = kanon Store.
+//!
+//! R3 freestanding prep: [`slab`] (fixed capacity, bump) — nie zastępuje jeszcze [`Store`].
 
 mod atom;
 mod store;
 mod ffi;
+pub mod slab;
 
 pub use atom::{state_for_t, Atom, AtomId, DECAY_DEFAULT, HEAT_READ, T_HOT, T_INIT, T_MAX, T_TOMB, T_WARM};
+pub use slab::{BumpAlloc, FixedLabel, SlabAtoms, MAX_ATOMS, MAX_BUBBLES, MAX_LABEL};
 pub use store::{BubbleId, Store, Stats};
 
 /// Crate / ABI version string (NUL-terminated for C).

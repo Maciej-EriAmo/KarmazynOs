@@ -20,8 +20,8 @@ This crate owns: **atoms, bubbles, roots, tick, vacuum vs retained TOMB**.
 ```
 native/
   karmazyn_substrate/        # Rust core (rlib + cdylib C ABI)
-    Cargo.toml
-    src/{lib,atom,store,ffi}.rs
+    Cargo.toml               # features: default=["std"]
+    src/{lib,atom,store,ffi,slab}.rs   # slab = R3 freestanding prep
   karmazyn_substrate_rs/     # PyO3 extension (phase 4)
     Cargo.toml
     pyproject.toml           # maturin
@@ -30,6 +30,8 @@ native/
   run_native.ps1 / run_native_demo.py   # prosta ścieżka + weryfikacja
   README.md
   build_native.ps1 / build_native.sh
+
+boot/kentry/                 # Multiboot2 entry (L3 F) — marker only, no Store
 ```
 
 ## Quick start (prosta ścieżka)
