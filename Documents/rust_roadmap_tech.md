@@ -101,12 +101,22 @@ Wystarczy na: tablice atomów o **stałym limicie** (np. MAX_ATOMS=4096), nie na
 
 ### Kryterium „wolno zaczynać G”
 
-- [x] MAX_ATOMS / MAX_BUBBLES ustalone (`slab.rs`: 4096 / 1024)  
-- [x] bump + slab w module `slab` (`BumpAlloc`, `SlabAtoms`)  
-- [x] test host w `cargo test` (slab::tests)  
+- [x] MAX_ATOMS / MAX_BUBBLES ustalone (`slab.rs`: 256 / 64 — stack-safe; static mut na target)  
+- [x] bump + slab w module `slab` (`BumpAlloc`, `SlabStore`)  
+- [x] test host w `cargo test` (slab::tests, **18** łącznie z Store)  
 - [x] kentry drukuje marker (R2)  
-- [ ] reach-GC na slab (nie tylko tick_decay) — **warunek G**  
-- [ ] QEMU potwierdza serial (SF.2) — opcjonalne przed G, zalecane
+- [x] **reach-GC na slab** (root retain / orphan vacuum / env_bubble / unset_root)  
+- [ ] QEMU potwierdza serial (SF.2) — opcjonalne przed G, zalecane  
+- [ ] kentry linkuje `SlabStore` (R5) — następny krok Rust  
+
+### Dług (aktywny)
+
+| Dług | Status |
+|------|--------|
+| Stack size `SlabStore` | złagodzony mniejszymi MAX_*; freestanding → `static mut` |
+| `Store` (HashMap) vs `SlabStore` dual path | zamierzone do G |
+| QEMU SF.2 | brak qemu w PATH dev |
+| Brak reach hooks dynamicznych na slab | `env_bubble` fixed zamiast callback |
 
 ---
 
