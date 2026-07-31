@@ -37,13 +37,19 @@ jobs:
       - name: kernel_boundary
         run: python kernel_boundary.py kernel/ software/
 
-      - name: unittest (io + host + studio)
+      - name: unittest (io + host + studio + bootcfg + kentry)
         env:
           PYTHONPATH: ${{ github.workspace }}:${{ github.workspace }}/software:${{ github.workspace }}/kernel:${{ github.workspace }}/native
           KARMAZYN_SUBSTRATE: python
           KARMAZYN_LUA: ${{ github.workspace }}/LUA
         run: |
-          python -m unittest software.test_io_thermal software.test_host_tools software.test_studio_sdl -q
+          python -m unittest software.test_io_thermal software.test_host_tools software.test_studio_sdl software.test_bootcfg software.test_kentry_marker -q
+
+      - name: kentry freestanding build
+        run: |
+          rustup target add x86_64-unknown-none
+          cargo build --release --manifest-path boot/kentry/Cargo.toml --target x86_64-unknown-none
+          python -c "p='boot/kentry/target/x86_64-unknown-none/release/karmazyn_kentry'; d=open(p,'rb').read(); assert b'KARMAZYN_KENTRY_OK' in d, 'marker missing'"
 
       # Full native wheel on Linux CI — best-effort (maturin)
       - name: maturin build (best-effort)

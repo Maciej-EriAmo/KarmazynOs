@@ -15,12 +15,12 @@
 use core::arch::asm;
 use core::panic::PanicInfo;
 
-/// Multiboot2 magic (header).
+/// Multiboot2 header (spec: magic + arch + header_length + checksum + tags).
+/// https://www.gnu.org/software/grub/manual/multiboot2/multiboot.html
 const MB2_MAGIC: u32 = 0xE852_50D6;
-/// i386 arch field (Multiboot2 uses 0 for i386; also accepted for x86_64 loaders).
-const MB2_ARCH: u32 = 0;
-const MB2_HEADER_LEN: u32 = 24; // magic+arch+len+checksum + end tag (8) = 24? 
-// magic(4)+arch(4)+header_length(4)+checksum(4) = 16; end tag 8 bytes → 24
+const MB2_ARCH_I386: u32 = 0;
+/// Fixed fields (16) + end tag (8) = 24; header must be 8-byte aligned.
+const MB2_HEADER_LEN: u32 = 24;
 
 #[repr(C, align(8))]
 struct Multiboot2Header {
@@ -28,23 +28,26 @@ struct Multiboot2Header {
     architecture: u32,
     header_length: u32,
     checksum: u32,
-    // end tag
+    /// Terminating tag: type=0, flags=0, size=8
     end_type: u16,
     end_flags: u16,
     end_size: u32,
 }
 
-// checksum such that magic+arch+header_length+checksum == 0u32
-const MB2_CHECKSUM: u32 = 0u32
+const _: () = assert!(core::mem::size_of::<Multiboot2Header>() == 24);
+const _: () = assert!(core::mem::align_of::<Multiboot2Header>() >= 8);
+
+/// magic + architecture + header_length + checksum == 0 (mod 2^32)
+const MB2_CHECKSUM: u32 = (0u32)
     .wrapping_sub(MB2_MAGIC)
-    .wrapping_sub(MB2_ARCH)
+    .wrapping_sub(MB2_ARCH_I386)
     .wrapping_sub(MB2_HEADER_LEN);
 
 #[used]
 #[link_section = ".multiboot_header"]
 static MULTIBOOT2_HEADER: Multiboot2Header = Multiboot2Header {
     magic: MB2_MAGIC,
-    architecture: MB2_ARCH,
+    architecture: MB2_ARCH_I386,
     header_length: MB2_HEADER_LEN,
     checksum: MB2_CHECKSUM,
     end_type: 0,

@@ -46,8 +46,8 @@ Step "kernel_boundary" {
         (Join-Path $Root "software")
 }
 
-Step "unittest io_thermal + host_tools" {
-    python -m unittest software.test_io_thermal software.test_host_tools -q
+Step "unittest io_thermal + host_tools + bootcfg + kentry" {
+    python -m unittest software.test_io_thermal software.test_host_tools software.test_bootcfg software.test_kentry_marker -q
 }
 
 if (-not $SkipStudio) {

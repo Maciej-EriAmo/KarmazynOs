@@ -47,10 +47,11 @@ python software/karmazyn_studio.py
 ## Backlog (kolejność) — zgodnie z planem Rust
 
 1. Utrzymać G0 + dry_run_l1 zielone  
-2. **Rust roadmap** — `Documents/rust_roadmap_tech.md` (std→alloc→kentry→G)  
-3. **kentry F** — `boot/kentry` marker serial (nie Store)  
-4. BootConfig (faza B host)  
-5. **ISO L2 / GRUB** dopiero świadomie; **Store freestanding G** po designie alokatora (§4 roadmap)  
+2. **Rust roadmap** — `Documents/rust_roadmap_tech.md` ✅  
+3. **kentry F** — `boot/kentry` marker ELF ✅; QEMU serial ⏳  
+4. **BootConfig** — `karmazyn_bootcfg.py` ✅ (faza B parser + :info)  
+5. **ISO L2 / GRUB** świadomie; **Store freestanding G** po alloc design  
+
 
 Szczegóły: `Documents/build_deploy_plan.md` · `Documents/rust_roadmap_tech.md`.
 

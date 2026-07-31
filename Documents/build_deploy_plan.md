@@ -90,7 +90,7 @@ Python, PyO3, ctypes, Studio, Lua — to **szwy i goście**, nie miejsce definic
 | Studio SDL | ✅ MVP | mapa T tło, prompt full-window |
 | **L1 Product host** | ✅ | `gate_product` + `dry_run_l1` · tag `l1-host-2026-07-31` |
 | CI automatyczne | ✅ | `.github/workflows/gate.yml` |
-| BootConfig / cmdline | ❌ | faza B (następna po L1) |
+| BootConfig / cmdline | ✅ parser | `software/karmazyn_bootcfg.py` + testy; GRUB map = `parse_cmdline_string` |
 | GRUB / ISO (L2) | 📋 plan only | faza E — **nie done** |
 | kentry Multiboot (L3) | 🚧 szkielet | `boot/kentry` — marker, nie Store |
 | Store freestanding (L4) | 📋 plan only | faza G — **po** alloc design |

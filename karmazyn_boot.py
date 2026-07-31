@@ -330,7 +330,7 @@ class KarmazynShell:
     """Prompt: kod -> warstwa wykonawcza; ':...' -> komendy systemu."""
 
     def __init__(self, store, evaluator, verbose_events=False, project=None,
-                 io=None, thermal=None):
+                 io=None, thermal=None, boot_config=None):
         self.store = store
         self.ev = evaluator
         self.env = getattr(evaluator, "env", None) or getattr(evaluator, "G", None)
@@ -338,6 +338,7 @@ class KarmazynShell:
         self.project_root = project or _project_from_env()
         self.io = io or getattr(evaluator, "io", None)
         self.thermal = thermal or getattr(evaluator, "thermal", None)
+        self.boot_config = boot_config
         if verbose_events:
             def _gc_line(a):
                 msg = f"  [GC] vacuum_decay: {a.id} ({a.E})"
@@ -596,6 +597,10 @@ class KarmazynShell:
                 lines.append("io_ids: " + " ".join(f"{k}→{v}" for k, v in n2a.items()))
         elif self.io is not None:
             lines.append(f"io: {getattr(self.io, 'name', type(self.io).__name__)} (bez matrycy)")
+        if self.boot_config is not None:
+            lines.append("config:")
+            for ln in self.boot_config.summary_lines():
+                lines.append(f"  {ln}")
         return "\n".join(lines)
 
     def _m_io(self, a):
@@ -737,13 +742,20 @@ class BootError(RuntimeError):
     """Start przerwany — usluga krytyczna nie wstala (zgloszona jako [FAIL])."""
 
 
-def boot(verbose_events=False, log=None, project=None):
+def boot(verbose_events=False, log=None, project=None, boot_config=None):
     """Sekwencja startowa z raportem uslug. Zwraca (store, shell).
     Awaria uslugi krytycznej -> [FAIL] + BootError (czysto, bez surowego traceback).
-    project: root projektu Lua (host→bąbel) lub None / KARMAZYN_PROJECT."""
+    project: root projektu Lua (host→bąbel) lub None / KARMAZYN_PROJECT.
+    boot_config: opcjonalny BootConfig (faza B) — do :info."""
     log = log or BootLog()
     if project is None:
         project = _project_from_env()
+    if boot_config is None:
+        try:
+            from karmazyn_bootcfg import parse_boot_config
+            boot_config = parse_boot_config()
+        except Exception:
+            boot_config = None
     print("=" * 60)
     print("  KarmazynOS — sekwencja startowa")
     print("=" * 60)
@@ -867,7 +879,7 @@ def boot(verbose_events=False, log=None, project=None):
     t = time.perf_counter()
     shell = KarmazynShell(
         store, evaluator, verbose_events=verbose_events, project=project,
-        io=io, thermal=thermal,
+        io=io, thermal=thermal, boot_config=boot_config,
     )
     log.ok("shell", "prompt gotowy", _ms(t))
 
@@ -1020,8 +1032,15 @@ def _apply_cli_project_flags(argv):
 
 
 if __name__ == "__main__":
-    _apply_cli_guest_flags(sys.argv)
-    _apply_cli_project_flags(sys.argv)
+    # faza B: jeden BootConfig (argv wygrywa z env), potem legacy flag helpers
+    try:
+        from karmazyn_bootcfg import parse_boot_config
+        _CFG = parse_boot_config()
+        _CFG.apply_env()
+    except Exception:
+        _CFG = None
+        _apply_cli_guest_flags(sys.argv)
+        _apply_cli_project_flags(sys.argv)
     if "--studio" in sys.argv or "--sdl" in sys.argv:
         # tryb Studio: SDL2 × matryca T (software/karmazyn_studio.py)
         try:

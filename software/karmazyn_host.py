@@ -506,10 +506,19 @@ class KarmazynHost:
             try:
                 b = self.store.bubble_new(label)
                 self.store.set_root(b)
-                self.store.import_to_bubble(label, aid)
+                self.store.import_to_bubble(label, real)
                 return label
             except Exception:
                 return None
+
+    def _public_id(self, store_id) -> str:
+        """Store id (u32|str) → logiczne id dla Lua/tools, gdy znamy alias."""
+        if store_id is None:
+            return ""
+        for logical, real in self._id_alias.items():
+            if real == store_id or str(real) == str(store_id):
+                return logical
+        return str(store_id)
 
     def recall(self, query=None, k=5, *_):
         q = "" if query is None else str(query)
@@ -525,24 +534,32 @@ class KarmazynHost:
         # fallback: substring na E/S
         if not hits:
             for a in self.store.atoms():
-                if q and (q in (a.E or "") or q in (a.S or "") or q in (a.id or "")):
-                    hits.append((0.5, a.id))
+                sid = getattr(a, "id", "")
+                pub = self._public_id(sid)
+                blob = f"{a.E or ''}{a.S or ''}{pub}{sid}"
+                if q and q in blob:
+                    hits.append((0.5, sid))
                 if len(hits) >= kk:
                     break
         rows = []
         for sim, aid in hits:
             row = self._tbl()
             sim_f = float(sim)
+            pub = self._public_id(aid)
             self._set(row, "score", sim_f)
             self._set(row, "sim", sim_f)
-            self._set(row, "id", aid)
-            atom = self.store.get_atom(aid)
+            self._set(row, "id", pub)
+            atom = None
+            try:
+                atom = self.store.get_atom(aid)
+            except (TypeError, ValueError):
+                atom = self._store_get(pub) if pub else None
             e = atom.E if atom else ""
             s = atom.S if atom else ""
             self._set(row, "E", e)
             self._set(row, "S", s)
             # pola pod lua_bin/recall.lua
-            self._set(row, "label", aid if not e else (aid + ":" + str(e)[:24]))
+            self._set(row, "label", pub if not e else (pub + ":" + str(e)[:24]))
             self._set(row, "layer", "phi")
             rows.append(row)
         return self._arr(rows)
@@ -550,15 +567,16 @@ class KarmazynHost:
     def get_similarity(self, id1=None, id2=None, *_):
         if not isinstance(id1, str) or not isinstance(id2, str):
             return 0.0
-        a = self.store.get_atom(id1)
-        b = self.store.get_atom(id2)
+        a = self._store_get(id1)
+        b = self._store_get(id2)
         if a is None or b is None:
             return 0.0
+        real2 = self._resolve_aid(id2)
         # HRR jeśli jest
         try:
-            hits = self.store.resonance(a.E or a.S or a.id, k=50)
+            hits = self.store.resonance(a.E or a.S or str(a.id), k=50)
             for sim, aid in hits or []:
-                if aid == id2:
+                if aid == real2 or aid == id2 or str(aid) == str(real2):
                     return float(sim)
         except Exception:
             pass
