@@ -33,3 +33,7 @@ out/starlink_*
 # kentry freestanding build
 boot/kentry/target/
 
+
+# local Holon SE memory copies (primary store lives in holonOs)
+holon_memory*.json
+
