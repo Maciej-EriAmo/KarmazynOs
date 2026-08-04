@@ -71,6 +71,10 @@ TOOL_SPEC = {
     # skip
     "top": ("skip", None, "DEPRECATED in automation — infinite loop; manual only"),
     "nano": ("skip", None, "DEPRECATED in automation — interactive editor; manual only"),
+    # Starlink surface — seed through software/starlink_atoms.py (not empty-store smoke)
+    "starlink": ("skip", None, "OS surface Faza 3; seed: python software/starlink_atoms.py --lua"),
+    "starlink_hot": ("skip", None, "HOT cells list; seed: python software/starlink_atoms.py --lua-hot"),
+    "memviz": ("skip", None, "memviz demo — use LUA/memviz_run.py"),
 }
 
 

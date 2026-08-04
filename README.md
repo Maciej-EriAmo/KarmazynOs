@@ -6,6 +6,19 @@
 
 ---
 
+## Demo: Starlink on atoms
+
+Public Starlink TLEs as a **multi-task load** on the same atom Store (sats + density cells + bubbles + Lua view + HTML) — not a second database.
+
+- **English overview, goal, and measured proof:** [Documents/STARLINK_ATOMS.md](Documents/STARLINK_ATOMS.md)
+- **Polish phase checklist:** [Documents/PLAN_STARLINK_ATOMS.md](Documents/PLAN_STARLINK_ATOMS.md)
+
+```powershell
+python software/starlink_atoms.py --limit 0 --prop sgp4 --hot-only --html --open-html
+```
+
+---
+
 ## What is KarmazynOS
 
 KarmazynOS is not an operating system. It is not a file system.

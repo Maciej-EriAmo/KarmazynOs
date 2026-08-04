@@ -25,6 +25,10 @@ native/karmazyn_substrate_rs/wheels/
 # local bench dumps
 bench_results.json
 
+# Starlink demo outputs (regenerate: python software/starlink_atoms.py --html)
+out/starlink_*
+!out/.gitkeep
+
 
 # kentry freestanding build
 boot/kentry/target/
