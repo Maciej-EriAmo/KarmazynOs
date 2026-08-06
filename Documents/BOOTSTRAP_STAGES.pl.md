@@ -14,35 +14,65 @@ Zbudować **jednorodne środowisko**, w którym rdzeń KarmazynOS (jądro + Shel
 Analogia do klasycznego bootstrapu Gentoo (stage1 → stage2 → stage3):
 nie bierzemy gotowego obrazu, tylko podnosimy istniejącą podstawę do pełnej samodzielności.
 
-Obecny punkt startowy: `native/karmazyn_substrate` + `native/karmazyn_slab` (już działający Store, reach-GC, C ABI).
+Punkt startowy (i Stage 1 done): `native/karmazyn_substrate` + `native/karmazyn_slab` (Store, reach-GC, C ABI `ksub_*`).
 
 ---
 
-## Stage 1 — Bootstrap (jądro jako niezależna jednostka)
+## Stage 1 — Bootstrap (jądro jako niezależna jednostka) ✅ DONE
 
 **Cel**  
 Rustowe jądro staje się prawdziwym, samodzielnym fundamentem.  
 Da się je zbudować, przetestować i uruchomić **bez Pythona**.
 
 **Zakres**
-- Pełne prawo systemu w Rustcie: atomy, temperatura, stany (HOT / WARM / COLD / TOMB), reach-GC, podstawowe pryzmaty, tick.
-- Stabilne **C ABI** (`ksub_*` i dalsza ewolucja) jako jedyna oficjalna granica binarna.
-- Minimalny program testowy (pure Rust lub C), który:
+- Pełne prawo systemu w Rustcie: atomy, temperatura, stany (HOT / WARM / COLD / TOMB), reach-GC, tick.
+- Stabilne **C ABI** (`ksub_*`) jako jedyna oficjalna granica binarna (`include/karmazyn_substrate.h`).
+- Minimalny program testowy (pure Rust **i** C):
   - otwiera Store,
   - tworzy atomy,
   - wykonuje tick + GC,
   - wypisuje stats.
 - Python Store pozostaje wyłącznie jako referencja / golden tests.
-- Dokumentacja: jak zbudować jądro od zera na czystym `rustc` + Cargo.
+- Dokumentacja + bramka: `native/stage1_verify.ps1`.
 
-**Kryterium wyjścia**  
+**Kryterium wyjścia** ✅  
 Można sklonować repozytorium, wykonać `cargo build --release` w katalogu jądra i otrzymać działające, samodzielne jądro + testy bez zależności od interpretera Pythona w ścieżce krytycznej.
 
-To jest **Bootstrap Level 1**.
+### Jak zbudować Stage 1 (bez Pythona)
+
+```powershell
+cd C:\Users\drwis\KarmazynOs
+
+# pełna bramka: slab tests + substrate tests + stage1_bootstrap + C ABI smoke
+.\native\stage1_verify.ps1
+# bez C:  .\native\stage1_verify.ps1 -SkipC
+
+# ręcznie:
+cd native\karmazyn_slab
+cargo test --release
+
+cd ..\karmazyn_substrate
+cargo test --release
+cargo build --release
+cargo run --example stage1_bootstrap --release
+cargo run --example hello_store --release
+```
+
+Artefakty: `native/karmazyn_substrate/target/release/karmazyn_substrate.dll` (Windows) / `.so` / `.dylib` + rlib.
+
+| Deliverable | Ścieżka |
+|-------------|---------|
+| Host Store + C ABI | `native/karmazyn_substrate` |
+| Freestanding slab / reach-GC | `native/karmazyn_slab` |
+| Pure Rust gate example | `examples/stage1_bootstrap.rs` |
+| C ABI smoke | `native/c_smoke/stage1_c_smoke.c` |
+| Verify script | `native/stage1_verify.ps1` |
+
+To jest **Bootstrap Level 1** — zamknięte 2026-08-06.
 
 ---
 
-## Stage 2 — Native Shell + cienki most
+## Stage 2 — Native Shell + cienki most 🚧 IN PROGRESS
 
 **Cel**  
 System da się używać bez Pythona. Shell i podstawowe narzędzia rozmawiają bezpośrednio z jądrem.
@@ -58,9 +88,30 @@ System da się używać bez Pythona. Shell i podstawowe narzędzia rozmawiają b
 Da się uruchomić interaktywną sesję KarmazynOS (shell) na czystym binarnym jądrze.  
 Python nie jest wymagany do podstawowej pracy.
 
+### Stan (2026-08-06)
+
+| Element | Status |
+|---------|--------|
+| `native/karmazyn_shell` REPL | ✅ MVP: stats/atom/heat/tick/settle/bubble/root/bind/lookup |
+| Persist save/load stanu | ❌ TODO |
+| Shell link tylko przez C ABI (nie rlib) | ❌ opcjonalne; dziś rlib (OK dla Stage 2) |
+| Lua bez Pythona | ❌ Stage 2+ |
+| Python = optional client | ⏳ host nadal Python-first dla boot; shell już bez Pythona |
+
+```powershell
+cd native\karmazyn_shell
+cargo run --release
+# k$ help
+# k$ atom var x 50
+# k$ bubble root
+# k$ root 0
+# k$ bind 0 x 0
+# k$ stats
+```
+
 ---
 
-## Stage 3 — Jednorodne środowisko („KarmazynOS from scratch”)
+## Stage 3 — Jednorodne środowisko („KarmazynOS from scratch”) ⏳
 
 **Cel**  
 Cały rdzeń systemu (jądro + shell + podstawowe narzędzia + proces budowania) tworzy spójne, odtwarzalne środowisko.  
@@ -83,15 +134,14 @@ Nowy deweloper / nowa maszyna potrafi, mając tylko `rustc` + Cargo i instrukcj�
 
 ## Podsumowanie
 
-| Stage | Nazwa                | Główny efekt                                         | Analogia Gentoo |
-|-------|----------------------|------------------------------------------------------|-----------------|
-| 1     | Bootstrap            | Samodzielne rustowe jądro + stabilne C ABI           | stage1          |
-| 2     | Native Shell         | Praca z systemem bez Pythona                         | stage2          |
-| 3     | Homogeneous Core     | Od source do działającego jednorodnego środowiska    | stage3          |
+| Stage | Nazwa                | Główny efekt                                         | Analogia Gentoo | Status |
+|-------|----------------------|------------------------------------------------------|-----------------|--------|
+| 1     | Bootstrap            | Samodzielne rustowe jądro + stabilne C ABI           | stage1          | ✅ DONE |
+| 2     | Native Shell         | Praca z systemem bez Pythona                         | stage2          | 🚧 MVP  |
+| 3     | Homogeneous Core     | Od source do działającego jednorodnego środowiska    | stage3          | ⏳      |
 
-**Dzisiaj (2026-08-06):** jesteśmy na progu Stage 1.  
-Istniejący `native/karmazyn_substrate` + `karmazyn_slab` stanowi punkt wyjścia.  
-Należy go podnieść do rangi prawdziwego jądra i oderwać od zależności od Pythona w ścieżce krytycznej.
+**Dzisiaj (2026-08-06):** Stage 1 zamknięty (`stage1_verify.ps1` = `STAGE1_VERIFY_OK`).  
+Stage 2: `karmazyn_shell` MVP działa bez Pythona; brak persist + pełnej instalacji narzędzi.
 
 ---
 
@@ -105,4 +155,4 @@ Jeśli nie — nie należy do Bootstrap 1–3.
 
 ---
 
-*Dokument żywy. Aktualizacja 2026-08-06.*
+*Dokument żywy. Aktualizacja 2026-08-06 (Stage 1 gate + shell MVP).*

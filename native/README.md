@@ -23,6 +23,10 @@ native/
   karmazyn_substrate/        # host Rust core (rlib + cdylib C ABI); re-exports slab
     Cargo.toml               # features: default=["std"]; dep: karmazyn_slab
     src/{lib,atom,store,ffi,slab}.rs
+    examples/stage1_bootstrap.rs  # Stage 1 gate (pure Rust)
+  karmazyn_shell/            # Stage 2 MVP — interactive shell (no Python)
+  c_smoke/stage1_c_smoke.c   # Stage 1 C ABI smoke
+  stage1_verify.ps1          # Stage 1 full gate (slab+substrate+C, no Python)
   karmazyn_substrate_rs/     # PyO3 extension (phase 4)
     Cargo.toml
     pyproject.toml           # maturin
@@ -33,6 +37,25 @@ native/
   build_native.ps1 / build_native.sh
 
 boot/kentry/                 # Multiboot2 + R5 SlabStore demo (serial SLAB_OK)
+```
+
+## Bootstrap Stages (from scratch)
+
+Kanoniczny plan: [../Documents/BOOTSTRAP_STAGES.pl.md](../Documents/BOOTSTRAP_STAGES.pl.md).
+
+| Stage | Status | Gate |
+|-------|--------|------|
+| **1** Bootstrap (jądro + C ABI, bez Pythona) | ✅ DONE | `.\native\stage1_verify.ps1` → `STAGE1_VERIFY_OK` |
+| **2** Native shell | 🚧 MVP | `cd native\karmazyn_shell; cargo run --release` |
+| **3** Homogeneous from-scratch | ⏳ | — |
+
+```powershell
+# Stage 1 — pure Rust (+ opcjonalnie C / gcc), ZERO Pythona
+.\native\stage1_verify.ps1
+
+# Stage 2 — interaktywny shell na substracie
+cd native\karmazyn_shell
+cargo run --release
 ```
 
 ## Quick start (prosta ścieżka)
@@ -70,8 +93,12 @@ python karmazyn_boot.py --demo
 Pure Rust (bez Pythona):
 
 ```powershell
+.\native\stage1_verify.ps1          # pełna bramka Stage 1
 cd native\karmazyn_substrate
+cargo run --example stage1_bootstrap --release
 cargo run --example hello_store --release
+cd ..\karmazyn_shell
+cargo run --release                 # Stage 2 shell MVP
 ```
 
 ## Build
@@ -196,6 +223,7 @@ Full drop-in (`metadata`, `EventBus`, HRR, `Bubble` subclass) is
 
 ## Docs
 
+- **Bootstrap Stages 1–3:** [../Documents/BOOTSTRAP_STAGES.pl.md](../Documents/BOOTSTRAP_STAGES.pl.md)
 - **Mapa Rust ↔ substrat:** [../Documents/rust_substrate_map.md](../Documents/rust_substrate_map.md)
 - **Roadmapa tech (std→kentry→L4):** [../Documents/rust_roadmap_tech.md](../Documents/rust_roadmap_tech.md)
 - **kentry Multiboot2 (L3 F, marker only):** [../boot/kentry/README.md](../boot/kentry/README.md)

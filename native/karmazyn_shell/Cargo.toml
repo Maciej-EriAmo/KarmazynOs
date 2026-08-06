@@ -1,0 +1,20 @@
+[package]
+name = "karmazyn_shell"
+version = "0.1.0"
+edition = "2021"
+authors = ["Maciej Mazur"]
+description = "KarmazynOS Stage 2 — native shell over substrate (no Python)"
+license = "MIT"
+repository = "https://github.com/Maciej-EriAmo/KarmazynOs"
+
+[[bin]]
+name = "karmazyn_shell"
+path = "src/main.rs"
+
+[dependencies]
+karmazyn_substrate = { path = "../karmazyn_substrate" }
+
+[profile.release]
+lto = true
+codegen-units = 1
+opt-level = 3
