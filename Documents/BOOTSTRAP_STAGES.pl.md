@@ -9,33 +9,43 @@ Powiązania: `rust_roadmap_tech.md`, `rust_substrate_map.md`, `runtime_pl.md`, `
 
 ## Cel
 
-Zbudować **jednorodne środowisko**, w którym rdzeń KarmazynOS (jądro + Shell + podstawowe narzędzia) da się odtworzyć z jednego, spójnego łańcucha narzędziowego — **bez Pythona** jako warstwy nośnej.
+Dwa toru — nie mylić:
 
-Analogia do klasycznego bootstrapu Gentoo (stage1 → stage2 → stage3):
-nie bierzemy gotowego obrazu, tylko podnosimy istniejącą podstawę do pełnej samodzielności.
+### Tor A — produkt / runtime (to, co robimy teraz)
+Rdzeń KarmazynOS (jądro + shell + podstawowe narzędzia) **uruchamia się** bez Pythona jako warstwy nośnej.  
+Budowa nadal na **hostowym** `rustc` + Cargo. To są **milestone’y produktowe**, nie bootstrap Gentoo.
 
-**Uczciwa granica analogii:**  
-Gentoo stage* domyka się dopiero gdy łańcuch narzędziowy jest **własny** (kompilator w systemie).  
-KarmazynOS **nie ma własnego `rustc`**. Dlatego:
+### Tor B — wzorzec Gentoo stage 1 → 2 → 3 (właściwa analogia)
+W Gentoo stage* to nie „mamy shell”, tylko **wzorzec samopodnoszenia łańcucha narzędzi**:
 
-| Co da się domknąć dziś | Czego **nie** da się domknąć bez własnego kompilatora |
-|------------------------|--------------------------------------------------------|
-| Stage 1: jądro + C ABI bez Pythona | „Stage 2 zamknięty” w sensie Gentoo (samodzielność toolchainu) |
-| Milestone: native shell + snapshot | Stage 3 jako pełny self-host (system buduje siebie *własnym* rustc) |
-| Skrypt `bootstrap_from_scratch` na **obcym** rustc+Cargo | Odtwarzalność bez zewnętrznego toolchainu |
+> Za pomocą **własnych** narzędzi kompilujesz **ważne biblioteki** (i kolejne warstwy toolchainu), aż system przestaje zależeć od obcego kompilatora/hosta.
 
-Stage 2/3 poniżej opisują **kierunek** i **kamienie milowe**, nie checkbox „DONE = koniec pracy”.
+| Gentoo (idea) | Sens |
+|---------------|------|
+| **stage1** | Minimalna baza + start przebudowy — dopiero wznosisz narzędzia |
+| **stage2** | Przebudowa kluczowych lib/tooli **już własnym** łańcuchem |
+| **stage3** | Spójne środowisko: ważne biblioteki i narzędzia skompilowane „od środka”, gotowe do dalszej pracy |
 
-Punkt startowy (Stage 1 done): `native/karmazyn_substrate` + `native/karmazyn_slab`.
+**KarmazynOS dziś nie jest na torze B w domknięciu:** nie ma **własnego** kompilatora (rustc ani innego kanonicznego).  
+Dopóki kompilacja jądra/shell/lib idzie wyłącznie hostowym `rustc`, jesteśmy w **Torze A**.  
+Nazwy „Stage 1/2/3” w tym pliku historycznie opisują milestone’y Tora A; **prawdziwy** stage2/3 w sensie Gentoo zaczyna się dopiero, gdy *własne narzędzia* budują ważne biblioteki (substrate, slab, shell, potem reszta).
+
+| Tor A (dziś) | Tor B (Gentoo-wzorzec) — wymaga własnego toolchiana |
+|--------------|------------------------------------------------------|
+| Stage1 ✅: prawo Store bez Pythona w runtime | stage1: minimalny seed + start własnych narzędzi |
+| Shell + `KSUB_SNAP` = milestone używalności | stage2: własne narzędzia kompilują kluczowe lib |
+| `bootstrap_from_scratch.ps1` na obcym rustc | stage3: spójny world zbudowany własnym łańcuchem |
+
+Punkt startowy Tora A: `native/karmazyn_substrate` + `native/karmazyn_slab`.
 
 ---
 
-## Stage 1 — Bootstrap (jądro jako niezależna jednostka) ✅ DONE
+## Stage 1 — Bootstrap (jądro jako niezależna jednostka) ✅ DONE · Tor A
 
-**Cel**  
-Rustowe jądro staje się prawdziwym, samodzielnym fundamentem **w runtime**.  
-Da się je zbudować, przetestować i uruchomić **bez Pythona**.  
-(Budowa nadal wymaga hostowego `rustc` + Cargo — to OK dla Stage 1.)
+**Cel (Tor A)**  
+Rustowe jądro = fundament **w runtime**.  
+Da się je zbudować (host rustc), przetestować i uruchomić **bez Pythona**.  
+To **nie** jest Gentoo-stage1 (tam stage1 to start przebudowy *własnymi* narzędziami).
 
 **Zakres**
 - Pełne prawo systemu w Rustcie: atomy, temperatura, stany (HOT / WARM / COLD / TOMB), reach-GC, tick.
@@ -67,15 +77,14 @@ cd C:\Users\drwis\KarmazynOs
 
 ---
 
-## Stage 2 — Native Shell + cienki most ⚡ MILESTONE (nie „zamknięcie”)
+## Stage 2 — Native Shell + cienki most ⚡ MILESTONE · Tor A (nie Gentoo-stage2)
 
-**Cel praktyczny**  
+**Cel praktyczny (Tor A)**  
 System da się **używać** bez Pythona: shell i podstawowe narzędzia na binarnym jądrze.
 
-**Czego Stage 2 *nie* jest**  
-- Nie jest domknięciem bootstrapu w sensie Gentoo.  
-- **Nie ma twardego „Stage 2 DONE”**, dopóki nie ma **własnego kompilatora Rust** (lub świadomej, osobnej decyzji o self-host toolchianie).  
-  Bez tego zawsze budujemy shell/kernel na **obcym** `rustc` — milestone runtime jest realny, „zamknięcie stage2” jako samodzielność łańcucha — **nie istnieje** w obecnym stanie projektu.
+**Czym jest Gentoo-stage2 (Tor B) — dla porównania**  
+Nie „mamy REPL”, tylko: **własnymi narzędziami** przebudowujesz / kompilujesz **ważne biblioteki** (u nas kandydaci: `karmazyn_slab`, `karmazyn_substrate`, shell, ewentualnie libc/SDK).  
+Bez własnego kompilatora ten wzorzec **się nie domyka** — i nie udajemy, że shell to stage2 Gentoo.
 
 **Zakres (runtime)**
 - Shell w Rustcie na API jądra (dziś rlib; C ABI opcjonalnie później).
@@ -110,13 +119,15 @@ cargo run --release -- -e "atom var x 50" -e "bubble r" -e "root 0" -e "bind 0 x
 
 ---
 
-## Stage 3 — Jednorodne środowisko („from scratch”) 🚧 na obcym toolchainie
+## Stage 3 — Jednorodne środowisko 🚧 · Tor A starter / Tor B = daleko
 
-**Cel praktyczny (dziś)**  
-Jeden skrypt: od `rustc`+Cargo hosta → jądro + shell + smoke — **bez Pythona**.
+**Cel praktyczny dziś (Tor A)**  
+Jeden skrypt: host `rustc`+Cargo → jądro + shell + smoke — **bez Pythona**.  
+To jest wygodny *from source on host tools*, nie Gentoo-stage3.
 
-**Cel daleki (self-host)**  
-Rdzeń buduje się **własnym** łańcuchem. To wymaga kompilatora (Rust lub inny wybrany) *wewnątrz* KarmazynOS — **osobny, wieloletni tor**, nie checkbox przy shellu.
+**Gentoo-stage3 (Tor B)**  
+Spójne środowisko, w którym **ważne biblioteki i narzędzia** są skompilowane **własnym** łańcuchem i nadają się do dalszej pracy „od środka”.  
+Wymaga najpierw własnych narzędzi (kompilator + enough of the world) — osobny, długi tor; nie checkbox przy shellu.
 
 **Zakres praktyczny**
 1. buduje jądro,
@@ -143,24 +154,28 @@ Wyższe warstwy (Cynober / KarminQL / Lua / analityka) *na* fundamencie — nie 
 
 ## Podsumowanie
 
-| Stage | Nazwa | Sensowny wynik dziś | Status |
-|-------|--------|---------------------|--------|
-| 1 | Bootstrap | Jądro + C ABI bez Pythona w runtime | ✅ DONE |
-| 2 | Native Shell | Używalność bez Pythona (shell+snap) | ⚡ milestone; **brak zamknięcia** (brak własnego rustc) |
-| 3 | Homogeneous | From-scratch na host rustc; self-host = później | 🚧 starter |
+| Etykieta w repo | Tor | Co to naprawdę | Status |
+|-----------------|-----|----------------|--------|
+| Stage 1 | A | Runtime: jądro/prawo Store bez Pythona | ✅ DONE |
+| Stage 2 (shell+snap) | A | Runtime: używalność bez Pythona | ⚡ milestone |
+| `bootstrap_from_scratch` | A | Build na **host** rustc, bez Pythona | 🚧 starter |
+| Gentoo stage1–3 | B | **Własne narzędzia** → kompilacja **ważnych bibliotek** | ❌ nie rozpoczęty (brak własnego kompilatora) |
 
 **Dzisiaj (2026-08-06):**  
-Stage 1 domknięty. Stage 2 ma milestone runtime (shell + `KSUB_SNAP`), ale **nie zamykamy Stage 2** — brak własnego kompilatora Rust.  
-Lua nie blokuje. Dalsza praca bootstrapu: utrzymać Stage 1 gate, szlifować shell/prefix gdy potrzeba; self-host toolchain = osobna decyzja.
+Tor A: Stage1 + shell/`KSUB_SNAP`.  
+Tor B (prawdziwy wzorzec Gentoo): **nie mylić z milestone’ami** — wymaga własnych narzędzi do kompilacji kluczowych lib.  
+Lua nie blokuje żadnego toru.
 
 ---
 
 ## Zasada decyzyjna
 
-1. **Python-nośny?** → nie należy do Bootstrap 1–3 (chyba że golden/test).  
-2. **Lua / goście?** → opcjonalne; nie warunek zamknięcia stage.  
-3. **„Czy stage2/3 DONE?”** → bez własnego kompilatora odpowiedź na pełne zamknięcie jest **nie**; pytaj o milestone runtime, nie o Gentoo-final.
+1. **Python-nośny w runtime?** → poza Torem A (chyba że golden/test).  
+2. **Lua / goście?** → opcjonalne; nie warunek.  
+3. **„Czy to Gentoo stage N?”** → tylko jeśli **własne narzędzia** kompilują ważne biblioteki. Shell na host-rustc ≠ stage2 Gentoo.  
+4. **„Czy milestone Tor A?”** → osobne pytanie (używalność, bramki `stage1_verify`).
 
 ---
 
-*Dokument żywy. Aktualizacja 2026-08-06 — korekta: Stage 2 nie zamyka się bez własnego rustc; Lua odroczona.*
+*Dokument żywy. Aktualizacja 2026-08-06 — wzorzec Gentoo = własne tooly → ważne lib; Tor A ≠ Tor B.*
+
