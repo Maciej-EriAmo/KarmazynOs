@@ -49,9 +49,10 @@ Kanoniczny plan: [../Documents/BOOTSTRAP_STAGES.pl.md](../Documents/BOOTSTRAP_ST
 | **2** Native shell + snapshot | ⚡ milestone (nie „DONE”) | shell działa; **brak zamknięcia stage** — nie ma własnego `rustc` |
 | **3** From-scratch na host rustc | 🚧 starter | `.\native\bootstrap_from_scratch.ps1` (obcy toolchain) |
 
-**Gentoo stage 1–2–3** = wzorzec: *własne narzędzia → kompilacja ważnych bibliotek* (Tor B).  
-To, co w repo nazywamy Stage 1/2/shell, to **Tor A** (runtime bez Pythona na host `rustc`) — nie domknięcie Gentoo.  
-Lua nie jest warunkiem. Własny kompilator = osobna decyzja, nie checkbox shella.
+**Gentoo stage 1–2–3** i **Linux From Scratch** = ten sam wzorzec (Tor B):  
+*własne narzędzia → kompilacja ważnych bibliotek* (u LFS: toolchain na hoście, potem rebuild „od środka”).  
+Stage 1/2/shell w repo = **Tor A** (runtime bez Pythona na host `rustc`) — nie Gentoo/LFS-final.  
+Lua nie jest warunkiem. Własny kompilator = osobna decyzja.
 
 ```powershell
 # Stage 3 starter — jedna komenda (rustc+cargo only, ZERO Pythona)

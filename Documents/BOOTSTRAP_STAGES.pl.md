@@ -15,26 +15,29 @@ Dwa toru — nie mylić:
 Rdzeń KarmazynOS (jądro + shell + podstawowe narzędzia) **uruchamia się** bez Pythona jako warstwy nośnej.  
 Budowa nadal na **hostowym** `rustc` + Cargo. To są **milestone’y produktowe**, nie bootstrap Gentoo.
 
-### Tor B — wzorzec Gentoo stage 1 → 2 → 3 (właściwa analogia)
-W Gentoo stage* to nie „mamy shell”, tylko **wzorzec samopodnoszenia łańcucha narzędzi**:
+### Tor B — wzorzec Gentoo **i** Linux From Scratch (właściwa analogia)
+To nie „mamy shell”, tylko **samopodnoszenie łańcucha narzędzi** — ten sam pomysł w dwóch szkołach:
 
 > Za pomocą **własnych** narzędzi kompilujesz **ważne biblioteki** (i kolejne warstwy toolchainu), aż system przestaje zależeć od obcego kompilatora/hosta.
 
-| Gentoo (idea) | Sens |
-|---------------|------|
-| **stage1** | Minimalna baza + start przebudowy — dopiero wznosisz narzędzia |
-| **stage2** | Przebudowa kluczowych lib/tooli **już własnym** łańcuchem |
-| **stage3** | Spójne środowisko: ważne biblioteki i narzędzia skompilowane „od środka”, gotowe do dalszej pracy |
+| Gentoo | Linux From Scratch (idea) | Sens wspólny |
+|--------|---------------------------|--------------|
+| **stage1** | host → tymczasowy toolchain / seed | minimalna baza, start przebudowy |
+| **stage2** | chroot + przebudowa tooli i lib **już „wewnątrz”** | własne narzędzia składają kluczowe biblioteki |
+| **stage3** | pełny system skompilowany we własnym łańcuchu | spójny world „od środka”, gotowy do pracy |
+
+LFS robi to jawnie: najpierw budujesz toolchain na hoście, potem **wchodzisz w nowe środowisko** i **ponownie** kompilujesz ważne pakiety własnymi binarkami — żeby uciąć zależności od hosta (tzw. purity / self-contained build).  
+Gentoo stage* to ta sama logika w postaci predefiniowanych obrazów stage.
 
 **KarmazynOS dziś nie jest na torze B w domknięciu:** nie ma **własnego** kompilatora (rustc ani innego kanonicznego).  
-Dopóki kompilacja jądra/shell/lib idzie wyłącznie hostowym `rustc`, jesteśmy w **Torze A**.  
-Nazwy „Stage 1/2/3” w tym pliku historycznie opisują milestone’y Tora A; **prawdziwy** stage2/3 w sensie Gentoo zaczyna się dopiero, gdy *własne narzędzia* budują ważne biblioteki (substrate, slab, shell, potem reszta).
+Dopóki kompilacja jądra/shell/lib idzie wyłącznie hostowym `rustc`, jesteśmy w **Torze A** — jak LFS *zanim* zbudujesz i użyjesz własnego toolchiana, albo jak praca wyłącznie na hostie bez chroot/rebuild.  
+Nazwy „Stage 1/2/3” w tym pliku historycznie opisują milestone’y Tora A; **prawdziwy** stage2/3 (Gentoo) / faza „wewnątrz LFS” zaczyna się dopiero, gdy *własne narzędzia* budują ważne biblioteki (substrate, slab, shell, potem reszta).
 
-| Tor A (dziś) | Tor B (Gentoo-wzorzec) — wymaga własnego toolchiana |
-|--------------|------------------------------------------------------|
-| Stage1 ✅: prawo Store bez Pythona w runtime | stage1: minimalny seed + start własnych narzędzi |
-| Shell + `KSUB_SNAP` = milestone używalności | stage2: własne narzędzia kompilują kluczowe lib |
-| `bootstrap_from_scratch.ps1` na obcym rustc | stage3: spójny world zbudowany własnym łańcuchem |
+| Tor A (dziś) | Tor B (Gentoo / LFS) — wymaga własnego toolchiana |
+|--------------|-----------------------------------------------------|
+| Stage1 ✅: prawo Store bez Pythona w runtime | seed + start własnych narzędzi |
+| Shell + `KSUB_SNAP` = milestone używalności | własne narzędzia kompilują kluczowe lib |
+| `bootstrap_from_scratch.ps1` na obcym rustc | spójny world zbudowany własnym łańcuchem (jak LFS po chroot rebuild) |
 
 Punkt startowy Tora A: `native/karmazyn_substrate` + `native/karmazyn_slab`.
 
@@ -159,7 +162,7 @@ Wyższe warstwy (Cynober / KarminQL / Lua / analityka) *na* fundamencie — nie 
 | Stage 1 | A | Runtime: jądro/prawo Store bez Pythona | ✅ DONE |
 | Stage 2 (shell+snap) | A | Runtime: używalność bez Pythona | ⚡ milestone |
 | `bootstrap_from_scratch` | A | Build na **host** rustc, bez Pythona | 🚧 starter |
-| Gentoo stage1–3 | B | **Własne narzędzia** → kompilacja **ważnych bibliotek** | ❌ nie rozpoczęty (brak własnego kompilatora) |
+| Gentoo stage1–3 / LFS toolchain→rebuild | B | **Własne narzędzia** → kompilacja **ważnych bibliotek** | ❌ nie rozpoczęty (brak własnego kompilatora) |
 
 **Dzisiaj (2026-08-06):**  
 Tor A: Stage1 + shell/`KSUB_SNAP`.  
@@ -172,10 +175,11 @@ Lua nie blokuje żadnego toru.
 
 1. **Python-nośny w runtime?** → poza Torem A (chyba że golden/test).  
 2. **Lua / goście?** → opcjonalne; nie warunek.  
-3. **„Czy to Gentoo stage N?”** → tylko jeśli **własne narzędzia** kompilują ważne biblioteki. Shell na host-rustc ≠ stage2 Gentoo.  
+3. **„Czy to Gentoo stage N / faza LFS?”** → tylko jeśli **własne narzędzia** kompilują ważne biblioteki. Shell na host-rustc ≠ stage2 Gentoo ≠ LFS po chroot.  
 4. **„Czy milestone Tor A?”** → osobne pytanie (używalność, bramki `stage1_verify`).
 
 ---
 
-*Dokument żywy. Aktualizacja 2026-08-06 — wzorzec Gentoo = własne tooly → ważne lib; Tor A ≠ Tor B.*
+*Dokument żywy. Aktualizacja 2026-08-06 — wzorzec Gentoo **i** LFS = własne tooly → ważne lib; Tor A ≠ Tor B.*
+
 
