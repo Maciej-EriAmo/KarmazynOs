@@ -67,7 +67,7 @@ Not yet: structs, nested arrays, true modules/packages, strings, self-host of kc
 ## Next
 
 1. ~~TB.2 / TB.2e / type-unify return-paths (0.4)~~ done.  
-2. Optional: golden reach store_mini ↔ slab.  
+2. ~~TB.3b golden reach store_mini ↔ slab~~ done (`golden_k0` store_mini_*).  
 3. Self-host: rewrite `kcc` in K0 (TB.4, long).  
 4. Optional: own backend without gcc (TB.5).
 

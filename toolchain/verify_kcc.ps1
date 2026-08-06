@@ -73,7 +73,7 @@ try {
 }
 
 Write-Host ""
-Write-Host "[4] Rust golden TB.3 (slab k0_state_code vs state_for_t)"
+Write-Host "[4] Rust golden TB.3/TB.3b (thermal + store_mini reach vs slab)"
 Push-Location $Slab
 try {
     cargo test --release golden_k0
@@ -95,5 +95,5 @@ if ($pyCmd) {
 
 Write-Host ""
 Write-Host "=== KCC_VERIFY_OK ===" -ForegroundColor Green
-Write-Host "Own: kcc + .k0. Stage0: rustc (kcc+slab tests). Link: gcc. Golden: TB.3."
+Write-Host "Own: kcc + .k0. Stage0: rustc (kcc+slab tests). Link: gcc. Golden: TB.3 thermal + TB.3b reach."
 exit 0

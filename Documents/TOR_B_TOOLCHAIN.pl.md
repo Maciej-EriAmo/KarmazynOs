@@ -24,7 +24,7 @@
 | Backend 0.1 | emit **C99** (IL); link: foreign gcc |
 | Krytyczne lib | `thermal*`, `tick_skeleton`, `atom_table`, **`store_mini`** (T×reach) |
 | K0 język | + fixed arrays `[T; N]`, `a[i]`, zero-init `let a: [T; N];` |
-| Golden TB.3 | `native/karmazyn_slab/src/golden_k0.rs` + `toolchain/golden_k0_thermal.py` |
+| Golden TB.3 / 3b | `native/karmazyn_slab/src/golden_k0.rs` (thermal + reach) + `toolchain/golden_k0_thermal.py` |
 | Bramka | `.\toolchain\verify_kcc.ps1` → `KCC_VERIFY_OK` |
 
 ```powershell
@@ -60,6 +60,7 @@ cd C:\Users\drwis\KarmazynOs
 | **TB.2e** | kcc 0.3: `sem` (undeclared/arity/`%`f64) + `--safe` bounds | ✅ |
 | **TB.2f** | kcc 0.4: type-unify (let/assign/call/return) + return-path coverage | ✅ |
 | **TB.3** | Golden `k0_state_code` ↔ `state_for_t` (slab + python) | ✅ |
+| **TB.3b** | Golden store_mini reach A–D ↔ `SlabStore` (decay 0.92, settle 80/4) | ✅ |
 | **TB.4** | Self-host: `kcc` w K0 (kcc kompiluje siebie) | ❌ daleko |
 | **TB.5** | Własny backend (bez gcc) — opcjonalnie | ❌ |
 
@@ -86,4 +87,4 @@ cd C:\Users\drwis\KarmazynOs
 
 ---
 
-*2026-08-06: TB.0–TB.3 + TB.2b–f — store_mini T×reach; kcc 0.4 type-unify + return-paths.*
+*2026-08-06: TB.0–TB.3b + TB.2b–f — store_mini T×reach; kcc 0.4; golden reach A–D ↔ slab.*
