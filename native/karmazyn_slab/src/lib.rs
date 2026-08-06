@@ -15,6 +15,9 @@
 
 #![no_std]
 
+#[cfg(test)]
+mod golden_k0;
+
 // ── thermal / id primitives (no String — host Atom stays in substrate) ─────
 
 pub const T_INIT: f64 = 50.0;

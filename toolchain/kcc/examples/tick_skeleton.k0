@@ -1,0 +1,63 @@
+// TB.2 — single-atom T lifecycle (no Store/reach). Own kcc.
+// Demonstrates: init → tick decay → heat revive → cool to dead.
+
+fn clamp_t(t: f64) -> f64 {
+    if t < 0.0 { return 0.0; }
+    if t > 100.0 { return 100.0; }
+    return t;
+}
+
+fn is_dead(t: f64) -> bool {
+    return clamp_t(t) < 2.0;
+}
+
+fn tick_t(t: f64) -> f64 {
+    return clamp_t(t * 0.92);
+}
+
+fn heat(t: f64, amount: f64) -> f64 {
+    if amount < 0.0 { return clamp_t(t); }
+    return clamp_t(t + amount);
+}
+
+fn cool_until_dead(t: f64, max_steps: i32) -> i32 {
+    let x: f64 = t;
+    let i: i32 = 0;
+    while i < max_steps {
+        if is_dead(x) {
+            return i;
+        }
+        x = tick_t(x);
+        i = i + 1;
+    }
+    return -1;
+}
+
+fn main() -> i32 {
+    let t: f64 = 50.0;
+    t = tick_t(t);
+    // still alive
+    if is_dead(t) {
+        return 1;
+    }
+    // force near tomb then heat
+    t = 1.5;
+    if is_dead(t) {
+    } else {
+        return 2;
+    }
+    t = heat(t, 10.0);
+    if is_dead(t) {
+        return 3;
+    }
+    // cool from T_INIT with default decay; must die within 80 ticks
+    let steps: i32 = cool_until_dead(50.0, 80);
+    if steps < 0 {
+        return 4;
+    }
+    if steps < 10 {
+        // sanity: not instant
+        return 5;
+    }
+    return 0;
+}
