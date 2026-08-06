@@ -19,10 +19,7 @@ fn main() -> i32 {
     t = tick_t(t);
     if is_dead(t) { return 1; }
     t = 1.5;
-    if is_dead(t) {
-    } else {
-        return 2;
-    }
+    if !is_dead(t) { return 2; }
     t = heat(t, 10.0);
     if is_dead(t) { return 3; }
     let steps: i32 = cool_until_dead(50.0, 80);

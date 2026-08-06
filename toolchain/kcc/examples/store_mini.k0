@@ -8,13 +8,6 @@
 //   dead + reachable  → retained TOMB (keep slot)
 #include "thermal_lib.k0"
 
-// --- atom table (16) ---
-// used_a, t_a
-// --- bubble table (8) ---
-// used_b, parent_b (-1 = none), is_root
-// --- bind table (32) ---
-// used_bind, bid, name_id, aid
-
 fn clear_store(
     used_a: [bool; 16], t_a: [f64; 16],
     used_b: [bool; 8], parent_b: [i32; 8], is_root: [bool; 8],
@@ -47,8 +40,7 @@ fn clear_store(
 fn atom_new(used_a: [bool; 16], t_a: [f64; 16], t: f64) -> i32 {
     let i: i32 = 0;
     while i < 16 {
-        if used_a[i] {
-        } else {
+        if !used_a[i] {
             used_a[i] = true;
             t_a[i] = clamp_t(t);
             return i;
@@ -61,8 +53,7 @@ fn atom_new(used_a: [bool; 16], t_a: [f64; 16], t: f64) -> i32 {
 fn bubble_new(used_b: [bool; 8], parent_b: [i32; 8], parent: i32) -> i32 {
     let i: i32 = 0;
     while i < 8 {
-        if used_b[i] {
-        } else {
+        if !used_b[i] {
             used_b[i] = true;
             parent_b[i] = parent;
             return i;
@@ -75,11 +66,9 @@ fn bubble_new(used_b: [bool; 8], parent_b: [i32; 8], parent: i32) -> i32 {
 fn set_root(used_b: [bool; 8], is_root: [bool; 8], bid: i32) -> i32 {
     if bid < 0 { return 0; }
     if bid >= 8 { return 0; }
-    if used_b[bid] {
-        is_root[bid] = true;
-        return 1;
-    }
-    return 0;
+    if !used_b[bid] { return 0; }
+    is_root[bid] = true;
+    return 1;
 }
 
 fn unset_root(is_root: [bool; 8], bid: i32) -> i32 {
@@ -99,14 +88,8 @@ fn bind(
     if bid >= 8 { return 0; }
     if aid < 0 { return 0; }
     if aid >= 16 { return 0; }
-    if used_b[bid] {
-    } else {
-        return 0;
-    }
-    if used_a[aid] {
-    } else {
-        return 0;
-    }
+    if !used_b[bid] { return 0; }
+    if !used_a[aid] { return 0; }
     // upsert by (bid, nid)
     let i: i32 = 0;
     while i < 32 {
@@ -122,8 +105,7 @@ fn bind(
     }
     i = 0;
     while i < 32 {
-        if used_bind[i] {
-        } else {
+        if !used_bind[i] {
             used_bind[i] = true;
             bid_b[i] = bid;
             name_id[i] = nid;
@@ -172,14 +154,10 @@ fn walk_reach(
     while sp > 0 {
         sp = sp - 1;
         let bid: i32 = stack[sp];
-        if bid < 0 {
-        } else {
-            if bid >= 8 {
-            } else {
-                if seen_b[bid] {
-                } else {
+        if bid >= 0 {
+            if bid < 8 {
+                if !seen_b[bid] {
                     seen_b[bid] = true;
-                    // binds of this bubble
                     i = 0;
                     while i < 32 {
                         if used_bind[i] {
@@ -196,13 +174,11 @@ fn walk_reach(
                         }
                         i = i + 1;
                     }
-                    // parent chain
                     let p: i32 = parent_b[bid];
                     if p >= 0 {
                         if p < 8 {
                             if used_b[p] {
-                                if seen_b[p] {
-                                } else {
+                                if !seen_b[p] {
                                     if sp < 16 {
                                         stack[sp] = p;
                                         sp = sp + 1;
@@ -227,7 +203,6 @@ fn tick_body(
     let i: i32 = 0;
     let reaped: i32 = 0;
 
-    // decay
     i = 0;
     while i < 16 {
         if used_a[i] {
@@ -238,16 +213,12 @@ fn tick_body(
 
     walk_reach(used_a, used_b, parent_b, is_root, used_bind, bid_b, aid_b, reach_a);
 
-    // vacuum vs retain
     i = 0;
     while i < 16 {
         if used_a[i] {
             if is_dead(t_a[i]) {
-                if reach_a[i] {
-                    // retained TOMB
-                } else {
+                if !reach_a[i] {
                     used_a[i] = false;
-                    // purge binds to this aid
                     let j: i32 = 0;
                     while j < 32 {
                         if used_bind[j] {
@@ -305,7 +276,7 @@ fn main() -> i32 {
         used_bind, bid_b, name_id, aid_b
     );
 
-    // Scenario A: orphan vacuum
+    // A: orphan vacuum
     let orphan: i32 = atom_new(used_a, t_a, t_init());
     if orphan < 0 { return 1; }
     settle(
@@ -314,7 +285,7 @@ fn main() -> i32 {
     );
     if used_a[orphan] { return 2; }
 
-    // Scenario B: root retains TOMB
+    // B: root retains TOMB
     clear_store(
         used_a, t_a, used_b, parent_b, is_root,
         used_bind, bid_b, name_id, aid_b
@@ -324,7 +295,6 @@ fn main() -> i32 {
     if set_root(used_b, is_root, root) != 1 { return 4; }
     let keep: i32 = atom_new(used_a, t_a, t_init());
     if keep < 0 { return 5; }
-    // name_id 100 = "keep"
     if bind(used_a, used_b, used_bind, bid_b, name_id, aid_b, root, 100, keep) != 1 {
         return 6;
     }
@@ -332,16 +302,10 @@ fn main() -> i32 {
         used_a, t_a, used_b, parent_b, is_root,
         used_bind, bid_b, name_id, aid_b, reach_a, 80
     );
-    if used_a[keep] {
-    } else {
-        return 7;
-    }
-    if is_dead(t_a[keep]) {
-    } else {
-        return 8;
-    }
+    if !used_a[keep] { return 7; }
+    if !is_dead(t_a[keep]) { return 8; }
 
-    // Scenario C: unset_root then reap
+    // C: unset_root then reap
     unset_root(is_root, root);
     settle(
         used_a, t_a, used_b, parent_b, is_root,
@@ -349,30 +313,23 @@ fn main() -> i32 {
     );
     if used_a[keep] { return 9; }
 
-    // Scenario D: parent chain — child rootless, parent is root, bind on child
+    // D: child is root; bind on child retains after cool
     clear_store(
         used_a, t_a, used_b, parent_b, is_root,
         used_bind, bid_b, name_id, aid_b
     );
     let p: i32 = bubble_new(used_b, parent_b, -1);
     let c: i32 = bubble_new(used_b, parent_b, p);
-    set_root(used_b, is_root, p);
     let a: i32 = atom_new(used_a, t_a, t_init());
-    bind(used_a, used_b, used_bind, bid_b, name_id, aid_b, c, 1, a);
-    // walk from root p should not see child binds unless we also root c
-    // With only parent walk from roots: start at p, no binds on p → a not reached
-    // Fix scenario: root the child instead, parent walk goes to p (no extra atoms)
-    // Better: root child c; bind on c; parent p unused for reach of a
-    unset_root(is_root, p);
-    set_root(used_b, is_root, c);
+    if set_root(used_b, is_root, c) != 1 { return 11; }
+    if bind(used_a, used_b, used_bind, bid_b, name_id, aid_b, c, 1, a) != 1 {
+        return 12;
+    }
     settle(
         used_a, t_a, used_b, parent_b, is_root,
         used_bind, bid_b, name_id, aid_b, reach_a, 80
     );
-    if used_a[a] {
-    } else {
-        return 10;
-    }
+    if !used_a[a] { return 10; }
 
     return 0;
 }

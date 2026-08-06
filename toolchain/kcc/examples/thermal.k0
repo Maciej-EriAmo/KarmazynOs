@@ -22,10 +22,7 @@ fn check_decay_heat() -> i32 {
     if t1 < 45.9 { return 40; }
     if t1 > 46.1 { return 41; }
     let cold: f64 = decay_n(50.0, 0.92, 80);
-    if is_dead(cold) {
-    } else {
-        return 42;
-    }
+    if !is_dead(cold) { return 42; }
     let h: f64 = heat(1.0, 10.0);
     if is_dead(h) { return 43; }
     if state_code(h) != 1 { return 44; }
@@ -37,10 +34,7 @@ fn main() -> i32 {
     if r != 0 { return r; }
     r = check_decay_heat();
     if r != 0 { return r; }
-    if is_dead(1.0) {
-    } else {
-        return 14;
-    }
+    if !is_dead(1.0) { return 14; }
     if is_dead(50.0) { return 15; }
     return 0;
 }

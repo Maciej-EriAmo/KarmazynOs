@@ -9,8 +9,7 @@ fn vacuum_pass(used: [bool; 8], pinned: [bool; 8], temp: [f64; 8]) -> i32 {
     while i < 8 {
         if used[i] {
             if is_dead(temp[i]) {
-                if pinned[i] {
-                } else {
+                if !pinned[i] {
                     used[i] = false;
                     reaped = reaped + 1;
                 }
@@ -52,8 +51,7 @@ fn count_live(used: [bool; 8]) -> i32 {
 fn alloc_slot(used: [bool; 8]) -> i32 {
     let i: i32 = 0;
     while i < 8 {
-        if used[i] {
-        } else {
+        if !used[i] {
             return i;
         }
         i = i + 1;
@@ -91,14 +89,8 @@ fn main() -> i32 {
 
     if used[0] { return 10; }
     if reaped < 1 { return 11; }
-    if used[1] {
-    } else {
-        return 12;
-    }
-    if is_dead(temp[1]) {
-    } else {
-        return 13;
-    }
+    if !used[1] { return 12; }
+    if !is_dead(temp[1]) { return 13; }
 
     temp[1] = heat(temp[1], heat_read());
     if is_dead(temp[1]) { return 14; }
@@ -111,12 +103,8 @@ fn main() -> i32 {
     used[aid] = true;
     pinned[aid] = false;
     temp[aid] = t_init();
-    if used[aid] {
-    } else {
-        return 17;
-    }
+    if !used[aid] { return 17; }
 
-    // state_code from thermal_lib
     if state_code(80.0) != 3 { return 18; }
     if state_code(t_init()) != 2 { return 19; }
 
