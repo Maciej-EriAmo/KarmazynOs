@@ -43,11 +43,13 @@ boot/kentry/                 # Multiboot2 + R5 SlabStore demo (serial SLAB_OK)
 
 Kanoniczny plan: [../Documents/BOOTSTRAP_STAGES.pl.md](../Documents/BOOTSTRAP_STAGES.pl.md).
 
-| Stage | Status | Gate |
-|-------|--------|------|
-| **1** Bootstrap (jądro + C ABI, bez Pythona) | ✅ DONE | `.\native\stage1_verify.ps1` → `STAGE1_VERIFY_OK` |
-| **2** Native shell + snapshot | 🚧 +persist | `cd native\karmazyn_shell; cargo run --release` (`save`/`load`) |
-| **3** Homogeneous from-scratch | 🚧 starter | `.\native\bootstrap_from_scratch.ps1` |
+| Stage | Status | Gate / uwaga |
+|-------|--------|----------------|
+| **1** Bootstrap (jądro + C ABI, bez Pythona) | ✅ DONE | `.\native\stage1_verify.ps1` |
+| **2** Native shell + snapshot | ⚡ milestone (nie „DONE”) | shell działa; **brak zamknięcia stage** — nie ma własnego `rustc` |
+| **3** From-scratch na host rustc | 🚧 starter | `.\native\bootstrap_from_scratch.ps1` (obcy toolchain) |
+
+Lua **nie** jest warunkiem bootstrapu. Self-host kompilatora = osobny tor, nie checkbox Stage 2.
 
 ```powershell
 # Stage 3 starter — jedna komenda (rustc+cargo only, ZERO Pythona)
