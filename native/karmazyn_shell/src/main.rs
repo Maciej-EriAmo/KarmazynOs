@@ -3,14 +3,24 @@
 //!   cd native/karmazyn_shell
 //!   cargo run --release
 //!   cargo run --release -- -e "atom var x 50" -e stats -e quit
+//!   cargo run --release -- examples/smoke.ksh
 //!
-//! Commands: help | stats | atom | heat | tick | settle | bubble | root | bind |
-//!           lookup | has | t | save <path> | load <path> | quit
+//! Commands: help | version | stats | atom | heat | tick | settle | bubble | root |
+//!           unroot | bind | lookup | has | t | save <path> | load <path> | quit
 
 use karmazyn_substrate::{state_for_t, Store, T_INIT};
 use std::env;
 use std::io::{self, BufRead, Write};
 use std::process;
+
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Outcome {
+    Ok,
+    Quit,
+    Err,
+}
 
 fn main() {
     let thermal = true;
@@ -29,11 +39,15 @@ fn main() {
             }
             batch.push(args[i].clone());
             i += 1;
+        } else if args[i] == "-V" || args[i] == "--version" {
+            println!("karmazyn_shell {VERSION}");
+            process::exit(0);
         } else if args[i] == "-h" || args[i] == "--help" {
-            println!("karmazyn_shell — native Stage 2 shell (no Python)");
+            println!("karmazyn_shell {VERSION} — native Stage 2 shell (no Python)");
             println!("  interactive:  karmazyn_shell");
             println!("  batch:        karmazyn_shell -e \"atom var x 50\" -e stats");
             println!("  script file:  karmazyn_shell commands.ksh");
+            println!("  version:      karmazyn_shell --version");
             process::exit(0);
         } else {
             // treat as script path
@@ -56,17 +70,26 @@ fn main() {
     }
 
     if !batch.is_empty() {
-        println!("karmazyn_shell 0.2 — batch ({} cmds)", batch.len());
+        println!("karmazyn_shell {VERSION} — batch ({} cmds)", batch.len());
+        let mut failed = false;
         for cmd in batch {
             println!("k$ {cmd}");
-            if !dispatch(&store, &cmd) {
-                break;
+            match dispatch(&store, &cmd) {
+                Outcome::Ok => {}
+                Outcome::Quit => break,
+                Outcome::Err => {
+                    failed = true;
+                    break;
+                }
             }
+        }
+        if failed {
+            process::exit(1);
         }
         return;
     }
 
-    println!("karmazyn_shell 0.2 — Stage 2 (native, no Python)");
+    println!("karmazyn_shell {VERSION} — Stage 2 (native, no Python)");
     println!("thermal={thermal}  type `help`");
 
     let stdin = io::stdin();
@@ -82,19 +105,29 @@ fn main() {
         if line.is_empty() {
             continue;
         }
-        if !dispatch(&store, line) {
-            break;
+        match dispatch(&store, line) {
+            Outcome::Ok => {}
+            Outcome::Quit => break,
+            Outcome::Err => {
+                // interactive: print already done; stay in REPL
+            }
         }
     }
     println!("bye");
 }
 
-fn dispatch(s: &Store, line: &str) -> bool {
+fn dispatch(s: &Store, line: &str) -> Outcome {
     let parts: Vec<&str> = line.split_whitespace().collect();
+    if parts.is_empty() {
+        return Outcome::Ok;
+    }
     let cmd = parts[0].to_ascii_lowercase();
     match cmd.as_str() {
-        "q" | "quit" | "exit" => return false,
+        "q" | "quit" | "exit" => return Outcome::Quit,
         "help" | "?" => print_help(),
+        "version" | "ver" => {
+            println!("karmazyn_shell {VERSION}");
+        }
         "stats" => {
             let st = s.stats();
             println!(
@@ -114,17 +147,20 @@ fn dispatch(s: &Store, line: &str) -> bool {
         "save" => {
             let Some(path) = parts.get(1) else {
                 println!("usage: save <path>");
-                return true;
+                return Outcome::Err;
             };
             match s.save_snapshot_file(path) {
                 Ok(()) => println!("saved {path}"),
-                Err(e) => println!("save err: {e}"),
+                Err(e) => {
+                    println!("save err: {e}");
+                    return Outcome::Err;
+                }
             }
         }
         "load" => {
             let Some(path) = parts.get(1) else {
                 println!("usage: load <path>");
-                return true;
+                return Outcome::Err;
             };
             match s.load_snapshot_file(path) {
                 Ok(()) => {
@@ -134,29 +170,32 @@ fn dispatch(s: &Store, line: &str) -> bool {
                         st.total, st.bubbles, st.reaped
                     );
                 }
-                Err(e) => println!("load err: {e}"),
+                Err(e) => {
+                    println!("load err: {e}");
+                    return Outcome::Err;
+                }
             }
         }
         "atom" => {
             if parts.len() < 3 {
                 println!("usage: atom <s> <e> [t]");
-                return true;
+                return Outcome::Err;
             }
             let t = parts
                 .get(3)
                 .and_then(|x| x.parse::<f64>().ok())
                 .unwrap_or(T_INIT);
             let id = s.atom_new(parts[1], parts[2], t);
-            let st = s
-                .get_atom_t(id)
-                .map(state_for_t)
-                .unwrap_or("?");
-            println!("aid={id} state={st} t={:.3}", s.get_atom_t(id).unwrap_or(-1.0));
+            let st = s.get_atom_t(id).map(state_for_t).unwrap_or("?");
+            println!(
+                "aid={id} state={st} t={:.3}",
+                s.get_atom_t(id).unwrap_or(-1.0)
+            );
         }
         "heat" => {
             let Some(id) = parts.get(1).and_then(|x| x.parse::<u32>().ok()) else {
                 println!("usage: heat <aid>");
-                return true;
+                return Outcome::Err;
             };
             if s.heat(id) {
                 println!(
@@ -166,6 +205,7 @@ fn dispatch(s: &Store, line: &str) -> bool {
                 );
             } else {
                 println!("no atom {id}");
+                return Outcome::Err;
             }
         }
         "tick" => {
@@ -183,7 +223,7 @@ fn dispatch(s: &Store, line: &str) -> bool {
         "settle" => {
             let Some(n) = parts.get(1).and_then(|x| x.parse::<u32>().ok()) else {
                 println!("usage: settle <n>");
-                return true;
+                return Outcome::Err;
             };
             s.settle(n);
             println!("settle {n}");
@@ -196,7 +236,7 @@ fn dispatch(s: &Store, line: &str) -> bool {
         "root" => {
             let Some(bid) = parts.get(1).and_then(|x| x.parse::<u32>().ok()) else {
                 println!("usage: root <bid>");
-                return true;
+                return Outcome::Err;
             };
             s.set_root(bid);
             println!("root={bid}");
@@ -204,7 +244,7 @@ fn dispatch(s: &Store, line: &str) -> bool {
         "unroot" => {
             let Some(bid) = parts.get(1).and_then(|x| x.parse::<u32>().ok()) else {
                 println!("usage: unroot <bid>");
-                return true;
+                return Outcome::Err;
             };
             s.unset_root(bid);
             println!("unset_root={bid}");
@@ -212,29 +252,32 @@ fn dispatch(s: &Store, line: &str) -> bool {
         "bind" => {
             if parts.len() < 4 {
                 println!("usage: bind <bid> <name> <aid>");
-                return true;
+                return Outcome::Err;
             }
             let Ok(bid) = parts[1].parse::<u32>() else {
                 println!("bad bid");
-                return true;
+                return Outcome::Err;
             };
             let Ok(aid) = parts[3].parse::<u32>() else {
                 println!("bad aid");
-                return true;
+                return Outcome::Err;
             };
             match s.bind(bid, parts[2], aid) {
                 Ok(()) => println!("bound {} → {aid} in bubble {bid}", parts[2]),
-                Err(e) => println!("bind err: {e}"),
+                Err(e) => {
+                    println!("bind err: {e}");
+                    return Outcome::Err;
+                }
             }
         }
         "lookup" => {
             if parts.len() < 3 {
                 println!("usage: lookup <bid> <name>");
-                return true;
+                return Outcome::Err;
             }
             let Ok(bid) = parts[1].parse::<u32>() else {
                 println!("bad bid");
-                return true;
+                return Outcome::Err;
             };
             match s.lookup(bid, parts[2]) {
                 Some(aid) => println!("aid={aid}"),
@@ -244,28 +287,35 @@ fn dispatch(s: &Store, line: &str) -> bool {
         "has" => {
             let Some(id) = parts.get(1).and_then(|x| x.parse::<u32>().ok()) else {
                 println!("usage: has <aid>");
-                return true;
+                return Outcome::Err;
             };
             println!("{}", s.has_atom(id));
         }
         "t" => {
             let Some(id) = parts.get(1).and_then(|x| x.parse::<u32>().ok()) else {
                 println!("usage: t <aid>");
-                return true;
+                return Outcome::Err;
             };
             match s.get_atom_t(id) {
                 Some(t) => println!("t={t:.6} state={}", state_for_t(t)),
-                None => println!("no atom {id}"),
+                None => {
+                    println!("no atom {id}");
+                    return Outcome::Err;
+                }
             }
         }
-        other => println!("unknown command: {other} (help)"),
+        other => {
+            println!("unknown command: {other} (help)");
+            return Outcome::Err;
+        }
     }
-    true
+    Outcome::Ok
 }
 
 fn print_help() {
     println!(
         "commands:
+  version                       shell version
   stats                         store counters
   atom <s> <e> [t]              create atom (default t=T_INIT)
   heat <aid>                    heat atom
@@ -277,6 +327,8 @@ fn print_help() {
   lookup <bid> <name>           resolve binding
   has <aid> / t <aid>           probe atom
   save <path> / load <path>     KSUB_SNAP v1 persist (no Python)
-  help | quit"
+  help | quit
+
+batch: non-zero exit if a command fails (save/load/bind/…)"
     );
 }

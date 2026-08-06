@@ -106,19 +106,22 @@ Bez własnego kompilatora ten wzorzec **się nie domyka** — i nie udajemy, że
 |---------|--------|
 | `native/karmazyn_shell` REPL | ✅ |
 | Persist `save`/`load` (`KSUB_SNAP 1`) | ✅ |
-| Batch `-e` / skrypt | ✅ |
+| Batch `-e` / skrypt `.ksh` | ✅ (fail → exit ≠ 0) |
+| `stage2_verify.ps1` | ✅ bramka |
 | Python nie wymagany do sesji shell | ✅ |
 | Shell tylko przez C ABI | opcjonalne, nie gate |
 | Lua native | **odroczone** (nie warunek) |
-| Własny rustc / self-host toolchain | ❌ → **dlatego brak zamknięcia Stage 2** |
+| Własny rustc / self-host toolchain | ❌ → **dlatego brak zamknięcia Stage 2 „Gentoo”** |
 
 ```powershell
+.\native\stage2_verify.ps1
 cd native\karmazyn_shell
 cargo run --release
 # k$ save out\demo.ksub
 # k$ load out\demo.ksub
 
 cargo run --release -- -e "atom var x 50" -e "bubble r" -e "root 0" -e "bind 0 x 0" -e "save out\demo.ksub" -e quit
+cargo run --release -- examples\smoke.ksh
 ```
 
 ---
@@ -143,15 +146,22 @@ Wyższe warstwy (Cynober / KarminQL / Lua / analityka) *na* fundamencie — nie 
 
 ```powershell
 .\native\bootstrap_from_scratch.ps1
-# → STAGE1_VERIFY_OK + shell + BOOTSTRAP_FROM_SCRATCH_OK
+# → STAGE1_VERIFY_OK + STAGE2_VERIFY_OK + BOOTSTRAP_FROM_SCRATCH_OK
 # Wymaga host rustc+cargo. Nie wymaga Pythona. Nie jest self-host rustc.
+
+# Unix:
+# ./native/bootstrap_from_scratch.sh
+
+# Prefix (bin/shell + include + lib):
+.\native\install_prefix.ps1
+# → dist\prefix\
 ```
 
 | Element | Status |
 |---------|--------|
-| `bootstrap_from_scratch.ps1` | ✅ starter na obcym rustc |
-| prefix install | ❌ TODO (gdy potrzeba) |
-| `.sh` | ❌ TODO |
+| `bootstrap_from_scratch.ps1` | ✅ starter na obcym rustc (+ stage2_verify) |
+| `bootstrap_from_scratch.sh` | ✅ |
+| `install_prefix.ps1` | ✅ `dist/prefix` |
 | Własny rustc w systemie | ❌ poza horyzontem „zamknij stage” |
 
 ---
@@ -161,8 +171,8 @@ Wyższe warstwy (Cynober / KarminQL / Lua / analityka) *na* fundamencie — nie 
 | Etykieta w repo | Tor | Co to naprawdę | Status |
 |-----------------|-----|----------------|--------|
 | Stage 1 | A | Runtime: jądro/prawo Store bez Pythona | ✅ DONE |
-| Stage 2 (shell+snap) | A | Runtime: używalność bez Pythona | ⚡ milestone |
-| `bootstrap_from_scratch` | A | Build na **host** rustc, bez Pythona | 🚧 starter |
+| Stage 2 (shell+snap) | A | Runtime: używalność bez Pythona | ⚡ milestone + `stage2_verify` |
+| `bootstrap_from_scratch` | A | Build na **host** rustc, bez Pythona | ✅ starter (+ `.sh`, prefix) |
 | Gentoo stage1–3 / LFS toolchain→rebuild | B | **Własne narzędzia** → kompilacja **ważnych bibliotek** | 🚧 **kcc** TB.1 (`thermal.k0`); self-host TB.4 ❌ |
 
 **Dzisiaj (2026-08-06):**  
@@ -181,6 +191,6 @@ Lua nie blokuje żadnego toru.
 
 ---
 
-*Dokument żywy. Aktualizacja 2026-08-06 — wzorzec Gentoo **i** LFS = własne tooly → ważne lib; Tor A ≠ Tor B.*
+*Dokument żywy. Aktualizacja 2026-08-06 — Tor A: stage2_verify + install_prefix + bootstrap.sh; Tor B = kcc osobno.*
 
 

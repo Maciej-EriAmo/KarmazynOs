@@ -46,8 +46,8 @@ Kanoniczny plan: [../Documents/BOOTSTRAP_STAGES.pl.md](../Documents/BOOTSTRAP_ST
 | Stage | Status | Gate / uwaga |
 |-------|--------|----------------|
 | **1** Bootstrap (jądro + C ABI, bez Pythona) | ✅ DONE | `.\native\stage1_verify.ps1` |
-| **2** Native shell + snapshot | ⚡ milestone (nie „DONE”) | shell działa; **brak zamknięcia stage** — nie ma własnego `rustc` |
-| **3** From-scratch na host rustc | 🚧 starter | `.\native\bootstrap_from_scratch.ps1` (obcy toolchain) |
+| **2** Native shell + snapshot | ⚡ milestone + gate | `.\native\stage2_verify.ps1` (KSUB_SNAP; nie Gentoo-stage2) |
+| **3** From-scratch na host rustc | ✅ starter | `bootstrap_from_scratch.ps1` / `.sh` + `install_prefix.ps1` |
 
 **Gentoo stage 1–2–3** i **Linux From Scratch** = ten sam wzorzec (Tor B):  
 *własne narzędzia → kompilacja ważnych bibliotek* (u LFS: toolchain na hoście, potem rebuild „od środka”).  
@@ -58,12 +58,17 @@ Lua nie jest warunkiem. Własny kompilator = osobna decyzja.
 # Stage 3 starter — jedna komenda (rustc+cargo only, ZERO Pythona)
 .\native\bootstrap_from_scratch.ps1
 
-# Stage 1 only
+# Stage 1 / 2 gates
 .\native\stage1_verify.ps1
+.\native\stage2_verify.ps1
+
+# Prefix install (bin + include + lib)
+.\native\install_prefix.ps1
 
 # Stage 2 — interaktywny shell na substracie
 cd native\karmazyn_shell
 cargo run --release
+cargo run --release -- examples\smoke.ksh
 ```
 
 ## Quick start (prosta ścieżka)

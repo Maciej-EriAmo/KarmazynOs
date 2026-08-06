@@ -38,13 +38,20 @@ if ($SkipC) {
 }
 if ($LASTEXITCODE -ne 0) { throw "stage1_verify failed" }
 
-# ── Stage 2 shell build ────────────────────────────────────────────────────
-Write-Host "`n[shell] cargo build --release" -ForegroundColor Cyan
-Push-Location $Shell
-try {
-    cargo build --release
-    if ($LASTEXITCODE -ne 0) { throw "karmazyn_shell build failed" }
-} finally { Pop-Location }
+# ── Stage 2 gate (shell + KSUB_SNAP) ───────────────────────────────────────
+$stage2 = Join-Path $Native "stage2_verify.ps1"
+if ($SkipShellSmoke) {
+    Write-Host "`n[shell] cargo build --release only (-SkipShellSmoke)" -ForegroundColor Cyan
+    Push-Location $Shell
+    try {
+        cargo build --release
+        if ($LASTEXITCODE -ne 0) { throw "karmazyn_shell build failed" }
+    } finally { Pop-Location }
+} else {
+    Write-Host "`n[stage2] stage2_verify.ps1" -ForegroundColor Cyan
+    & $stage2
+    if ($LASTEXITCODE -ne 0) { throw "stage2_verify failed" }
+}
 
 $shellExe = Join-Path $Shell "target\release\karmazyn_shell.exe"
 if (-not (Test-Path $shellExe)) {
@@ -52,11 +59,11 @@ if (-not (Test-Path $shellExe)) {
 }
 if (-not (Test-Path $shellExe)) { throw "shell binary missing" }
 
+# keep classic bootstrap_demo.ksub for docs / demos
 if (-not $SkipShellSmoke) {
-    Write-Host "`n[shell smoke] save/load snapshot" -ForegroundColor Cyan
+    Write-Host "`n[demo snap] bootstrap_demo.ksub" -ForegroundColor Cyan
     New-Item -ItemType Directory -Force -Path $Out | Out-Null
     if (Test-Path $Snap) { Remove-Item $Snap -Force }
-
     & $shellExe `
         -e "atom var hello 50" `
         -e "bubble root" `
@@ -64,17 +71,15 @@ if (-not $SkipShellSmoke) {
         -e "bind 0 hi 0" `
         -e "save $Snap" `
         -e quit
-    if ($LASTEXITCODE -ne 0) { throw "shell save smoke failed" }
-    if (-not (Test-Path $Snap)) { throw "snapshot not written: $Snap" }
-
-    & $shellExe -e "load $Snap" -e stats -e "lookup 0 hi" -e quit
-    if ($LASTEXITCODE -ne 0) { throw "shell load smoke failed" }
+    if ($LASTEXITCODE -ne 0) { throw "demo snap failed" }
     Write-Host "  snapshot: $Snap"
 }
 
 Write-Host "`n=== BOOTSTRAP_FROM_SCRATCH_OK ===" -ForegroundColor Green
 Write-Host "Kernel:  $Sub\target\release\ (karmazyn_substrate)"
 Write-Host "Shell:   $shellExe"
+Write-Host "Gates:   stage1_verify + stage2_verify"
+Write-Host "Install: .\native\install_prefix.ps1"
 Write-Host "Next:    run shell interactively:  $shellExe"
 Write-Host "Docs:    Documents\BOOTSTRAP_STAGES.pl.md"
 exit 0
