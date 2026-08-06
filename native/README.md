@@ -47,10 +47,13 @@ Kanoniczny plan: [../Documents/BOOTSTRAP_STAGES.pl.md](../Documents/BOOTSTRAP_ST
 |-------|--------|------|
 | **1** Bootstrap (jądro + C ABI, bez Pythona) | ✅ DONE | `.\native\stage1_verify.ps1` → `STAGE1_VERIFY_OK` |
 | **2** Native shell + snapshot | 🚧 +persist | `cd native\karmazyn_shell; cargo run --release` (`save`/`load`) |
-| **3** Homogeneous from-scratch | ⏳ | — |
+| **3** Homogeneous from-scratch | 🚧 starter | `.\native\bootstrap_from_scratch.ps1` |
 
 ```powershell
-# Stage 1 — pure Rust (+ opcjonalnie C / gcc), ZERO Pythona
+# Stage 3 starter — jedna komenda (rustc+cargo only, ZERO Pythona)
+.\native\bootstrap_from_scratch.ps1
+
+# Stage 1 only
 .\native\stage1_verify.ps1
 
 # Stage 2 — interaktywny shell na substracie

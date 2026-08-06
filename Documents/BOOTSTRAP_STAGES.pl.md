@@ -116,7 +116,7 @@ cargo run --release -- -e "atom var x 50" -e "bubble r" -e "root 0" -e "bind 0 x
 
 ---
 
-## Stage 3 — Jednorodne środowisko („KarmazynOS from scratch”) ⏳
+## Stage 3 — Jednorodne środowisko („KarmazynOS from scratch”) 🚧 starter
 
 **Cel**  
 Cały rdzeń systemu (jądro + shell + podstawowe narzędzia + proces budowania) tworzy spójne, odtwarzalne środowisko.  
@@ -135,6 +135,21 @@ Od minimalnego zestawu narzędzi (`rustc` + Cargo + kilka zależności systemowy
 **Kryterium wyjścia**  
 Nowy deweloper / nowa maszyna potrafi, mając tylko `rustc` + Cargo i instrukcję, dojść do w pełni używalnego rdzenia KarmazynOS bez polegania na istniejącym środowisku Pythonowym jako nośniku.
 
+### Stan (2026-08-06)
+
+| Element | Status |
+|---------|--------|
+| `native/bootstrap_from_scratch.ps1` | ✅ starter: tool-check → Stage1 gate → shell build → save/load smoke |
+| Prefiksowa instalacja do `prefix/` | ❌ TODO |
+| Linux/mac shell script | ❌ TODO (`bootstrap_from_scratch.sh`) |
+| Lua + wyższe warstwy na fundamencie | ❌ poza starterem |
+
+```powershell
+# jedyna komenda (wymaga rustc+cargo; Python NIE jest potrzebny)
+.\native\bootstrap_from_scratch.ps1
+# → STAGE1_VERIFY_OK + shell build + BOOTSTRAP_FROM_SCRATCH_OK
+```
+
 ---
 
 ## Podsumowanie
@@ -143,11 +158,12 @@ Nowy deweloper / nowa maszyna potrafi, mając tylko `rustc` + Cargo i instrukcj�
 |-------|----------------------|------------------------------------------------------|-----------------|--------|
 | 1     | Bootstrap            | Samodzielne rustowe jądro + stabilne C ABI           | stage1          | ✅ DONE |
 | 2     | Native Shell         | Praca z systemem bez Pythona                         | stage2          | 🚧 +persist |
-| 3     | Homogeneous Core     | Od source do działającego jednorodnego środowiska    | stage3          | ⏳      |
+| 3     | Homogeneous Core     | Od source do działającego jednorodnego środowiska    | stage3          | 🚧 starter |
 
-**Dzisiaj (2026-08-06):** Stage 1 zamknięty (`stage1_verify.ps1` = `STAGE1_VERIFY_OK`).  
-Stage 2: `karmazyn_shell` + `KSUB_SNAP` save/load + batch `-e` — bez Pythona.  
-Pozostaje: Lua native, opcjonalnie C-ABI-only client, Stage 3 from-scratch installer.
+**Dzisiaj (2026-08-06):**  
+- Stage 1 ✅ `stage1_verify.ps1`  
+- Stage 2 🚧 shell + `KSUB_SNAP` + batch `-e`  
+- Stage 3 🚧 `bootstrap_from_scratch.ps1` (starter; brak prefix install / sh)
 
 ---
 
