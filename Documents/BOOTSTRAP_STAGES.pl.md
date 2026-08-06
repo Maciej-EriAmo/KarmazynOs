@@ -29,15 +29,16 @@ To nie „mamy shell”, tylko **samopodnoszenie łańcucha narzędzi** — ten 
 LFS robi to jawnie: najpierw budujesz toolchain na hoście, potem **wchodzisz w nowe środowisko** i **ponownie** kompilujesz ważne pakiety własnymi binarkami — żeby uciąć zależności od hosta (tzw. purity / self-contained build).  
 Gentoo stage* to ta sama logika w postaci predefiniowanych obrazów stage.
 
-**KarmazynOS dziś nie jest na torze B w domknięciu:** nie ma **własnego** kompilatora (rustc ani innego kanonicznego).  
-Dopóki kompilacja jądra/shell/lib idzie wyłącznie hostowym `rustc`, jesteśmy w **Torze A** — jak LFS *zanim* zbudujesz i użyjesz własnego toolchiana, albo jak praca wyłącznie na hostie bez chroot/rebuild.  
-Nazwy „Stage 1/2/3” w tym pliku historycznie opisują milestone’y Tora A; **prawdziwy** stage2/3 (Gentoo) / faza „wewnątrz LFS” zaczyna się dopiero, gdy *własne narzędzia* budują ważne biblioteki (substrate, slab, shell, potem reszta).
+**Tor B wystartował (TB.1):** własny kompilator **`kcc`** (K0→C) kompiluje krytyczne progi termiczne (`thermal.k0`).  
+Edytor/OS/gcc-link mogą być obce; **frontend kompilatora jest nasz**.  
+Host `rustc` = **stage0** (buduje `kcc`), nie kompilator krytycznego `.k0`.  
+Reszta jądra w Rust nadal stage0 — Tor A / dług TB.2+.
 
-| Tor A (dziś) | Tor B (Gentoo / LFS) — wymaga własnego toolchiana |
-|--------------|-----------------------------------------------------|
-| Stage1 ✅: prawo Store bez Pythona w runtime | seed + start własnych narzędzi |
-| Shell + `KSUB_SNAP` = milestone używalności | własne narzędzia kompilują kluczowe lib |
-| `bootstrap_from_scratch.ps1` na obcym rustc | spójny world zbudowany własnym łańcuchem (jak LFS po chroot rebuild) |
+| Tor A (dziś) | Tor B (Gentoo / LFS) |
+|--------------|----------------------|
+| Stage1 ✅ / shell milestone | **kcc** własny kompilator ✅ TB.1 |
+| `bootstrap_from_scratch.ps1` (host rustc) | `thermal.k0` przez **kcc** ✅ |
+| substrate/shell w Rust | kolejne lib w K0 ⏳; self-host kcc ⏳ |
 
 Punkt startowy Tora A: `native/karmazyn_substrate` + `native/karmazyn_slab`.
 
@@ -162,7 +163,7 @@ Wyższe warstwy (Cynober / KarminQL / Lua / analityka) *na* fundamencie — nie 
 | Stage 1 | A | Runtime: jądro/prawo Store bez Pythona | ✅ DONE |
 | Stage 2 (shell+snap) | A | Runtime: używalność bez Pythona | ⚡ milestone |
 | `bootstrap_from_scratch` | A | Build na **host** rustc, bez Pythona | 🚧 starter |
-| Gentoo stage1–3 / LFS toolchain→rebuild | B | **Własne narzędzia** → kompilacja **ważnych bibliotek** | ❌ nie rozpoczęty (brak własnego kompilatora) |
+| Gentoo stage1–3 / LFS toolchain→rebuild | B | **Własne narzędzia** → kompilacja **ważnych bibliotek** | 🚧 **kcc** TB.1 (`thermal.k0`); self-host TB.4 ❌ |
 
 **Dzisiaj (2026-08-06):**  
 Tor A: Stage1 + shell/`KSUB_SNAP`.  

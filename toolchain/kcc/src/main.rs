@@ -1,0 +1,205 @@
+//! kcc — Karmazyn own compiler (K0 → C99).
+//!
+//! Policy (Tor B):
+//! - **Own:** this frontend + codegen (and later self-host in K0).
+//! - **Foreign OK:** editor, OS, host stage0 `rustc` (only to build `kcc` once), `gcc`/`cc` as linker/assembler.
+//!
+//!   cargo run --release -- examples/thermal.k0 -o out/thermal.c
+//!   cargo run --release -- examples/thermal.k0 --cc -o out/thermal
+//!   cargo test
+
+mod ast;
+mod codegen_c;
+mod lex;
+mod parse;
+
+use std::env;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::{self, Command};
+
+fn main() {
+    if let Err(e) = run() {
+        eprintln!("kcc: {e}");
+        process::exit(1);
+    }
+}
+
+fn run() -> Result<(), String> {
+    let args: Vec<String> = env::args().skip(1).collect();
+    if args.is_empty() || args.iter().any(|a| a == "-h" || a == "--help") {
+        print_help();
+        return Ok(());
+    }
+
+    let mut input: Option<PathBuf> = None;
+    let mut output: Option<PathBuf> = None;
+    let mut invoke_cc = false;
+    let mut dump_ast = false;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "-o" | "--output" => {
+                i += 1;
+                if i >= args.len() {
+                    return Err("-o requires a path".into());
+                }
+                output = Some(PathBuf::from(&args[i]));
+            }
+            "--cc" => invoke_cc = true,
+            "--dump-ast" => dump_ast = true,
+            "-h" | "--help" => {
+                print_help();
+                return Ok(());
+            }
+            s if s.starts_with('-') => return Err(format!("unknown flag {s}")),
+            s => {
+                if input.is_some() {
+                    return Err("multiple input files not supported yet".into());
+                }
+                input = Some(PathBuf::from(s));
+            }
+        }
+        i += 1;
+    }
+
+    let input = input.ok_or("missing input .k0 file")?;
+    let src = fs::read_to_string(&input).map_err(|e| format!("read {}: {e}", input.display()))?;
+    let prog = parse::parse(&src)?;
+    if dump_ast {
+        println!("{prog:#?}");
+        return Ok(());
+    }
+
+    let c_src = codegen_c::emit_c(&prog)?;
+    let c_path = match &output {
+        Some(p) if p.extension().and_then(|e| e.to_str()) == Some("c") => p.clone(),
+        Some(p) if invoke_cc => p.with_extension("c"),
+        Some(p) => {
+            // default emit .c next to requested -o if not ending .c
+            if p.extension().is_none() {
+                p.with_extension("c")
+            } else {
+                p.clone()
+            }
+        }
+        None => {
+            let mut p = input.clone();
+            p.set_extension("c");
+            p
+        }
+    };
+
+    if let Some(parent) = c_path.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    fs::write(&c_path, &c_src).map_err(|e| format!("write {}: {e}", c_path.display()))?;
+    eprintln!("kcc: wrote {}", c_path.display());
+
+    if invoke_cc {
+        let bin = output.unwrap_or_else(|| {
+            let mut p = input.clone();
+            p.set_extension("");
+            p
+        });
+        // ensure bin path without forcing .c
+        let bin = if bin.extension().and_then(|e| e.to_str()) == Some("c") {
+            bin.with_extension("")
+        } else {
+            bin
+        };
+        compile_c(&c_path, &bin)?;
+        eprintln!("kcc: linked {}", bin.display());
+    }
+
+    Ok(())
+}
+
+fn compile_c(c_path: &Path, bin: &Path) -> Result<(), String> {
+    if let Some(parent) = bin.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    // driver: try gcc then clang then cl
+    let ccs = ["gcc", "clang", "cc"];
+    let mut last = String::new();
+    for cc in ccs {
+        let mut cmd = Command::new(cc);
+        cmd.arg(c_path).arg("-O2").arg("-o").arg(bin);
+        // need math for some programs
+        if cfg!(not(windows)) {
+            cmd.arg("-lm");
+        } else {
+            // MinGW often needs -lm too
+            cmd.arg("-lm");
+        }
+        match cmd.status() {
+            Ok(st) if st.success() => return Ok(()),
+            Ok(st) => last = format!("{cc} exit {st}"),
+            Err(e) => last = format!("{cc}: {e}"),
+        }
+    }
+    Err(format!(
+        "failed to invoke C compiler (foreign env). last: {last}"
+    ))
+}
+
+fn print_help() {
+    println!(
+        "kcc 0.1 — Karmazyn own compiler (K0 → C99)
+
+USAGE:
+  kcc <file.k0> [-o out.c]
+  kcc <file.k0> --cc -o out_binary
+  kcc <file.k0> --dump-ast
+
+POLICY:
+  Own:     K0 frontend + C codegen (this program)
+  Foreign: editor, OS, stage0 rustc (build kcc), gcc/clang (link)
+
+See: Documents/TOR_B_TOOLCHAIN.pl.md
+"
+    );
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::codegen_c::emit_c;
+    use crate::parse::parse;
+
+    #[test]
+    fn parse_thermal_and_emit() {
+        let src = r#"
+fn state_code(t: f64) -> i32 {
+    if t >= 70.0 {
+        return 3;
+    } else {
+        if t >= 30.0 {
+            return 2;
+        } else {
+            if t >= 2.0 {
+                return 1;
+            } else {
+                return 0;
+            }
+        }
+    }
+}
+
+fn add(a: i64, b: i64) -> i64 {
+    return a + b;
+}
+"#;
+        let p = parse(src).expect("parse");
+        let c = emit_c(&p).expect("emit");
+        assert!(c.contains("k0_state_code"));
+        assert!(c.contains("k0_add"));
+        assert!(c.contains("70"));
+    }
+
+    #[test]
+    fn binop_precedence() {
+        let p = parse("fn f() -> i64 { return 1 + 2 * 3; }").unwrap();
+        let c = emit_c(&p).unwrap();
+        assert!(c.contains("*"));
+    }
+}

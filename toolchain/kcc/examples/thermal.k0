@@ -1,0 +1,86 @@
+// Critical thermal law thresholds — compiled by OWN kcc (not rustc).
+// Mirrors karmazyn_slab: T_HOT=70, T_WARM=30, T_TOMB=2, T_INIT=50.
+// state codes: 3=HOT 2=WARM 1=COLD 0=TOMB
+
+fn t_hot() -> f64 {
+    return 70.0;
+}
+
+fn t_warm() -> f64 {
+    return 30.0;
+}
+
+fn t_tomb() -> f64 {
+    return 2.0;
+}
+
+fn t_init() -> f64 {
+    return 50.0;
+}
+
+fn t_max() -> f64 {
+    return 100.0;
+}
+
+fn clamp_t(t: f64) -> f64 {
+    if t < 0.0 {
+        return 0.0;
+    }
+    if t > 100.0 {
+        return 100.0;
+    }
+    return t;
+}
+
+// 3 HOT, 2 WARM, 1 COLD, 0 TOMB — same cuts as state_for_t
+fn state_code(t: f64) -> i32 {
+    let x: f64 = clamp_t(t);
+    if x >= 70.0 {
+        return 3;
+    }
+    if x >= 30.0 {
+        return 2;
+    }
+    if x >= 2.0 {
+        return 1;
+    }
+    return 0;
+}
+
+fn is_dead(t: f64) -> bool {
+    return clamp_t(t) < 2.0;
+}
+
+fn decay_once(t: f64, rate: f64) -> f64 {
+    return clamp_t(t * rate);
+}
+
+// smoke entry for linked binary (--cc)
+fn main() -> i32 {
+    let s0: i32 = state_code(80.0);
+    let s1: i32 = state_code(50.0);
+    let s2: i32 = state_code(10.0);
+    let s3: i32 = state_code(1.0);
+    // expect 3,2,1,0
+    if s0 != 3 {
+        return 10;
+    }
+    if s1 != 2 {
+        return 11;
+    }
+    if s2 != 1 {
+        return 12;
+    }
+    if s3 != 0 {
+        return 13;
+    }
+    if is_dead(1.0) {
+        // ok
+    } else {
+        return 14;
+    }
+    if is_dead(50.0) {
+        return 15;
+    }
+    return 0;
+}

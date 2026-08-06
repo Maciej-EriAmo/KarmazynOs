@@ -56,7 +56,7 @@ Powiązania: `rust_substrate_map.md`, `build_deploy_plan.md` §F–G, `native/RE
 | QEMU serial SF.2 | ⏳ brak qemu w PATH na host dev (opcjonalnie) |
 | Store freestanding full GC | ❌ G — host HashMap Store nadal osobny |
 | Golden T×reach Store↔Slab | ✅ R6 — `golden_txreach` w substrate |
-| Tor B własny rustc | ❌ seed: `TOR_B_TOOLCHAIN.pl.md` (decyzja TB.0 otwarta) |
+| Tor B własny kompilator | 🚧 **kcc** TB.1 (`toolchain/kcc`, `thermal.k0`); nie full rustc |
 
 ---
 

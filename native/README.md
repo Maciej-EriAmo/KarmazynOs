@@ -232,7 +232,7 @@ Full drop-in (`metadata`, `EventBus`, HRR, `Bubble` subclass) is
 ## Docs
 
 - **Bootstrap Stages 1–3:** [../Documents/BOOTSTRAP_STAGES.pl.md](../Documents/BOOTSTRAP_STAGES.pl.md)
-- **Tor B toolchain (Gentoo/LFS, nie = rustc done):** [../Documents/TOR_B_TOOLCHAIN.pl.md](../Documents/TOR_B_TOOLCHAIN.pl.md)
+- **Tor B own compiler `kcc`:** [../Documents/TOR_B_TOOLCHAIN.pl.md](../Documents/TOR_B_TOOLCHAIN.pl.md) · [../toolchain/kcc/README.md](../toolchain/kcc/README.md) · `.\toolchain\verify_kcc.ps1`
 - **Mapa Rust ↔ substrat:** [../Documents/rust_substrate_map.md](../Documents/rust_substrate_map.md)
 - **Roadmapa tech (R0…R6 / G):** [../Documents/rust_roadmap_tech.md](../Documents/rust_roadmap_tech.md)
 - **kentry Multiboot2 (L3 F, marker only):** [../boot/kentry/README.md](../boot/kentry/README.md)
