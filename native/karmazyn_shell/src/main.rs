@@ -1,19 +1,72 @@
-//! KarmazynOS native shell (Stage 2 MVP) — pure Rust over substrate rlib.
+//! KarmazynOS native shell (Stage 2) — pure Rust over substrate rlib.
 //!
 //!   cd native/karmazyn_shell
 //!   cargo run --release
+//!   cargo run --release -- -e "atom var x 50" -e stats -e quit
 //!
-//! Commands: help | stats | atom <s> <e> [t] | heat <id> | tick [n] | settle <n>
-//!           bubble [label] | root <bid> | bind <bid> <name> <aid> | lookup <bid> <name>
-//!           has <aid> | t <aid> | quit
+//! Commands: help | stats | atom | heat | tick | settle | bubble | root | bind |
+//!           lookup | has | t | save <path> | load <path> | quit
 
 use karmazyn_substrate::{state_for_t, Store, T_INIT};
+use std::env;
 use std::io::{self, BufRead, Write};
+use std::process;
 
 fn main() {
     let thermal = true;
     let store = Store::new(thermal);
-    println!("karmazyn_shell 0.1 — Stage 2 MVP (native, no Python)");
+    let args: Vec<String> = env::args().skip(1).collect();
+
+    // batch: -e "cmd" ...  and/or trailing script file of commands
+    let mut batch: Vec<String> = Vec::new();
+    let mut i = 0;
+    while i < args.len() {
+        if args[i] == "-e" || args[i] == "--eval" {
+            i += 1;
+            if i >= args.len() {
+                eprintln!("-e requires a command");
+                process::exit(2);
+            }
+            batch.push(args[i].clone());
+            i += 1;
+        } else if args[i] == "-h" || args[i] == "--help" {
+            println!("karmazyn_shell — native Stage 2 shell (no Python)");
+            println!("  interactive:  karmazyn_shell");
+            println!("  batch:        karmazyn_shell -e \"atom var x 50\" -e stats");
+            println!("  script file:  karmazyn_shell commands.ksh");
+            process::exit(0);
+        } else {
+            // treat as script path
+            match std::fs::read_to_string(&args[i]) {
+                Ok(text) => {
+                    for line in text.lines() {
+                        let t = line.trim();
+                        if !t.is_empty() && !t.starts_with('#') {
+                            batch.push(t.to_string());
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!("cannot read {}: {e}", args[i]);
+                    process::exit(1);
+                }
+            }
+            i += 1;
+        }
+    }
+
+    if !batch.is_empty() {
+        println!("karmazyn_shell 0.2 — batch ({} cmds)", batch.len());
+        for cmd in batch {
+            println!("k$ {cmd}");
+            if !dispatch(&store, &cmd) {
+                break;
+            }
+        }
+        return;
+    }
+
+    println!("karmazyn_shell 0.2 — Stage 2 (native, no Python)");
     println!("thermal={thermal}  type `help`");
 
     let stdin = io::stdin();
@@ -57,6 +110,32 @@ fn dispatch(s: &Store, line: &str) -> bool {
                 st.retained_tomb,
                 st.bubbles
             );
+        }
+        "save" => {
+            let Some(path) = parts.get(1) else {
+                println!("usage: save <path>");
+                return true;
+            };
+            match s.save_snapshot_file(path) {
+                Ok(()) => println!("saved {path}"),
+                Err(e) => println!("save err: {e}"),
+            }
+        }
+        "load" => {
+            let Some(path) = parts.get(1) else {
+                println!("usage: load <path>");
+                return true;
+            };
+            match s.load_snapshot_file(path) {
+                Ok(()) => {
+                    let st = s.stats();
+                    println!(
+                        "loaded {path}  atoms={} bubbles={} reaped={}",
+                        st.total, st.bubbles, st.reaped
+                    );
+                }
+                Err(e) => println!("load err: {e}"),
+            }
         }
         "atom" => {
             if parts.len() < 3 {
@@ -197,6 +276,7 @@ fn print_help() {
   bind <bid> <name> <aid>       bind name → atom
   lookup <bid> <name>           resolve binding
   has <aid> / t <aid>           probe atom
+  save <path> / load <path>     KSUB_SNAP v1 persist (no Python)
   help | quit"
     );
 }

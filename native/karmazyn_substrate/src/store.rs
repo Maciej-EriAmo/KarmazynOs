@@ -36,17 +36,17 @@ pub struct Stats {
     pub bubbles: usize,
 }
 
-struct Inner {
-    atoms: HashMap<AtomId, Atom>,
-    bubbles: HashMap<BubbleId, Bubble>,
-    roots: Vec<BubbleId>,
-    next_atom: AtomId,
-    next_bubble: BubbleId,
-    thermal: bool,
-    decay: f64,
-    reaped: u64,
-    retained_tomb: HashSet<AtomId>,
-    ticking: bool,
+pub(crate) struct Inner {
+    pub(crate) atoms: HashMap<AtomId, Atom>,
+    pub(crate) bubbles: HashMap<BubbleId, Bubble>,
+    pub(crate) roots: Vec<BubbleId>,
+    pub(crate) next_atom: AtomId,
+    pub(crate) next_bubble: BubbleId,
+    pub(crate) thermal: bool,
+    pub(crate) decay: f64,
+    pub(crate) reaped: u64,
+    pub(crate) retained_tomb: HashSet<AtomId>,
+    pub(crate) ticking: bool,
     env_of_hooks: Vec<(String, EnvOfFn)>,
     extra_reach_hooks: Vec<(String, ExtraReachFn)>,
 }
@@ -166,7 +166,7 @@ impl Store {
         }
     }
 
-    fn lock(&self) -> std::sync::MutexGuard<'_, Inner> {
+    pub(crate) fn lock(&self) -> std::sync::MutexGuard<'_, Inner> {
         self.inner.lock().unwrap_or_else(|e| e.into_inner())
     }
 

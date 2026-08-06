@@ -46,7 +46,7 @@ Kanoniczny plan: [../Documents/BOOTSTRAP_STAGES.pl.md](../Documents/BOOTSTRAP_ST
 | Stage | Status | Gate |
 |-------|--------|------|
 | **1** Bootstrap (jądro + C ABI, bez Pythona) | ✅ DONE | `.\native\stage1_verify.ps1` → `STAGE1_VERIFY_OK` |
-| **2** Native shell | 🚧 MVP | `cd native\karmazyn_shell; cargo run --release` |
+| **2** Native shell + snapshot | 🚧 +persist | `cd native\karmazyn_shell; cargo run --release` (`save`/`load`) |
 | **3** Homogeneous from-scratch | ⏳ | — |
 
 ```powershell

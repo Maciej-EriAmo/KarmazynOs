@@ -1,6 +1,6 @@
 [package]
 name = "karmazyn_shell"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 authors = ["Maciej Mazur"]
 description = "KarmazynOS Stage 2 — native shell over substrate (no Python)"

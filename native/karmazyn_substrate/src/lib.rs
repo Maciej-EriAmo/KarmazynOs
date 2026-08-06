@@ -16,6 +16,7 @@
 mod atom;
 mod store;
 mod ffi;
+mod snapshot;
 pub mod slab;
 
 pub use atom::{state_for_t, Atom, AtomId, DECAY_DEFAULT, HEAT_READ, T_HOT, T_INIT, T_MAX, T_TOMB, T_WARM};
@@ -23,6 +24,7 @@ pub use slab::{
     Bid, BumpAlloc, FixedLabel, SlabAtoms, SlabStore, MAX_ATOMS, MAX_BINDS, MAX_BUBBLES, MAX_LABEL,
     MAX_ROOTS,
 };
+pub use snapshot::{AtomSnap, BindSnap, BubbleSnap, StoreSnapshot, SNAP_VERSION};
 pub use store::{BubbleId, Store, Stats};
 
 /// Crate / ABI version string (NUL-terminated for C).

@@ -92,8 +92,9 @@ Python nie jest wymagany do podstawowej pracy.
 
 | Element | Status |
 |---------|--------|
-| `native/karmazyn_shell` REPL | ✅ MVP: stats/atom/heat/tick/settle/bubble/root/bind/lookup |
-| Persist save/load stanu | ❌ TODO |
+| `native/karmazyn_shell` REPL | ✅ stats/atom/heat/tick/settle/bubble/root/bind/lookup |
+| Persist save/load | ✅ `save`/`load` — format `KSUB_SNAP 1` (`Store::export_snapshot`) |
+| Batch mode | ✅ `-e "cmd"` / plik skryptu |
 | Shell link tylko przez C ABI (nie rlib) | ❌ opcjonalne; dziś rlib (OK dla Stage 2) |
 | Lua bez Pythona | ❌ Stage 2+ |
 | Python = optional client | ⏳ host nadal Python-first dla boot; shell już bez Pythona |
@@ -106,7 +107,11 @@ cargo run --release
 # k$ bubble root
 # k$ root 0
 # k$ bind 0 x 0
-# k$ stats
+# k$ save out\demo.ksub
+# k$ load out\demo.ksub
+
+# batch (bez interakcji):
+cargo run --release -- -e "atom var x 50" -e "bubble r" -e "root 0" -e "bind 0 x 0" -e "save out\demo.ksub" -e quit
 ```
 
 ---
@@ -137,11 +142,12 @@ Nowy deweloper / nowa maszyna potrafi, mając tylko `rustc` + Cargo i instrukcj�
 | Stage | Nazwa                | Główny efekt                                         | Analogia Gentoo | Status |
 |-------|----------------------|------------------------------------------------------|-----------------|--------|
 | 1     | Bootstrap            | Samodzielne rustowe jądro + stabilne C ABI           | stage1          | ✅ DONE |
-| 2     | Native Shell         | Praca z systemem bez Pythona                         | stage2          | 🚧 MVP  |
+| 2     | Native Shell         | Praca z systemem bez Pythona                         | stage2          | 🚧 +persist |
 | 3     | Homogeneous Core     | Od source do działającego jednorodnego środowiska    | stage3          | ⏳      |
 
 **Dzisiaj (2026-08-06):** Stage 1 zamknięty (`stage1_verify.ps1` = `STAGE1_VERIFY_OK`).  
-Stage 2: `karmazyn_shell` MVP działa bez Pythona; brak persist + pełnej instalacji narzędzi.
+Stage 2: `karmazyn_shell` + `KSUB_SNAP` save/load + batch `-e` — bez Pythona.  
+Pozostaje: Lua native, opcjonalnie C-ABI-only client, Stage 3 from-scratch installer.
 
 ---
 
