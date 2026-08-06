@@ -29,6 +29,9 @@ cargo test --release
 
 # mini atom table (fixed arrays, pin/vacuum)
 .\target\release\kcc.exe examples\atom_table.k0 --cc -o ..\..\out\kcc\atom_table
+
+# mini Store: roots + binds + reach + settle vacuum
+.\target\release\kcc.exe examples\store_mini.k0 --cc -o ..\..\out\kcc\store_mini
 ```
 
 Gate (TB.1–TB.3: kcc + both .k0 + Rust/Python golden):

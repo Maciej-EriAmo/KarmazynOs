@@ -54,6 +54,7 @@ try {
     Invoke-K0 "thermal.k0" "thermal_smoke"
     Invoke-K0 "tick_skeleton.k0" "tick_skeleton"
     Invoke-K0 "atom_table.k0" "atom_table"
+    Invoke-K0 "store_mini.k0" "store_mini"
 
     $cText = Get-Content (Join-Path $Out "thermal_smoke.c") -Raw
     if ($cText -notmatch "k0_state_code") { throw "C missing k0_state_code" }

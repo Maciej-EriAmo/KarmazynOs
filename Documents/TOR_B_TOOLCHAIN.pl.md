@@ -22,7 +22,7 @@
 | Crate | `toolchain/kcc` |
 | Język | **K0** (fn, typy i32/i64/f64/bool, if/while, arytmetyka) |
 | Backend 0.1 | emit **C99** (IL); link: foreign gcc |
-| Krytyczne lib | `thermal.k0`, `tick_skeleton.k0`, `atom_table.k0` (fixed slab 8) |
+| Krytyczne lib | `thermal*`, `tick_skeleton`, `atom_table`, **`store_mini`** (T×reach) |
 | K0 język | + fixed arrays `[T; N]`, `a[i]`, zero-init `let a: [T; N];` |
 | Golden TB.3 | `native/karmazyn_slab/src/golden_k0.rs` + `toolchain/golden_k0_thermal.py` |
 | Bramka | `.\toolchain\verify_kcc.ps1` → `KCC_VERIFY_OK` |
@@ -56,6 +56,7 @@ cd C:\Users\drwis\KarmazynOs
 | **TB.2** | `decay_n` / `tick_t` / `heat` + `tick_skeleton.k0` | ✅ |
 | **TB.2b** | Fixed arrays in K0 + `atom_table.k0` (pin/vacuum mini slab) | ✅ |
 | **TB.2c** | `#include`, array params, `thermal_lib.k0` shared module | ✅ |
+| **TB.2d** | `store_mini.k0` — multi-root, bind, reach-walk, tick+vacuum | ✅ |
 | **TB.3** | Golden `k0_state_code` ↔ `state_for_t` (slab + python) | ✅ |
 | **TB.4** | Self-host: `kcc` w K0 (kcc kompiluje siebie) | ❌ daleko |
 | **TB.5** | Własny backend (bez gcc) — opcjonalnie | ❌ |
@@ -83,4 +84,4 @@ cd C:\Users\drwis\KarmazynOs
 
 ---
 
-*2026-08-06: TB.0–TB.3 + TB.2b/c — arrays, include, array params, thermal_lib.*
+*2026-08-06: TB.0–TB.3 + TB.2b–d — store_mini T×reach in own kcc.*
