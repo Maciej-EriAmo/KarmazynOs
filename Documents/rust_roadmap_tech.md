@@ -55,6 +55,8 @@ Powiązania: `rust_substrate_map.md`, `build_deploy_plan.md` §F–G, `native/RE
 | `boot/kentry` | ✅ R5: marker + cmdline + `SLAB_OK` stats |
 | QEMU serial SF.2 | ⏳ brak qemu w PATH na host dev (opcjonalnie) |
 | Store freestanding full GC | ❌ G — host HashMap Store nadal osobny |
+| Golden T×reach Store↔Slab | ✅ R6 — `golden_txreach` w substrate |
+| Tor B własny rustc | ❌ seed: `TOR_B_TOOLCHAIN.pl.md` (decyzja TB.0 otwarta) |
 
 ---
 
@@ -67,11 +69,14 @@ Powiązania: `rust_substrate_map.md`, `build_deploy_plan.md` §F–G, `native/RE
 | **R2** | `boot/kentry` buduje ELF (target `x86_64-unknown-none` lub dokumentowany cross) | `KARMAZYN_KENTRY_OK` w źródle / QEMU gdy dostępne |
 | **R3** | Notatka alokatora + ograniczenia String/HashMap | review przed G |
 | **R4** | (opc.) `substrate` feature `std` default | `cargo test --features std` |
-| **R5** | kentry linkuje **minimalny** tick stub lub cienki subset Store | serial stats |
-| **R6** | Pełne prawo GC freestanding = faza G planu | SG.* |
+| **R5** | kentry linkuje **minimalny** tick stub lub cienki subset Store | serial stats ✅ |
+| **R6** | Golden T×reach: te same outcomes host Store ↔ SlabStore | `cargo test` golden_txreach ✅ |
+| **R7 / G** | Pełniejsze freestanding / zbliżenie dual-path | SG.* ⏳ |
+| **TB.\*** | Własny łańcuch (Gentoo/LFS) — osobny tor | `TOR_B_TOOLCHAIN.pl.md` |
 
-**Zakaz:** nie startować R5/R6 bez R3 (alokator).  
-**Wolno wcześnie:** R2 kentry marker — nie psuje Z0.
+**Zakaz:** nie startować R5/G bez R3 (alokator).  
+**Wolno wcześnie:** R2 kentry marker — nie psuje Z0.  
+**Nie mylić:** R6 ≠ własny rustc. Self-host kompilatora = TB.0 w `TOR_B_TOOLCHAIN.pl.md`.
 
 ---
 
@@ -108,6 +113,7 @@ Wystarczy na: tablice atomów o **stałym limicie** (np. MAX_ATOMS=4096), nie na
 - [x] kentry drukuje marker (R2)  
 - [x] **reach-GC na slab** (root retain / orphan vacuum / env_bubble / unset_root)  
 - [x] **kentry linkuje `SlabStore` (R5)** — serial `SLAB_ATOMS` / `REAPED` / `LIVE` / `SLAB_OK`  
+- [x] **Golden T×reach Store ↔ SlabStore (R6)**  
 - [ ] QEMU potwierdza serial (SF.2) — opcjonalne przed G, zalecane  
 
 
@@ -116,13 +122,14 @@ Wystarczy na: tablice atomów o **stałym limicie** (np. MAX_ATOMS=4096), nie na
 | Dług | Status |
 |------|--------|
 | Stack size `SlabStore` | złagodzony mniejszymi MAX_*; freestanding → `static mut` |
-| `Store` (HashMap) vs `SlabStore` dual path | zamierzone do G |
+| `Store` (HashMap) vs `SlabStore` dual path | zamierzone do G; R6 golden law ✅ |
 | QEMU SF.2 | brak qemu w PATH dev |
 | Brak reach hooks dynamicznych na slab | `env_bubble` fixed zamiast callback |
 | Bubble auto-vacuum | brak — tylko `bubble_drop` / `reset` (atomy freelist OK) |
 | `BumpAlloc` nie zasilany przez SlabStore | API osobno; store = fixed tables |
-| Golden T×reach Store vs SlabStore | brak wspólnego scenariusza testowego |
+| Golden T×reach Store vs SlabStore | ✅ R6 |
 | f64 w freestanding | SSE2 na x86_64; soft-float nie wymuszony |
+| Własny kompilator (Tor B) | seed doc; decyzja TB.0 otwarta |
 
 ---
 
@@ -176,8 +183,10 @@ cargo build --manifest-path boot/kentry/Cargo.toml --target x86_64-unknown-none 
 | **SR.3** | Doc alokatora (§4) zaakceptowany przed G |
 | **SR.4** | QEMU: serial `KARMAZYN_KENTRY_OK` (gdy toolchain OK) |
 | **SR.5** | (G) atom/tick/stats bez CPython — **R5 partial:** kentry `SLAB_OK` bez CPython |
+| **SR.6** | Golden T×reach host Store ↔ SlabStore (R6) |
 
 ---
 
 *Aktualizacja 2026-07-31: R5 — `native/karmazyn_slab` + kentry link.*  
-*Recenzja+fix: freelist po vacuum, uczciwy `SLAB_OK`, vacuum+retain demo.*
+*Recenzja+fix: freelist po vacuum, uczciwy `SLAB_OK`, vacuum+retain demo.*  
+*2026-08-06: R6 golden_txreach; Tor B seed `TOR_B_TOOLCHAIN.pl.md` (nie = budowa rustc).*

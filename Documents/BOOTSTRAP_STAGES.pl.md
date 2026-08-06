@@ -3,7 +3,7 @@
 **Status:** living · **Data:** 2026-08-06  
 **Decyzja architektoniczna:** kanoniczną podstawą systemu jest jądro w Rustcie (host: zewnętrzny `rustc` + Cargo).
 
-Powiązania: `rust_roadmap_tech.md`, `rust_substrate_map.md`, `runtime_pl.md`, `native/`.
+Powiązania: `rust_roadmap_tech.md`, `rust_substrate_map.md`, `TOR_B_TOOLCHAIN.pl.md`, `runtime_pl.md`, `native/`.
 
 ---
 
