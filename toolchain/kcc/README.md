@@ -34,14 +34,14 @@ cargo test --release
 .\target\release\kcc.exe examples\store_mini.k0 --cc -o ..\..\out\kcc\store_mini
 ```
 
-Gate (TB.1–TB.3 + 0.3 sem/safe):
+Gate (TB.1–TB.3 + 0.4 type-unify / return-paths):
 
 ```powershell
 .\toolchain\verify_kcc.ps1
 # → KCC_VERIFY_OK  (builds with --safe)
 ```
 
-## K0 language (0.1)
+## K0 language (0.4)
 
 - `fn name(a: ty, …) -> ty { … }`
 - types: `i32` `i64` `f64` `bool` · fixed arrays `[f64; 8]`
@@ -49,16 +49,25 @@ Gate (TB.1–TB.3 + 0.3 sem/safe):
 - `if cond { } else { }` · `while cond { }`
 - ops: `+ - * / %` comparisons `&& || !`
 - calls: `foo(1, 2.0)` · index: `a[i]`
-
 - `#include "other.k0"` (relative, circular-safe)
 - array **params** → C pointers (helpers can mutate tables)
+
+### Semantics (0.3 → 0.4)
+
+| Check | Notes |
+|-------|--------|
+| undeclared / redef / arity | 0.3 |
+| `%` not on f64 | 0.3 |
+| `--safe` array bounds → abort | 0.3 |
+| **type-unify** let/assign/index/call/return | 0.4 — i32↔i64, int→f64; bool/array exact |
+| **return-path** | 0.4 — every path must `return` (if/else both arms count) |
 
 Not yet: structs, nested arrays, true modules/packages, strings, self-host of kcc in K0.
 
 ## Next
 
-1. ~~TB.2 / TB.2b / TB.3~~ done (thermal, tick, atom_table, golden).  
-2. Array params / multi-file K0 modules — optional.  
+1. ~~TB.2 / TB.2e / type-unify return-paths (0.4)~~ done.  
+2. Optional: golden reach store_mini ↔ slab.  
 3. Self-host: rewrite `kcc` in K0 (TB.4, long).  
 4. Optional: own backend without gcc (TB.5).
 

@@ -144,7 +144,7 @@ fn compile_c(c_path: &Path, bin: &Path) -> Result<(), String> {
 
 fn print_help() {
     println!(
-        "kcc 0.3 — Karmazyn own compiler (K0 → C99)
+        "kcc 0.4 — Karmazyn own compiler (K0 → C99)
 
 USAGE:
   kcc <file.k0> [-o out.c]
@@ -160,7 +160,7 @@ FLAGS:
 LANGUAGE:
   #include \"other.k0\"
   fixed arrays [T; N], a[i], array params
-  semantic check: undeclared, arity, no f64 %
+  sem 0.4: undeclared, arity, no f64 %, type-unify, return-paths
 
 POLICY:
   Own:     K0 frontend + codegen

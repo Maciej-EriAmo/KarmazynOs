@@ -2,14 +2,14 @@
 # SESSION_PROGRESS — kcc / Tor B (wlasny kompilator)
 
 **Data:** 2026-08-06  
-**Repo:** KarmazynOs `main` (do ~`1643164`)
+**Repo:** KarmazynOs `main` (kcc **0.4** / TB.2f)
 
 ## Polityka
 - Kompilator = **wlasny** (`kcc`, jezyk K0 → C99)
 - Edytor / OS / stage0 `rustc` (tylko build kcc) / `gcc` (link) = obce OK
 - NIE: self-host kcc (TB.4), NIE: full rustc
 
-## Stan kcc 0.3
+## Stan kcc 0.4
 | Element | Stan |
 |---------|------|
 | lex / parse / codegen | OK |
@@ -17,7 +17,9 @@
 | fixed arrays + index + array params | OK |
 | `sem` undeclared / arity / `%` f64 / redef | OK |
 | `--safe` bounds → `abort()` | OK |
-| cargo tests | 11 |
+| **type-unify** let/assign/index/call/return | OK (0.4) |
+| **return-path** all branches return | OK (0.4) |
+| cargo tests | 17 |
 
 ## Critical K0 (kompilowane tylko kcc)
 - `thermal_lib.k0` — progi T, state_code, tick/heat/decay
@@ -38,9 +40,9 @@
 - `toolchain/kcc/README.md`
 
 ## Nastepne (opcjonalne)
-1. type-unify / return-path check  
-2. golden reach store_mini ↔ slab  
-3. TB.4 self-host (daleko)
+1. golden reach store_mini ↔ slab  
+2. TB.4 self-host (daleko)  
+3. TB.5 own backend bez gcc (daleko)
 
 ## Holon
-Fact + set-work + crystallize zapisane w holonOs (projekt Karmazyn).
+Fact + set-work / close w holonOs (projekt Karmazyn).
