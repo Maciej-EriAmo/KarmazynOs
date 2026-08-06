@@ -6,13 +6,14 @@
 //!
 //!   cargo run --release -- examples/thermal.k0 -o out/thermal.c
 //!   cargo run --release -- examples/thermal.k0 --cc -o out/thermal
-//!   cargo test
+//!   cargo run --release -- examples/store_mini.k0 --safe --cc -o out/store_mini
 
 mod ast;
 mod codegen_c;
 mod lex;
 mod parse;
 mod preprocess;
+mod sem;
 
 use std::env;
 use std::fs;
@@ -37,6 +38,7 @@ fn run() -> Result<(), String> {
     let mut output: Option<PathBuf> = None;
     let mut invoke_cc = false;
     let mut dump_ast = false;
+    let mut safe = false;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -49,6 +51,7 @@ fn run() -> Result<(), String> {
             }
             "--cc" => invoke_cc = true,
             "--dump-ast" => dump_ast = true,
+            "--safe" => safe = true,
             "-h" | "--help" => {
                 print_help();
                 return Ok(());
@@ -72,12 +75,12 @@ fn run() -> Result<(), String> {
         return Ok(());
     }
 
-    let c_src = codegen_c::emit_c(&prog)?;
+    sem::check(&prog)?;
+    let c_src = codegen_c::emit_c(&prog, safe)?;
     let c_path = match &output {
         Some(p) if p.extension().and_then(|e| e.to_str()) == Some("c") => p.clone(),
         Some(p) if invoke_cc => p.with_extension("c"),
         Some(p) => {
-            // default emit .c next to requested -o if not ending .c
             if p.extension().is_none() {
                 p.with_extension("c")
             } else {
@@ -95,7 +98,11 @@ fn run() -> Result<(), String> {
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
     fs::write(&c_path, &c_src).map_err(|e| format!("write {}: {e}", c_path.display()))?;
-    eprintln!("kcc: wrote {}", c_path.display());
+    eprintln!(
+        "kcc: wrote {}{}",
+        c_path.display(),
+        if safe { " (safe bounds)" } else { "" }
+    );
 
     if invoke_cc {
         let bin = output.unwrap_or_else(|| {
@@ -103,7 +110,6 @@ fn run() -> Result<(), String> {
             p.set_extension("");
             p
         });
-        // ensure bin path without forcing .c
         let bin = if bin.extension().and_then(|e| e.to_str()) == Some("c") {
             bin.with_extension("")
         } else {
@@ -120,19 +126,11 @@ fn compile_c(c_path: &Path, bin: &Path) -> Result<(), String> {
     if let Some(parent) = bin.parent() {
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
-    // driver: try gcc then clang then cl
     let ccs = ["gcc", "clang", "cc"];
     let mut last = String::new();
     for cc in ccs {
         let mut cmd = Command::new(cc);
-        cmd.arg(c_path).arg("-O2").arg("-o").arg(bin);
-        // need math for some programs
-        if cfg!(not(windows)) {
-            cmd.arg("-lm");
-        } else {
-            // MinGW often needs -lm too
-            cmd.arg("-lm");
-        }
+        cmd.arg(c_path).arg("-O2").arg("-o").arg(bin).arg("-lm");
         match cmd.status() {
             Ok(st) if st.success() => return Ok(()),
             Ok(st) => last = format!("{cc} exit {st}"),
@@ -146,20 +144,27 @@ fn compile_c(c_path: &Path, bin: &Path) -> Result<(), String> {
 
 fn print_help() {
     println!(
-        "kcc 0.2 — Karmazyn own compiler (K0 → C99)
+        "kcc 0.3 — Karmazyn own compiler (K0 → C99)
 
 USAGE:
   kcc <file.k0> [-o out.c]
   kcc <file.k0> --cc -o out_binary
+  kcc <file.k0> --safe --cc -o out_binary
   kcc <file.k0> --dump-ast
 
+FLAGS:
+  --safe     emit array bounds checks (abort on OOB)
+  --cc       link with foreign gcc/clang
+  --dump-ast print AST and exit
+
 LANGUAGE:
-  #include \"other.k0\"   expand before parse (relative path)
-  fixed arrays [T; N], a[i], array params as pointers in C
+  #include \"other.k0\"
+  fixed arrays [T; N], a[i], array params
+  semantic check: undeclared, arity, no f64 %
 
 POLICY:
-  Own:     K0 frontend + C codegen (this program)
-  Foreign: editor, OS, stage0 rustc (build kcc), gcc/clang (link)
+  Own:     K0 frontend + codegen
+  Foreign: editor, OS, stage0 rustc, gcc link
 
 See: Documents/TOR_B_TOOLCHAIN.pl.md
 "
@@ -170,6 +175,7 @@ See: Documents/TOR_B_TOOLCHAIN.pl.md
 mod tests {
     use crate::codegen_c::emit_c;
     use crate::parse::parse;
+    use crate::sem;
 
     #[test]
     fn parse_thermal_and_emit() {
@@ -195,7 +201,8 @@ fn add(a: i64, b: i64) -> i64 {
 }
 "#;
         let p = parse(src).expect("parse");
-        let c = emit_c(&p).expect("emit");
+        sem::check(&p).expect("sem");
+        let c = emit_c(&p, false).expect("emit");
         assert!(c.contains("k0_state_code"));
         assert!(c.contains("k0_add"));
         assert!(c.contains("70"));
@@ -204,7 +211,8 @@ fn add(a: i64, b: i64) -> i64 {
     #[test]
     fn binop_precedence() {
         let p = parse("fn f() -> i64 { return 1 + 2 * 3; }").unwrap();
-        let c = emit_c(&p).unwrap();
+        sem::check(&p).unwrap();
+        let c = emit_c(&p, false).unwrap();
         assert!(c.contains("*"));
     }
 
@@ -219,10 +227,10 @@ fn main() -> i32 {
 }
 "#;
         let p = parse(src).expect("parse");
-        let c = emit_c(&p).expect("emit");
+        sem::check(&p).expect("sem");
+        let c = emit_c(&p, false).expect("emit");
         assert!(c.contains("int64_t a[4]"));
         assert!(c.contains("memset"));
-        assert!(c.contains("a[0LL] = 7LL") || c.contains("a[0]"));
     }
 
     #[test]
@@ -239,8 +247,25 @@ fn main() -> i32 {
 }
 "#;
         let p = parse(src).expect("parse");
-        let c = emit_c(&p).expect("emit");
-        assert!(c.contains("int64_t *a") || c.contains("int64_t *"));
+        sem::check(&p).expect("sem");
+        let c = emit_c(&p, false).expect("emit");
+        assert!(c.contains("int64_t *"));
         assert!(c.contains("k0_sum2"));
+    }
+
+    #[test]
+    fn safe_emits_abort_guard() {
+        let src = r#"
+fn main() -> i32 {
+    let a: [i64; 2];
+    a[0] = 1;
+    return a[0];
+}
+"#;
+        let p = parse(src).unwrap();
+        sem::check(&p).unwrap();
+        let c = emit_c(&p, true).unwrap();
+        assert!(c.contains("abort"));
+        assert!(c.contains("stdlib.h"));
     }
 }

@@ -57,6 +57,7 @@ cd C:\Users\drwis\KarmazynOs
 | **TB.2b** | Fixed arrays in K0 + `atom_table.k0` (pin/vacuum mini slab) | ✅ |
 | **TB.2c** | `#include`, array params, `thermal_lib.k0` shared module | ✅ |
 | **TB.2d** | `store_mini.k0` — multi-root, bind, reach-walk, tick+vacuum | ✅ |
+| **TB.2e** | kcc 0.3: `sem` (undeclared/arity/`%`f64) + `--safe` bounds | ✅ |
 | **TB.3** | Golden `k0_state_code` ↔ `state_for_t` (slab + python) | ✅ |
 | **TB.4** | Self-host: `kcc` w K0 (kcc kompiluje siebie) | ❌ daleko |
 | **TB.5** | Własny backend (bez gcc) — opcjonalnie | ❌ |

@@ -3,9 +3,10 @@
 //! Foreign `cc`/`gcc` is **environment** (linking). **Frontend+IR→C is own compiler.**
 
 use crate::ast::*;
+use std::collections::HashMap;
 use std::fmt::Write as _;
 
-pub fn emit_c(prog: &Program) -> Result<String, String> {
+pub fn emit_c(prog: &Program, safe: bool) -> Result<String, String> {
     let mut out = String::new();
     writeln!(
         out,
@@ -16,6 +17,9 @@ pub fn emit_c(prog: &Program) -> Result<String, String> {
     writeln!(out, "#include <stdbool.h>").unwrap();
     writeln!(out, "#include <math.h>").unwrap();
     writeln!(out, "#include <string.h>").unwrap();
+    if safe {
+        writeln!(out, "#include <stdlib.h>").unwrap();
+    }
     writeln!(out).unwrap();
 
     for item in &prog.items {
@@ -29,7 +33,7 @@ pub fn emit_c(prog: &Program) -> Result<String, String> {
 
     for item in &prog.items {
         let Item::Fn(f) = item;
-        emit_fn(&mut out, f)?;
+        emit_fn(&mut out, f, safe)?;
         writeln!(out).unwrap();
     }
 
@@ -78,7 +82,6 @@ fn fn_proto(f: &FnDef) -> Result<String, String> {
         if i > 0 {
             s.push_str(", ");
         }
-        // Array params → C pointer (caller decays local arrays).
         match t {
             Type::Array { elem, len: _ } => {
                 let e = c_elem_type(elem)?;
@@ -103,14 +106,29 @@ fn mangle_local(n: &str) -> String {
     }
 }
 
-fn emit_fn(out: &mut String, f: &FnDef) -> Result<(), String> {
+struct Ctx {
+    safe: bool,
+    types: HashMap<String, Type>,
+}
+
+fn emit_fn(out: &mut String, f: &FnDef, safe: bool) -> Result<(), String> {
+    let mut types = HashMap::new();
+    for (n, t) in &f.params {
+        types.insert(n.clone(), t.clone());
+    }
+    let mut ctx = Ctx { safe, types };
     writeln!(out, "{} {{", fn_proto(f)?).unwrap();
-    emit_block(out, &f.body, 1)?;
+    emit_block(out, &f.body, 1, &mut ctx)?;
     writeln!(out, "}}").unwrap();
     Ok(())
 }
 
-fn emit_block(out: &mut String, b: &Block, indent: usize) -> Result<(), String> {
+fn emit_block(
+    out: &mut String,
+    b: &Block,
+    indent: usize,
+    ctx: &mut Ctx,
+) -> Result<(), String> {
     let pad = "    ".repeat(indent);
     for st in &b.stmts {
         match st {
@@ -119,14 +137,13 @@ fn emit_block(out: &mut String, b: &Block, indent: usize) -> Result<(), String> 
                     Some(t) => t.clone(),
                     None => {
                         let e = init.as_ref().ok_or("let without type needs init")?;
-                        infer_type(e)
+                        infer_type(e, &ctx.types)
                     }
                 };
                 match &t {
                     Type::Array { len, .. } => {
                         let decl = c_var_decl(name, &t)?;
                         writeln!(out, "{pad}{decl};").unwrap();
-                        // zero-init
                         writeln!(
                             out,
                             "{}memset({}, 0, sizeof({}));",
@@ -137,24 +154,25 @@ fn emit_block(out: &mut String, b: &Block, indent: usize) -> Result<(), String> 
                         .unwrap();
                         if init.is_some() {
                             return Err(format!(
-                                "array let {name}[{len}]: initializer expressions not supported (zero-init only)"
+                                "array let {name}[{len}]: zero-init only"
                             ));
                         }
                     }
                     _ => {
-                        let e = init.as_ref().ok_or_else(|| {
-                            format!("let {name}: scalar requires initializer")
-                        })?;
+                        let e = init
+                            .as_ref()
+                            .ok_or_else(|| format!("let {name}: scalar requires initializer"))?;
                         writeln!(
                             out,
                             "{}{} = {};",
                             pad,
                             c_var_decl(name, &t)?,
-                            emit_expr(e)?
+                            emit_expr(e, ctx)?
                         )
                         .unwrap();
                     }
                 }
+                ctx.types.insert(name.clone(), t);
             }
             Stmt::Assign { name, value } => {
                 writeln!(
@@ -162,49 +180,54 @@ fn emit_block(out: &mut String, b: &Block, indent: usize) -> Result<(), String> 
                     "{}{} = {};",
                     pad,
                     mangle_local(name),
-                    emit_expr(value)?
+                    emit_expr(value, ctx)?
                 )
                 .unwrap();
             }
             Stmt::IndexAssign { name, index, value } => {
-                writeln!(
-                    out,
-                    "{}{}[{}] = {};",
-                    pad,
-                    mangle_local(name),
-                    emit_expr(index)?,
-                    emit_expr(value)?
-                )
-                .unwrap();
+                let idx = emit_expr(index, ctx)?;
+                let val = emit_expr(value, ctx)?;
+                let arr = mangle_local(name);
+                if ctx.safe {
+                    if let Some(Type::Array { len, .. }) = ctx.types.get(name) {
+                        writeln!(
+                            out,
+                            "{}if (!((({idx}) >= 0) && (({idx}) < {len}))) abort();",
+                            pad
+                        )
+                        .unwrap();
+                    }
+                }
+                writeln!(out, "{pad}{arr}[{idx}] = {val};").unwrap();
             }
             Stmt::Return(None) => {
                 writeln!(out, "{pad}return;").unwrap();
             }
             Stmt::Return(Some(e)) => {
-                writeln!(out, "{}return {};", pad, emit_expr(e)?).unwrap();
+                writeln!(out, "{}return {};", pad, emit_expr(e, ctx)?).unwrap();
             }
             Stmt::Expr(e) => {
-                writeln!(out, "{}{};", pad, emit_expr(e)?).unwrap();
+                writeln!(out, "{}{};", pad, emit_expr(e, ctx)?).unwrap();
             }
             Stmt::If {
                 cond,
                 then_b,
                 else_b,
             } => {
-                writeln!(out, "{}if ({}) {{", pad, emit_expr(cond)?).unwrap();
-                emit_block(out, then_b, indent + 1)?;
+                writeln!(out, "{}if ({}) {{", pad, emit_expr(cond, ctx)?).unwrap();
+                emit_block(out, then_b, indent + 1, ctx)?;
                 write!(out, "{pad}}}").unwrap();
                 if let Some(eb) = else_b {
                     writeln!(out, " else {{").unwrap();
-                    emit_block(out, eb, indent + 1)?;
+                    emit_block(out, eb, indent + 1, ctx)?;
                     writeln!(out, "{pad}}}").unwrap();
                 } else {
                     writeln!(out).unwrap();
                 }
             }
             Stmt::While { cond, body } => {
-                writeln!(out, "{}while ({}) {{", pad, emit_expr(cond)?).unwrap();
-                emit_block(out, body, indent + 1)?;
+                writeln!(out, "{}while ({}) {{", pad, emit_expr(cond, ctx)?).unwrap();
+                emit_block(out, body, indent + 1, ctx)?;
                 writeln!(out, "{pad}}}").unwrap();
             }
         }
@@ -212,19 +235,26 @@ fn emit_block(out: &mut String, b: &Block, indent: usize) -> Result<(), String> 
     Ok(())
 }
 
-fn infer_type(e: &Expr) -> Type {
+fn infer_type(e: &Expr, types: &HashMap<String, Type>) -> Type {
     match e {
         Expr::Int(_) => Type::I64,
         Expr::Float(_) => Type::F64,
         Expr::Bool(_) => Type::Bool,
+        Expr::Ident(n) => types.get(n).cloned().unwrap_or(Type::I64),
         Expr::Unary { op: UnOp::Not, .. } => Type::Bool,
-        Expr::Index { .. } => Type::I64, // weak; prefer explicit types
+        Expr::Index { base, .. } => match base.as_ref() {
+            Expr::Ident(n) => match types.get(n) {
+                Some(Type::Array { elem, .. }) => *elem.clone(),
+                _ => Type::I64,
+            },
+            _ => Type::I64,
+        },
         Expr::Binary { op, left, right } => match op {
             BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge | BinOp::And
             | BinOp::Or => Type::Bool,
             _ => {
-                let l = infer_type(left);
-                let r = infer_type(right);
+                let l = infer_type(left, types);
+                let r = infer_type(right, types);
                 if matches!(l, Type::F64) || matches!(r, Type::F64) {
                     Type::F64
                 } else if matches!(l, Type::I64) || matches!(r, Type::I64) {
@@ -238,7 +268,7 @@ fn infer_type(e: &Expr) -> Type {
     }
 }
 
-fn emit_expr(e: &Expr) -> Result<String, String> {
+fn emit_expr(e: &Expr, ctx: &Ctx) -> Result<String, String> {
     Ok(match e {
         Expr::Int(n) => format!("{n}LL"),
         Expr::Float(f) => {
@@ -257,20 +287,42 @@ fn emit_expr(e: &Expr) -> Result<String, String> {
         }
         Expr::Ident(n) => mangle_local(n),
         Expr::Index { base, index } => {
-            let b = emit_expr(base)?;
-            let i = emit_expr(index)?;
+            let b = emit_expr(base, ctx)?;
+            let i = emit_expr(index, ctx)?;
+            if ctx.safe {
+                if let Expr::Ident(name) = base.as_ref() {
+                    if let Some(Type::Array { len, elem }) = ctx.types.get(name) {
+                        let zero = match elem.as_ref() {
+                            Type::F64 => "0.0",
+                            Type::Bool => "false",
+                            _ => "0",
+                        };
+                        // bounds-checked load
+                        return Ok(format!(
+                            "(((({i}) >= 0) && (({i}) < {len})) ? ({b}[{i}]) : (abort(), {zero}))"
+                        ));
+                    }
+                }
+            }
             format!("({b}[{i}])")
         }
         Expr::Unary { op, expr } => {
-            let x = emit_expr(expr)?;
+            let x = emit_expr(expr, ctx)?;
             match op {
                 UnOp::Neg => format!("(-({x}))"),
                 UnOp::Not => format!("(!({x}))"),
             }
         }
         Expr::Binary { op, left, right } => {
-            let l = emit_expr(left)?;
-            let r = emit_expr(right)?;
+            let l = emit_expr(left, ctx)?;
+            let r = emit_expr(right, ctx)?;
+            if *op == BinOp::Rem {
+                let lt = infer_type(left, &ctx.types);
+                let rt = infer_type(right, &ctx.types);
+                if matches!(lt, Type::F64) || matches!(rt, Type::F64) {
+                    return Err("% not allowed on f64".into());
+                }
+            }
             let o = match op {
                 BinOp::Add => "+",
                 BinOp::Sub => "-",
@@ -294,7 +346,7 @@ fn emit_expr(e: &Expr) -> Result<String, String> {
                 if i > 0 {
                     s.push_str(", ");
                 }
-                s.push_str(&emit_expr(a)?);
+                s.push_str(&emit_expr(a, ctx)?);
             }
             s.push(')');
             s

@@ -34,11 +34,11 @@ cargo test --release
 .\target\release\kcc.exe examples\store_mini.k0 --cc -o ..\..\out\kcc\store_mini
 ```
 
-Gate (TB.1–TB.3: kcc + both .k0 + Rust/Python golden):
+Gate (TB.1–TB.3 + 0.3 sem/safe):
 
 ```powershell
 .\toolchain\verify_kcc.ps1
-# → KCC_VERIFY_OK
+# → KCC_VERIFY_OK  (builds with --safe)
 ```
 
 ## K0 language (0.1)
