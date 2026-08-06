@@ -53,6 +53,7 @@ try {
     Write-Host "[3] critical .k0 via kcc (own compiler)"
     Invoke-K0 "thermal.k0" "thermal_smoke"
     Invoke-K0 "tick_skeleton.k0" "tick_skeleton"
+    Invoke-K0 "atom_table.k0" "atom_table"
 
     $cText = Get-Content (Join-Path $Out "thermal_smoke.c") -Raw
     if ($cText -notmatch "k0_state_code") { throw "C missing k0_state_code" }

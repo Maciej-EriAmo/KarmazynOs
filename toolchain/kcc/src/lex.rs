@@ -24,6 +24,8 @@ pub enum Tok {
     RParen,
     LBrace,
     RBrace,
+    LBracket,
+    RBracket,
     Comma,
     Colon,
     Semi,
@@ -153,6 +155,14 @@ impl<'a> Lexer<'a> {
             b'}' => {
                 self.bump();
                 Ok(Tok::RBrace)
+            }
+            b'[' => {
+                self.bump();
+                Ok(Tok::LBracket)
+            }
+            b']' => {
+                self.bump();
+                Ok(Tok::RBracket)
             }
             b',' => {
                 self.bump();

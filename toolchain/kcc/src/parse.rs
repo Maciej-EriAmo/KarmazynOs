@@ -84,6 +84,33 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_type(&mut self) -> Result<Type, String> {
+        // [T; N]
+        if self.cur == Tok::LBracket {
+            self.bump()?;
+            let elem = self.parse_type()?;
+            self.eat(&Tok::Semi)?;
+            let len = match &self.cur {
+                Tok::Int(n) if *n > 0 && *n <= 4096 => *n as u32,
+                other => {
+                    return Err(format!(
+                        "line {}: expected array length 1..4096, got {:?}",
+                        self.lx.line, other
+                    ))
+                }
+            };
+            self.bump()?;
+            self.eat(&Tok::RBracket)?;
+            if matches!(elem, Type::Array { .. }) {
+                return Err(format!(
+                    "line {}: nested arrays not supported yet",
+                    self.lx.line
+                ));
+            }
+            return Ok(Type::Array {
+                elem: Box::new(elem),
+                len,
+            });
+        }
         let t = match &self.cur {
             Tok::TyI32 => Type::I32,
             Tok::TyI64 => Type::I64,
@@ -121,8 +148,17 @@ impl<'a> Parser<'a> {
                 } else {
                     None
                 };
-                self.eat(&Tok::Assign)?;
-                let init = self.parse_expr()?;
+                let init = if self.cur == Tok::Assign {
+                    self.bump()?;
+                    Some(self.parse_expr()?)
+                } else if matches!(ty, Some(Type::Array { .. })) {
+                    None // zero-init array
+                } else {
+                    return Err(format!(
+                        "line {}: let requires initializer (except fixed arrays)",
+                        self.lx.line
+                    ));
+                };
                 self.eat(&Tok::Semi)?;
                 Ok(Stmt::Let { name, ty, init })
             }
@@ -159,43 +195,57 @@ impl<'a> Parser<'a> {
                 Ok(Stmt::While { cond, body })
             }
             Tok::Ident(_) => {
-                // assign or expr
-                if matches!(self.cur, Tok::Ident(_)) {
-                    // peek assign: need lookahead — parse as ident then decide
-                    let name = self.expect_ident()?;
-                    if self.cur == Tok::Assign {
-                        self.bump()?;
-                        let value = self.parse_expr()?;
-                        self.eat(&Tok::Semi)?;
-                        return Ok(Stmt::Assign { name, value });
-                    }
-                    // call or bare ident as expr stmt
-                    let expr = if self.cur == Tok::LParen {
-                        self.bump()?;
-                        let mut args = Vec::new();
-                        if self.cur != Tok::RParen {
-                            loop {
-                                args.push(self.parse_expr()?);
-                                if self.cur == Tok::Comma {
-                                    self.bump()?;
-                                    continue;
-                                }
-                                break;
-                            }
-                        }
-                        self.eat(&Tok::RParen)?;
-                        Expr::Call { name, args }
-                    } else {
-                        Expr::Ident(name)
-                    };
-                    // may continue binary? for stmt we only allow call/ident then semi
-                    // re-parse as full expr is hard; require call form for side effects
-                    let expr = self.finish_expr(expr)?;
+                let name = self.expect_ident()?;
+                // name[index] = value
+                if self.cur == Tok::LBracket {
+                    self.bump()?;
+                    let index = self.parse_expr()?;
+                    self.eat(&Tok::RBracket)?;
+                    self.eat(&Tok::Assign)?;
+                    let value = self.parse_expr()?;
                     self.eat(&Tok::Semi)?;
-                    Ok(Stmt::Expr(expr))
-                } else {
-                    unreachable!()
+                    return Ok(Stmt::IndexAssign {
+                        name,
+                        index,
+                        value,
+                    });
                 }
+                if self.cur == Tok::Assign {
+                    self.bump()?;
+                    let value = self.parse_expr()?;
+                    self.eat(&Tok::Semi)?;
+                    return Ok(Stmt::Assign { name, value });
+                }
+                let expr = if self.cur == Tok::LParen {
+                    self.bump()?;
+                    let mut args = Vec::new();
+                    if self.cur != Tok::RParen {
+                        loop {
+                            args.push(self.parse_expr()?);
+                            if self.cur == Tok::Comma {
+                                self.bump()?;
+                                continue;
+                            }
+                            break;
+                        }
+                    }
+                    self.eat(&Tok::RParen)?;
+                    Expr::Call { name, args }
+                } else if self.cur == Tok::LBracket {
+                    // name[i] as expr stmt (unusual)
+                    self.bump()?;
+                    let index = self.parse_expr()?;
+                    self.eat(&Tok::RBracket)?;
+                    Expr::Index {
+                        base: Box::new(Expr::Ident(name)),
+                        index: Box::new(index),
+                    }
+                } else {
+                    Expr::Ident(name)
+                };
+                let expr = self.finish_expr(expr)?;
+                self.eat(&Tok::Semi)?;
+                Ok(Stmt::Expr(expr))
             }
             _ => {
                 let e = self.parse_expr()?;
@@ -303,7 +353,7 @@ impl<'a> Parser<'a> {
             Tok::Ident(name) => {
                 let name = name.clone();
                 self.bump()?;
-                if self.cur == Tok::LParen {
+                let mut expr = if self.cur == Tok::LParen {
                     self.bump()?;
                     let mut args = Vec::new();
                     if self.cur != Tok::RParen {
@@ -317,10 +367,21 @@ impl<'a> Parser<'a> {
                         }
                     }
                     self.eat(&Tok::RParen)?;
-                    Ok(Expr::Call { name, args })
+                    Expr::Call { name, args }
                 } else {
-                    Ok(Expr::Ident(name))
+                    Expr::Ident(name)
+                };
+                // postfix index: a[i]
+                while self.cur == Tok::LBracket {
+                    self.bump()?;
+                    let index = self.parse_expr()?;
+                    self.eat(&Tok::RBracket)?;
+                    expr = Expr::Index {
+                        base: Box::new(expr),
+                        index: Box::new(index),
+                    };
                 }
+                Ok(expr)
             }
             Tok::LParen => {
                 self.bump()?;

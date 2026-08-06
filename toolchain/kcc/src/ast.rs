@@ -6,6 +6,8 @@ pub enum Type {
     I64,
     F64,
     Bool,
+    /// Fixed-size array, e.g. `[f64; 8]`.
+    Array { elem: Box<Type>, len: u32 },
 }
 
 #[derive(Debug, Clone)]
@@ -36,10 +38,17 @@ pub enum Stmt {
     Let {
         name: String,
         ty: Option<Type>,
-        init: Expr,
+        /// None = zero-init (required for arrays without initializer).
+        init: Option<Expr>,
     },
     Assign {
         name: String,
+        value: Expr,
+    },
+    /// `name[index] = value`
+    IndexAssign {
+        name: String,
+        index: Expr,
         value: Expr,
     },
     Return(Option<Expr>),
@@ -61,6 +70,11 @@ pub enum Expr {
     Float(f64),
     Bool(bool),
     Ident(String),
+    /// `base[index]` — base is currently always an ident (after parse).
+    Index {
+        base: Box<Expr>,
+        index: Box<Expr>,
+    },
     Unary {
         op: UnOp,
         expr: Box<Expr>,

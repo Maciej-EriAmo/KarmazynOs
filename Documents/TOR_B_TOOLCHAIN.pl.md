@@ -22,7 +22,8 @@
 | Crate | `toolchain/kcc` |
 | Język | **K0** (fn, typy i32/i64/f64/bool, if/while, arytmetyka) |
 | Backend 0.1 | emit **C99** (IL); link: foreign gcc |
-| Krytyczne lib | `thermal.k0` (progi+decay+heat), `tick_skeleton.k0` (T lifecycle) |
+| Krytyczne lib | `thermal.k0`, `tick_skeleton.k0`, `atom_table.k0` (fixed slab 8) |
+| K0 język | + fixed arrays `[T; N]`, `a[i]`, zero-init `let a: [T; N];` |
 | Golden TB.3 | `native/karmazyn_slab/src/golden_k0.rs` + `toolchain/golden_k0_thermal.py` |
 | Bramka | `.\toolchain\verify_kcc.ps1` → `KCC_VERIFY_OK` |
 
@@ -53,6 +54,7 @@ cd C:\Users\drwis\KarmazynOs
 | **TB.0** | Decyzja: własny kompilator obowiązkowy | ✅ |
 | **TB.1** | `kcc` 0.1 + `thermal.k0` + verify | ✅ |
 | **TB.2** | `decay_n` / `tick_t` / `heat` + `tick_skeleton.k0` | ✅ |
+| **TB.2b** | Fixed arrays in K0 + `atom_table.k0` (pin/vacuum mini slab) | ✅ |
 | **TB.3** | Golden `k0_state_code` ↔ `state_for_t` (slab + python) | ✅ |
 | **TB.4** | Self-host: `kcc` w K0 (kcc kompiluje siebie) | ❌ daleko |
 | **TB.5** | Własny backend (bez gcc) — opcjonalnie | ❌ |
@@ -80,4 +82,4 @@ cd C:\Users\drwis\KarmazynOs
 
 ---
 
-*2026-08-06: TB.0–TB.3 — kcc + thermal/tick_skeleton + golden vs state_for_t.*
+*2026-08-06: TB.0–TB.3 + TB.2b — arrays + atom_table.k0 mini slab.*

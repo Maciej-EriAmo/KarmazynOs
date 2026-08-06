@@ -202,4 +202,21 @@ fn add(a: i64, b: i64) -> i64 {
         let c = emit_c(&p).unwrap();
         assert!(c.contains("*"));
     }
+
+    #[test]
+    fn array_zero_and_index() {
+        let src = r#"
+fn main() -> i32 {
+    let a: [i64; 4];
+    a[0] = 7;
+    a[1] = a[0] + 1;
+    return a[1];
+}
+"#;
+        let p = parse(src).expect("parse");
+        let c = emit_c(&p).expect("emit");
+        assert!(c.contains("int64_t a[4]"));
+        assert!(c.contains("memset"));
+        assert!(c.contains("a[0LL] = 7LL") || c.contains("a[0]"));
+    }
 }
