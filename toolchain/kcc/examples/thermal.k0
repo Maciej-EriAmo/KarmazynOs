@@ -1,75 +1,7 @@
-// Critical thermal law — OWN kcc (not rustc).
-// Mirrors karmazyn_slab: T_HOT=70 T_WARM=30 T_TOMB=2 T_INIT=50 T_MAX=100 DECAY=0.92 HEAT_READ=10
-// state_code: 3=HOT 2=WARM 1=COLD 0=TOMB
-
-fn t_hot() -> f64 { return 70.0; }
-fn t_warm() -> f64 { return 30.0; }
-fn t_tomb() -> f64 { return 2.0; }
-fn t_init() -> f64 { return 50.0; }
-fn t_max() -> f64 { return 100.0; }
-fn decay_default() -> f64 { return 0.92; }
-fn heat_read() -> f64 { return 10.0; }
-
-fn clamp_t(t: f64) -> f64 {
-    if t < 0.0 {
-        return 0.0;
-    }
-    if t > 100.0 {
-        return 100.0;
-    }
-    return t;
-}
-
-// Same cuts as karmazyn_slab::state_for_t
-fn state_code(t: f64) -> i32 {
-    let x: f64 = clamp_t(t);
-    if x >= 70.0 {
-        return 3;
-    }
-    if x >= 30.0 {
-        return 2;
-    }
-    if x >= 2.0 {
-        return 1;
-    }
-    return 0;
-}
-
-fn is_dead(t: f64) -> bool {
-    return clamp_t(t) < 2.0;
-}
-
-fn decay_once(t: f64, rate: f64) -> f64 {
-    return clamp_t(t * rate);
-}
-
-// TB.2: n decay steps (tick skeleton for a single T)
-fn decay_n(t: f64, rate: f64, n: i32) -> f64 {
-    let x: f64 = t;
-    let i: i32 = 0;
-    while i < n {
-        x = decay_once(x, rate);
-        i = i + 1;
-    }
-    return x;
-}
-
-fn heat(t: f64, amount: f64) -> f64 {
-    if amount < 0.0 {
-        return clamp_t(t);
-    }
-    return clamp_t(t + amount);
-}
-
-// one thermodynamic tick step (T only; reach/GC is substrate)
-fn tick_t(t: f64) -> f64 {
-    return decay_once(t, 0.92);
-}
-
-// --- golden battery (exit 0 = all pass) ---
+// Critical thermal law + battery — OWN kcc.
+#include "thermal_lib.k0"
 
 fn check_state_table() -> i32 {
-    // boundaries + interior
     if state_code(100.0) != 3 { return 20; }
     if state_code(70.0) != 3 { return 21; }
     if state_code(69.999) != 2 { return 22; }
@@ -86,47 +18,29 @@ fn check_state_table() -> i32 {
 }
 
 fn check_decay_heat() -> i32 {
-    let t0: f64 = 50.0;
-    let t1: f64 = tick_t(t0);
-    // 50 * 0.92 = 46
-    if t1 < 45.9 {
-        return 40;
-    }
-    if t1 > 46.1 {
-        return 41;
-    }
+    let t1: f64 = tick_t(50.0);
+    if t1 < 45.9 { return 40; }
+    if t1 > 46.1 { return 41; }
     let cold: f64 = decay_n(50.0, 0.92, 80);
     if is_dead(cold) {
-        // ok — enough ticks → TOMB
     } else {
         return 42;
     }
     let h: f64 = heat(1.0, 10.0);
-    if is_dead(h) {
-        return 43;
-    }
-    if state_code(h) != 1 {
-        // 11.0 is COLD (>=2, <30)
-        return 44;
-    }
+    if is_dead(h) { return 43; }
+    if state_code(h) != 1 { return 44; }
     return 0;
 }
 
 fn main() -> i32 {
     let r: i32 = check_state_table();
-    if r != 0 {
-        return r;
-    }
+    if r != 0 { return r; }
     r = check_decay_heat();
-    if r != 0 {
-        return r;
-    }
+    if r != 0 { return r; }
     if is_dead(1.0) {
     } else {
         return 14;
     }
-    if is_dead(50.0) {
-        return 15;
-    }
+    if is_dead(50.0) { return 15; }
     return 0;
 }

@@ -47,7 +47,10 @@ Gate (TB.1–TB.3: kcc + both .k0 + Rust/Python golden):
 - ops: `+ - * / %` comparisons `&& || !`
 - calls: `foo(1, 2.0)` · index: `a[i]`
 
-Not yet: structs, nested arrays, array params, pointers, modules, strings, self-host of kcc in K0.
+- `#include "other.k0"` (relative, circular-safe)
+- array **params** → C pointers (helpers can mutate tables)
+
+Not yet: structs, nested arrays, true modules/packages, strings, self-host of kcc in K0.
 
 ## Next
 

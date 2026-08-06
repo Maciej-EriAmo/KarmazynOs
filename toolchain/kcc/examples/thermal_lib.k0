@@ -1,0 +1,51 @@
+// Shared thermal primitives — included by other .k0 (own kcc, not rustc).
+// Keep in sync with karmazyn_slab constants / golden_k0.
+
+fn t_hot() -> f64 { return 70.0; }
+fn t_warm() -> f64 { return 30.0; }
+fn t_tomb() -> f64 { return 2.0; }
+fn t_init() -> f64 { return 50.0; }
+fn t_max() -> f64 { return 100.0; }
+fn decay_default() -> f64 { return 0.92; }
+fn heat_read() -> f64 { return 10.0; }
+
+fn clamp_t(t: f64) -> f64 {
+    if t < 0.0 { return 0.0; }
+    if t > 100.0 { return 100.0; }
+    return t;
+}
+
+fn state_code(t: f64) -> i32 {
+    let x: f64 = clamp_t(t);
+    if x >= 70.0 { return 3; }
+    if x >= 30.0 { return 2; }
+    if x >= 2.0 { return 1; }
+    return 0;
+}
+
+fn is_dead(t: f64) -> bool {
+    return clamp_t(t) < 2.0;
+}
+
+fn decay_once(t: f64, rate: f64) -> f64 {
+    return clamp_t(t * rate);
+}
+
+fn tick_t(t: f64) -> f64 {
+    return decay_once(t, 0.92);
+}
+
+fn heat(t: f64, amount: f64) -> f64 {
+    if amount < 0.0 { return clamp_t(t); }
+    return clamp_t(t + amount);
+}
+
+fn decay_n(t: f64, rate: f64, n: i32) -> f64 {
+    let x: f64 = t;
+    let i: i32 = 0;
+    while i < n {
+        x = decay_once(x, rate);
+        i = i + 1;
+    }
+    return x;
+}

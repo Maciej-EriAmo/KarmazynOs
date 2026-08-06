@@ -55,6 +55,7 @@ cd C:\Users\drwis\KarmazynOs
 | **TB.1** | `kcc` 0.1 + `thermal.k0` + verify | ✅ |
 | **TB.2** | `decay_n` / `tick_t` / `heat` + `tick_skeleton.k0` | ✅ |
 | **TB.2b** | Fixed arrays in K0 + `atom_table.k0` (pin/vacuum mini slab) | ✅ |
+| **TB.2c** | `#include`, array params, `thermal_lib.k0` shared module | ✅ |
 | **TB.3** | Golden `k0_state_code` ↔ `state_for_t` (slab + python) | ✅ |
 | **TB.4** | Self-host: `kcc` w K0 (kcc kompiluje siebie) | ❌ daleko |
 | **TB.5** | Własny backend (bez gcc) — opcjonalnie | ❌ |
@@ -82,4 +83,4 @@ cd C:\Users\drwis\KarmazynOs
 
 ---
 
-*2026-08-06: TB.0–TB.3 + TB.2b — arrays + atom_table.k0 mini slab.*
+*2026-08-06: TB.0–TB.3 + TB.2b/c — arrays, include, array params, thermal_lib.*

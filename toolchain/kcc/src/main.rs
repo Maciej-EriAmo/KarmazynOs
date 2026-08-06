@@ -12,6 +12,7 @@ mod ast;
 mod codegen_c;
 mod lex;
 mod parse;
+mod preprocess;
 
 use std::env;
 use std::fs;
@@ -64,7 +65,7 @@ fn run() -> Result<(), String> {
     }
 
     let input = input.ok_or("missing input .k0 file")?;
-    let src = fs::read_to_string(&input).map_err(|e| format!("read {}: {e}", input.display()))?;
+    let src = preprocess::load_with_includes(&input)?;
     let prog = parse::parse(&src)?;
     if dump_ast {
         println!("{prog:#?}");
@@ -145,12 +146,16 @@ fn compile_c(c_path: &Path, bin: &Path) -> Result<(), String> {
 
 fn print_help() {
     println!(
-        "kcc 0.1 — Karmazyn own compiler (K0 → C99)
+        "kcc 0.2 — Karmazyn own compiler (K0 → C99)
 
 USAGE:
   kcc <file.k0> [-o out.c]
   kcc <file.k0> --cc -o out_binary
   kcc <file.k0> --dump-ast
+
+LANGUAGE:
+  #include \"other.k0\"   expand before parse (relative path)
+  fixed arrays [T; N], a[i], array params as pointers in C
 
 POLICY:
   Own:     K0 frontend + C codegen (this program)
@@ -218,5 +223,24 @@ fn main() -> i32 {
         assert!(c.contains("int64_t a[4]"));
         assert!(c.contains("memset"));
         assert!(c.contains("a[0LL] = 7LL") || c.contains("a[0]"));
+    }
+
+    #[test]
+    fn array_param_emits_pointer() {
+        let src = r#"
+fn sum2(a: [i64; 2]) -> i64 {
+    return a[0] + a[1];
+}
+fn main() -> i32 {
+    let a: [i64; 2];
+    a[0] = 1;
+    a[1] = 2;
+    return sum2(a);
+}
+"#;
+        let p = parse(src).expect("parse");
+        let c = emit_c(&p).expect("emit");
+        assert!(c.contains("int64_t *a") || c.contains("int64_t *"));
+        assert!(c.contains("k0_sum2"));
     }
 }

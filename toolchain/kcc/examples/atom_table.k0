@@ -1,21 +1,64 @@
-// TB.2b — mini atom table (fixed slab) — OWN kcc, not rustc.
-// Law (T only + pin as stand-in for reach/root):
-//   cold + !pinned → vacuum (clear slot)
-//   cold + pinned  → retain TOMB (keep slot, T stays dead)
-// MAX_ATOMS = 8
+// TB.2b+ — mini atom table with #include + array params (own kcc).
+#include "thermal_lib.k0"
 
-fn clamp_t(t: f64) -> f64 {
-    if t < 0.0 { return 0.0; }
-    if t > 100.0 { return 100.0; }
-    return t;
+// Vacuum: dead + !pinned → clear slot. Returns reaped count.
+// Array params compile to C pointers (foreign ABI surface; logic is ours).
+fn vacuum_pass(used: [bool; 8], pinned: [bool; 8], temp: [f64; 8]) -> i32 {
+    let i: i32 = 0;
+    let reaped: i32 = 0;
+    while i < 8 {
+        if used[i] {
+            if is_dead(temp[i]) {
+                if pinned[i] {
+                } else {
+                    used[i] = false;
+                    reaped = reaped + 1;
+                }
+            }
+        }
+        i = i + 1;
+    }
+    return reaped;
 }
 
-fn is_dead(t: f64) -> bool {
-    return clamp_t(t) < 2.0;
+fn cool_all(used: [bool; 8], temp: [f64; 8], n: i32) -> i32 {
+    let step: i32 = 0;
+    let i: i32 = 0;
+    while step < n {
+        i = 0;
+        while i < 8 {
+            if used[i] {
+                temp[i] = tick_t(temp[i]);
+            }
+            i = i + 1;
+        }
+        step = step + 1;
+    }
+    return 0;
 }
 
-fn tick_t(t: f64) -> f64 {
-    return clamp_t(t * 0.92);
+fn count_live(used: [bool; 8]) -> i32 {
+    let i: i32 = 0;
+    let live: i32 = 0;
+    while i < 8 {
+        if used[i] {
+            live = live + 1;
+        }
+        i = i + 1;
+    }
+    return live;
+}
+
+fn alloc_slot(used: [bool; 8]) -> i32 {
+    let i: i32 = 0;
+    while i < 8 {
+        if used[i] {
+        } else {
+            return i;
+        }
+        i = i + 1;
+    }
+    return -1;
 }
 
 fn main() -> i32 {
@@ -27,7 +70,6 @@ fn main() -> i32 {
     let live: i32 = 0;
     let aid: i32 = 0;
 
-    // clear (memset already zero; restate used flags)
     i = 0;
     while i < 8 {
         used[i] = false;
@@ -36,101 +78,47 @@ fn main() -> i32 {
         i = i + 1;
     }
 
-    // alloc orphan id=0 T=50
     used[0] = true;
     pinned[0] = false;
-    temp[0] = 50.0;
+    temp[0] = t_init();
 
-    // alloc rooted id=1 T=50 pin
     used[1] = true;
     pinned[1] = true;
-    temp[1] = 50.0;
+    temp[1] = t_init();
 
-    // cool hard (fast decay loop equivalent to many ticks)
-    i = 0;
-    while i < 80 {
-        if used[0] {
-            temp[0] = tick_t(temp[0]);
-        }
-        if used[1] {
-            temp[1] = tick_t(temp[1]);
-        }
-        i = i + 1;
-    }
+    cool_all(used, temp, 80);
+    reaped = vacuum_pass(used, pinned, temp);
 
-    // vacuum pass: dead + !pinned → reap
-    i = 0;
-    while i < 8 {
-        if used[i] {
-            if is_dead(temp[i]) {
-                if pinned[i] {
-                    // retained TOMB — keep
-                } else {
-                    used[i] = false;
-                    reaped = reaped + 1;
-                }
-            }
-        }
-        i = i + 1;
-    }
-
-    // expectations
-    if used[0] {
-        return 10; // orphan must be gone
-    }
-    if reaped < 1 {
-        return 11;
-    }
+    if used[0] { return 10; }
+    if reaped < 1 { return 11; }
     if used[1] {
     } else {
-        return 12; // pinned survives
+        return 12;
     }
     if is_dead(temp[1]) {
     } else {
-        return 13; // should be TOMB-cold
+        return 13;
     }
 
-    // heat revive pinned
-    temp[1] = clamp_t(temp[1] + 10.0);
-    if is_dead(temp[1]) {
-        return 14;
-    }
+    temp[1] = heat(temp[1], heat_read());
+    if is_dead(temp[1]) { return 14; }
 
-    // count live
-    live = 0;
-    i = 0;
-    while i < 8 {
-        if used[i] {
-            live = live + 1;
-        }
-        i = i + 1;
-    }
-    if live != 1 {
-        return 15;
-    }
+    live = count_live(used);
+    if live != 1 { return 15; }
 
-    // alloc after freelist-ish: find free slot
-    aid = -1;
-    i = 0;
-    while i < 8 {
-        if used[i] {
-        } else {
-            if aid < 0 {
-                aid = i;
-            }
-        }
-        i = i + 1;
-    }
-    if aid < 0 {
-        return 16;
-    }
+    aid = alloc_slot(used);
+    if aid < 0 { return 16; }
     used[aid] = true;
     pinned[aid] = false;
-    temp[aid] = 50.0;
+    temp[aid] = t_init();
     if used[aid] {
     } else {
         return 17;
     }
+
+    // state_code from thermal_lib
+    if state_code(80.0) != 3 { return 18; }
+    if state_code(t_init()) != 2 { return 19; }
 
     return 0;
 }

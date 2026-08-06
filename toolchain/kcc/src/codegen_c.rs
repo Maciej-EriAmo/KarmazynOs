@@ -23,15 +23,7 @@ pub fn emit_c(prog: &Program) -> Result<String, String> {
         if matches!(f.ret, Type::Array { .. }) {
             return Err(format!("fn {} cannot return array yet", f.name));
         }
-        for (n, t) in &f.params {
-            if matches!(t, Type::Array { .. }) {
-                return Err(format!(
-                    "fn {} param {n}: array params not supported yet",
-                    f.name
-                ));
-            }
-        }
-        writeln!(out, "{};", fn_proto(f)).unwrap();
+        writeln!(out, "{};", fn_proto(f)?).unwrap();
     }
     writeln!(out).unwrap();
 
@@ -79,24 +71,29 @@ fn c_var_decl(name: &str, t: &Type) -> Result<String, String> {
     }
 }
 
-fn fn_proto(f: &FnDef) -> String {
-    let ret = c_type(&f.ret).unwrap_or_else(|_| "int32_t".into());
+fn fn_proto(f: &FnDef) -> Result<String, String> {
+    let ret = c_type(&f.ret)?;
     let mut s = format!("{} k0_{}(", ret, f.name);
     for (i, (n, t)) in f.params.iter().enumerate() {
         if i > 0 {
             s.push_str(", ");
         }
-        s.push_str(&format!(
-            "{} {}",
-            c_type(t).unwrap_or_else(|_| "int32_t".into()),
-            mangle_local(n)
-        ));
+        // Array params → C pointer (caller decays local arrays).
+        match t {
+            Type::Array { elem, len: _ } => {
+                let e = c_elem_type(elem)?;
+                s.push_str(&format!("{e} *{}", mangle_local(n)));
+            }
+            _ => {
+                s.push_str(&format!("{} {}", c_type(t)?, mangle_local(n)));
+            }
+        }
     }
     if f.params.is_empty() {
         s.push_str("void");
     }
     s.push(')');
-    s
+    Ok(s)
 }
 
 fn mangle_local(n: &str) -> String {
@@ -107,7 +104,7 @@ fn mangle_local(n: &str) -> String {
 }
 
 fn emit_fn(out: &mut String, f: &FnDef) -> Result<(), String> {
-    writeln!(out, "{} {{", fn_proto(f)).unwrap();
+    writeln!(out, "{} {{", fn_proto(f)?).unwrap();
     emit_block(out, &f.body, 1)?;
     writeln!(out, "}}").unwrap();
     Ok(())

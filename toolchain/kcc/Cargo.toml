@@ -1,6 +1,6 @@
 [package]
 name = "kcc"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 authors = ["Maciej Mazur"]
 description = "KarmazynOS own compiler (K0 → C). Stage0 host rustc builds kcc once; critical libs compile with kcc."
