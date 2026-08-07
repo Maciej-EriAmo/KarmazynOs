@@ -2,7 +2,7 @@
 # SESSION_PROGRESS — kcc / Tor B (wlasny kompilator)
 
 **Data:** 2026-08-07  
-**Repo:** KarmazynOs `main` (kcc **0.6.1** / TB.3d+ nested+return-struct + TB.4 Phase 0 seed)
+**Repo:** KarmazynOs `main` (kcc **0.6.1** / TB.3d+ + TB.4 **Phase 1** lex_buffer)
 
 ## Polityka
 - Kompilator = **wlasny** (`kcc`, jezyk K0 → C99)
@@ -16,12 +16,13 @@
 | return-struct by value | OK |
 | for / break / continue | OK |
 | type-unify + return-path | OK |
-| TB.4 Phase 0 `tok_kind.k0` | OK (host kcc builds) |
+| TB.4 Phase 0 `tok_kind.k0` | OK |
+| TB.4 Phase 1 `lex_buffer.k0` | OK (kind+span fixtures A–D) |
 
 ## Critical K0
 - thermal / tick / atom_table / store_mini
 - `struct_point.k0` (exit 50)
-- `kcc_selfhost/tok_kind.k0` (exit 0)
+- `kcc_selfhost/tok_kind.k0` + `lex_buffer.k0` (exit 0)
 
 ## Gate
 ```
@@ -30,5 +31,5 @@
 ```
 
 ## Nastepne
-1. TB.4 Phase 1 — lexer buffer w K0  
+1. TB.4 Phase 2 — mini-parser na strumieniu tokenów  
 2. TB.5 own backend (daleko)

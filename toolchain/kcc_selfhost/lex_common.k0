@@ -1,0 +1,69 @@
+// TB.4 shared — byte class helpers (included by tok_kind / lex_buffer)
+// Kind codes (stable):
+//   0 = EOF / none
+//   1 = IDENT
+//   2 = INT
+//   3 = WS
+//   4 = PUNCT
+//   10+ reserved for keywords (Phase 2+)
+
+fn is_ws(c: i32) -> i32 {
+    if c == 32 { return 1; }
+    if c == 9 { return 1; }
+    if c == 10 { return 1; }
+    if c == 13 { return 1; }
+    return 0;
+}
+
+fn is_digit(c: i32) -> i32 {
+    if c >= 48 {
+        if c <= 57 {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+fn is_alpha(c: i32) -> i32 {
+    if c >= 65 {
+        if c <= 90 {
+            return 1;
+        }
+    }
+    if c >= 97 {
+        if c <= 122 {
+            return 1;
+        }
+    }
+    if c == 95 {
+        return 1;
+    }
+    return 0;
+}
+
+fn is_alnum(c: i32) -> i32 {
+    if is_alpha(c) != 0 {
+        return 1;
+    }
+    if is_digit(c) != 0 {
+        return 1;
+    }
+    return 0;
+}
+
+/// Classify one ASCII code unit → kind (0..4).
+fn classify_byte(c: i32) -> i32 {
+    if is_ws(c) != 0 {
+        return 3;
+    }
+    if is_digit(c) != 0 {
+        return 2;
+    }
+    if is_alpha(c) != 0 {
+        return 1;
+    }
+    if c == 0 {
+        return 0;
+    }
+    return 4;
+}

@@ -64,7 +64,7 @@ cd C:\Users\drwis\KarmazynOs
 | **TB.3c** | kcc 0.5: for + break/continue | ✅ |
 | **TB.3d** | kcc 0.6: struct + field access/assign + by-value params | ✅ |
 | **TB.3d+** | kcc 0.6.1: nested fields + return-struct | ✅ |
-| **TB.4** | Self-host: `kcc` w K0 | 🚧 **Phase 0** (`toolchain/kcc_selfhost/`) |
+| **TB.4** | Self-host: `kcc` w K0 | 🚧 **Phase 1** (`lex_buffer.k0` + Phase 0) |
 | **TB.5** | Własny backend (bez gcc) — opcjonalnie | ❌ |
 
 ## LFS analogia (aktualna)
@@ -90,4 +90,4 @@ cd C:\Users\drwis\KarmazynOs
 
 ---
 
-*2026-08-07: TB.0–TB.3d+ (kcc **0.6.1** nested+return-struct) + TB.4 **Phase 0** (`kcc_selfhost/tok_kind.k0`); golden TB.3/3b intact.*
+*2026-08-07: TB.0–TB.3d+ (kcc **0.6.1**) + TB.4 **Phase 1** (`lex_buffer.k0` kind+span; Phase 0 `tok_kind`); golden TB.3/3b intact.*

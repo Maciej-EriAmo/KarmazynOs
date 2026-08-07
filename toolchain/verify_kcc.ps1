@@ -1,6 +1,6 @@
-# Own-compiler gate (Tor B TB.1–TB.3d+ + TB.4 Phase 0 seed):
+# Own-compiler gate (Tor B TB.1–TB.3d+ + TB.4 Phase 0/1):
 #   stage0 rustc builds kcc; kcc builds critical .k0; golden law vs slab;
-#   structs/nested/return-struct; tok_kind self-host seed.
+#   structs/nested/return-struct; tok_kind + lex_buffer self-host seed.
 # Foreign: rustc (stage0), gcc (link), optional python for table golden.
 # Own: kcc frontend+codegen + .k0 sources.
 #
@@ -17,7 +17,7 @@ $Out = Join-Path $Root "out\kcc"
 $Slab = Join-Path $Root "native\karmazyn_slab"
 New-Item -ItemType Directory -Force -Path $Out | Out-Null
 
-Write-Host "=== kcc verify TB.1-TB.3d+ / TB.4 Phase0 (own compiler) ===" -ForegroundColor Cyan
+Write-Host "=== kcc verify TB.1-TB.3d+ / TB.4 Phase0-1 (own compiler) ===" -ForegroundColor Cyan
 Write-Host "kcc crate: $Kcc"
 
 Push-Location $Kcc
@@ -79,7 +79,7 @@ try {
     if ($spC -notmatch "typedef struct Rect") { throw "struct_point.c missing nested Rect" }
     if ($spC -notmatch "Point k0_make_point") { throw "struct_point.c missing return-struct" }
 
-    # TB.4 Phase 0 — self-host seed (host kcc builds tok_kind.k0)
+    # TB.4 Phase 0/1 — self-host seed (host kcc builds K0 lexer pieces)
     Write-Host "  kcc tok_kind.k0 (TB.4 Phase 0) expect exit 0"
     $tkSrc = Join-Path $Root "toolchain\kcc_selfhost\tok_kind.k0"
     $tkBin = Join-Path $Out "tok_kind"
@@ -88,6 +88,15 @@ try {
     $tkRun = if (Test-Path "$tkBin.exe") { "$tkBin.exe" } else { $tkBin }
     & $tkRun
     if ($LASTEXITCODE -ne 0) { throw "tok_kind expected exit 0, got $LASTEXITCODE" }
+
+    Write-Host "  kcc lex_buffer.k0 (TB.4 Phase 1) expect exit 0"
+    $lbSrc = Join-Path $Root "toolchain\kcc_selfhost\lex_buffer.k0"
+    $lbBin = Join-Path $Out "lex_buffer"
+    & $exe $lbSrc --safe --cc -o $lbBin
+    if ($LASTEXITCODE -ne 0) { throw "kcc lex_buffer failed" }
+    $lbRun = if (Test-Path "$lbBin.exe") { "$lbBin.exe" } else { $lbBin }
+    & $lbRun
+    if ($LASTEXITCODE -ne 0) { throw "lex_buffer expected exit 0, got $LASTEXITCODE" }
 
     $cText = Get-Content (Join-Path $Out "thermal_smoke.c") -Raw
     if ($cText -notmatch "k0_state_code") { throw "C missing k0_state_code" }
@@ -120,5 +129,5 @@ if ($pyCmd) {
 
 Write-Host ""
 Write-Host "=== KCC_VERIFY_OK ===" -ForegroundColor Green
-Write-Host "Own: kcc + .k0. Stage0: rustc (kcc+slab tests). Link: gcc. Golden: TB.3/3b + structs + TB.4 P0."
+Write-Host "Own: kcc + .k0. Stage0: rustc (kcc+slab tests). Link: gcc. Golden: TB.3/3b + structs + TB.4 P0-1."
 exit 0
