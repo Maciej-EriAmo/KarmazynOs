@@ -735,18 +735,19 @@ fn print_help() {
   info <aid>                    atom s/e/t/token
   atom <s> <e> [t]              create atom (default t=T_INIT)
   upsert <aid> <s> <e> [t] [tok]  create/update fixed id
-  heat <aid>                    heat atom
-  set_t <aid> <t>               set temperature
+  heat <aid>                    +HEAT_READ (same as touch / read)
+  set_t <aid> <t>               absolute T (no heat counters)
   tick [n]                      one tick or settle n
   settle <n>                    n ticks
   bubble [label] [parent]       new bubble (optional parent)
   root <bid> / unroot <bid>     root set
   bind <bid> <name> <aid>       bind name → atom
   unbind <bid> <name>           remove binding
-  lookup <bid> <name>           resolve binding (parent chain)
+  lookup <bid> <name>           resolve (also +HEAT_READ if thermal)
   has <aid> / t <aid> / dead <aid>
   del <aid>                     delete atom
-  val <aid> / setval <aid> <u64>
+  val <aid>                     read value token
+  setval <aid> <u64>            write token (+HEAT_WRITE if thermal)
   assert has|nohas|dead|nodead|lookup|t|val|stats|root|noroot …
   echo <text>
   save <path> / load <path>     KSUB_SNAP v1 (no Python)

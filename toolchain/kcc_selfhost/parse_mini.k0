@@ -253,11 +253,6 @@ fn zero_stats(stats: [i32; 8]) -> i32 {
     return 0;
 }
 
-fn fill_ascii(src: [i32; 64], s0: i32, s1: i32, s2: i32, s3: i32, s4: i32, s5: i32, s6: i32, s7: i32) -> i32 {
-    // helper unused — fixtures filled inline
-    return 0;
-}
-
 fn run_parse(
     src: [i32; 64],
     n: i32,

@@ -19,7 +19,10 @@ mod ffi;
 mod snapshot;
 pub mod slab;
 
-pub use atom::{state_for_t, Atom, AtomId, DECAY_DEFAULT, HEAT_READ, T_HOT, T_INIT, T_MAX, T_TOMB, T_WARM};
+pub use atom::{
+    state_for_t, Atom, AtomId, DECAY_DEFAULT, HEAT_READ, HEAT_WRITE, T_HOT, T_INIT, T_MAX, T_TOMB,
+    T_WARM,
+};
 pub use slab::{
     Bid, BumpAlloc, FixedLabel, SlabAtoms, SlabStore, MAX_ATOMS, MAX_BINDS, MAX_BUBBLES, MAX_LABEL,
     MAX_ROOTS,

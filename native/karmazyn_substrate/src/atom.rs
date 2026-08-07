@@ -3,11 +3,9 @@
 //! Thermal constants live in `karmazyn_slab` (shared with freestanding kentry).
 
 pub use karmazyn_slab::{
-    clamp_t, state_for_t, AtomId, DECAY_DEFAULT, HEAT_READ, T_HOT, T_INIT, T_MAX, T_TOMB, T_WARM,
+    clamp_t, state_for_t, AtomId, DECAY_DEFAULT, HEAT_READ, HEAT_WRITE, T_HOT, T_INIT, T_MAX,
+    T_TOMB, T_WARM,
 };
-
-#[allow(dead_code)]
-pub const HEAT_WRITE: f64 = 5.0;
 
 #[derive(Debug, Clone)]
 pub struct Atom {
@@ -55,8 +53,15 @@ impl Atom {
         self.t = clamp_t(self.t + a);
     }
 
+    /// Read path: bump reads + HEAT_READ (lookup, explicit Store::heat).
     pub fn touch(&mut self) {
         self.reads += 1;
         self.heat(HEAT_READ);
+    }
+
+    /// Write path: bump writes + HEAT_WRITE (value token set, etc.).
+    pub fn mark_write(&mut self) {
+        self.writes += 1;
+        self.heat(HEAT_WRITE);
     }
 }

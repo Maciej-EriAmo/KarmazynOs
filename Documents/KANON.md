@@ -52,6 +52,11 @@ prawo jądra (dziś w kodzie):  T = KIEDY · reach = CZY
 
 **Bramka:** `.\native\stage1_verify.ps1` → `STAGE1_VERIFY_OK`.
 
+**Termika (kanon implementacji):**  
+- odczyt / `heat` / `lookup` (thermal) → `HEAT_READ`  
+- zapis tokena (`set_value` / `setval`) → `HEAT_WRITE` (mniejszy ΔT)  
+- `set_t` = absolutne T bez licznika heat  
+
 **Świadomie poza kanonem Stage 1:** HRR, pryzmaty Warp Oblivion, Ring-LWE archiwum, pełne Φ — to wizja / warstwy wyżej.
 
 ---

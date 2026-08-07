@@ -44,6 +44,14 @@ int main(int argc, char **argv) {
     printf("  ksub_version: %s\n", ver ? ver : "(null)");
     if (!ver || ver[0] == '\0') die("empty version");
 
+    /* strdup / string_free pair (version itself is static — never free it) */
+    char *vcopy = ksub_strdup(ver);
+    if (!vcopy) die("ksub_strdup");
+    if (strcmp(vcopy, ver) != 0) die("ksub_strdup content");
+    ksub_string_free(vcopy);
+    ksub_string_free(NULL); /* null-safe */
+    printf("  [ OK ] ksub_strdup / ksub_string_free\n");
+
     uint64_t h = ksub_store_new(1);
     if (h == 0) die("ksub_store_new");
 

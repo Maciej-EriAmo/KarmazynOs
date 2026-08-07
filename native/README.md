@@ -210,14 +210,15 @@ Header: `karmazyn_substrate/include/karmazyn_substrate.h` (matches `ffi.rs`).
 | `ksub_version` | ABI string |
 | `ksub_store_new` / `ksub_store_free` | Store lifetime |
 | `ksub_atom_new` / `ksub_has_atom` / `ksub_delete_atom` / `ksub_heat` | Atoms |
-| `ksub_atom_set_value` / `ksub_atom_value` | Opaque value token |
+| `ksub_atom_set_value` / `ksub_atom_value` | Opaque value token (`set_value` → HEAT_WRITE if thermal) |
 | `ksub_atom_t` / `ksub_atom_set_t` / `ksub_atom_is_dead` | Thermal / TOMB |
 | `ksub_atom_upsert` / `ksub_atom_ids` | Upsert + id listing |
 | `ksub_bubble_new` / `ksub_bind` / `ksub_unbind` / `ksub_lookup` | Bubbles |
 | `ksub_set_root` / `ksub_unset_root` | Roots |
 | `ksub_tick` / `ksub_settle` / `ksub_stats` | Thermodynamics + GC |
 | `ksub_register_env_of` / `ksub_register_extra_reach` | Language hooks |
-| `ksub_string_free` | Free host-owned C strings from substrate |
+| `ksub_strdup` / `ksub_string_free` | Heap copy for host; free pair (not for `ksub_version`) |
+| `ksub_heat` | Same as read-touch (`HEAT_READ`); lookup also touches when thermal |
 
 Clients: `c_smoke/stage1_c_smoke.c`, `c_smoke/ksub_client.c` (via `stage1_verify.ps1`).
 

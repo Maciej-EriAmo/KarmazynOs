@@ -26,7 +26,10 @@ pub const T_HOT: f64 = 70.0;
 pub const T_WARM: f64 = 30.0;
 pub const T_TOMB: f64 = 2.0;
 pub const DECAY_DEFAULT: f64 = 0.92;
+/// ΔT on read / explicit heat (touch) — larger than write.
 pub const HEAT_READ: f64 = 10.0;
+/// ΔT on write (value token / mutation) — smaller than read (mirrors karmazyn_atom.py).
+pub const HEAT_WRITE: f64 = 5.0;
 
 pub type AtomId = u32;
 /// Local bubble id (same role as host `BubbleId`).

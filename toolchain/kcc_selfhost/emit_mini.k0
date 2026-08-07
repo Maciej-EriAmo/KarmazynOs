@@ -592,35 +592,6 @@ fn emit_lit(out: [i32; 256], n: i32, v: i32) -> i32 {
     return n;
 }
 
-fn emit_cstr(out: [i32; 256], n: i32, p0: i32, p1: i32, p2: i32, p3: i32, p4: i32, p5: i32, p6: i32, p7: i32, len: i32) -> i32 {
-    // emit up to 8 fixed bytes from args
-    if len > 0 {
-        n = emit_ch(out, n, p0);
-    }
-    if len > 1 {
-        n = emit_ch(out, n, p1);
-    }
-    if len > 2 {
-        n = emit_ch(out, n, p2);
-    }
-    if len > 3 {
-        n = emit_ch(out, n, p3);
-    }
-    if len > 4 {
-        n = emit_ch(out, n, p4);
-    }
-    if len > 5 {
-        n = emit_ch(out, n, p5);
-    }
-    if len > 6 {
-        n = emit_ch(out, n, p6);
-    }
-    if len > 7 {
-        n = emit_ch(out, n, p7);
-    }
-    return n;
-}
-
 fn emit_expr_c(
     out: [i32; 256],
     n: i32,

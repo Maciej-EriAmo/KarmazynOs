@@ -48,7 +48,10 @@ typedef uint32_t (*ksub_extra_reach_fn)(uint32_t *out, uint32_t max_out, void *u
 int ksub_register_env_of(uint64_t handle, ksub_env_of_fn cb, void *userdata);
 int ksub_register_extra_reach(uint64_t handle, ksub_extra_reach_fn cb, void *userdata);
 
-/** Free a C string previously allocated/owned by the substrate for host use. */
+/** Heap-copy of `s` for the host. Pair with ksub_string_free. Null on failure. */
+char *ksub_strdup(const char *s);
+
+/** Free a string from ksub_strdup. Not for ksub_version() (static). */
 void ksub_string_free(char *p);
 
 #ifdef __cplusplus

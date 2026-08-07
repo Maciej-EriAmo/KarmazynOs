@@ -180,8 +180,13 @@ impl Store {
 
     pub fn atom_set_value_token(&self, aid: AtomId, token: u64) -> bool {
         let mut g = self.lock();
+        let thermal = g.thermal;
         if let Some(a) = g.atoms.get_mut(&aid) {
             a.value_token = token;
+            // Write heats less than read (HEAT_WRITE) — same law as karmazyn_atom.py
+            if thermal {
+                a.mark_write();
+            }
             true
         } else {
             false
@@ -292,6 +297,9 @@ impl Store {
         g.next_atom = max_id.saturating_add(1).max(g.next_atom);
     }
 
+    /// Explicit heat — same as a **read** (`touch` / `HEAT_READ`), matching Python Store.heat.
+    /// (Not HEAT_WRITE; writes use [`Self::atom_set_value_token`].)
+    /// Note: [`Self::lookup`] also touches under thermal mode.
     pub fn heat(&self, aid: AtomId) -> bool {
         let mut g = self.lock();
         if let Some(a) = g.atoms.get_mut(&aid) {

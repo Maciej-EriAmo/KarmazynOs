@@ -366,7 +366,24 @@ unsafe fn cstr(p: *const c_char) -> String {
     CStr::from_ptr(p).to_string_lossy().into_owned()
 }
 
-/// Leak-free helper for hosts that need owned C strings (tests).
+/// Allocate a copy of `s` for the host. Pair with [`ksub_string_free`].
+/// Returns null on null input or allocation failure.
+#[no_mangle]
+pub extern "C" fn ksub_strdup(s: *const c_char) -> *mut c_char {
+    if s.is_null() {
+        return ptr::null_mut();
+    }
+    let Ok(cs) = unsafe { CStr::from_ptr(s) }.to_str() else {
+        return ptr::null_mut();
+    };
+    match CString::new(cs) {
+        Ok(owned) => owned.into_raw(),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+/// Free a C string previously returned by [`ksub_strdup`] (or equivalent into_raw).
+/// No-op on null. Do **not** free static pointers such as [`ksub_version`].
 #[no_mangle]
 pub extern "C" fn ksub_string_free(p: *mut c_char) {
     if !p.is_null() {
@@ -374,9 +391,4 @@ pub extern "C" fn ksub_string_free(p: *mut c_char) {
             let _ = CString::from_raw(p);
         }
     }
-}
-
-#[allow(dead_code)]
-fn _keep_ptr() {
-    let _ = ptr::null::<u8>();
 }
