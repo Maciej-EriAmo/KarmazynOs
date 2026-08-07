@@ -1,0 +1,509 @@
+// TB.4 Phase 2 — mini-parser on token stream (fn / let / return / int expr)
+// Grammar (subset):
+//   program  := fn_def+
+//   fn_def   := 'fn' IDENT '(' ')' [ '->' 'i32' ] '{' stmt* '}'
+//   stmt     := 'let' IDENT '=' expr ';' | 'return' expr ';'
+//   expr     := primary ( ('+'|'-') primary )*
+//   primary  := INT | IDENT
+//
+// stats[0]=n_fn  [1]=n_let  [2]=n_ret  [3]=n_int  [4]=last_int
+// Exit 0 on pass; nonzero = fixture/assert code.
+
+#include "lex_engine.k0"
+
+// --- cursor helpers: return new pos, or -(100+code) on error ---
+
+fn parse_error(code: i32) -> i32 {
+    return 0 - (100 + code);
+}
+
+fn expect_kind(
+    kinds: [i32; 32],
+    pos: i32,
+    want: i32
+) -> i32 {
+    if kinds[pos] != want {
+        return parse_error(1);
+    }
+    return pos + 1;
+}
+
+fn expect_punct(
+    src: [i32; 64],
+    kinds: [i32; 32],
+    starts: [i32; 32],
+    ends: [i32; 32],
+    pos: i32,
+    ch: i32
+) -> i32 {
+    if kinds[pos] != 4 {
+        return parse_error(2);
+    }
+    if punct_at(src, starts, ends, pos) != ch {
+        return parse_error(3);
+    }
+    return pos + 1;
+}
+
+fn parse_primary(
+    src: [i32; 64],
+    kinds: [i32; 32],
+    starts: [i32; 32],
+    ends: [i32; 32],
+    pos: i32,
+    stats: [i32; 8]
+) -> i32 {
+    if kinds[pos] == 2 {
+        stats[3] = stats[3] + 1;
+        stats[4] = int_value(src, starts, ends, pos);
+        return pos + 1;
+    }
+    if kinds[pos] == 1 {
+        // bare ident (not keyword-checked here)
+        return pos + 1;
+    }
+    return parse_error(10);
+}
+
+fn parse_expr(
+    src: [i32; 64],
+    kinds: [i32; 32],
+    starts: [i32; 32],
+    ends: [i32; 32],
+    pos: i32,
+    stats: [i32; 8]
+) -> i32 {
+    pos = parse_primary(src, kinds, starts, ends, pos, stats);
+    if pos < 0 {
+        return pos;
+    }
+    while 1 == 1 {
+        if kinds[pos] != 4 {
+            break;
+        }
+        let ch: i32 = punct_at(src, starts, ends, pos);
+        if ch != 43 {
+            if ch != 45 {
+                break;
+            }
+        }
+        // do not treat '->' as binary minus: if '-' followed by '>', stop
+        if ch == 45 {
+            if kinds[pos + 1] == 4 {
+                if punct_at(src, starts, ends, pos + 1) == 62 {
+                    break;
+                }
+            }
+        }
+        pos = pos + 1;
+        pos = parse_primary(src, kinds, starts, ends, pos, stats);
+        if pos < 0 {
+            return pos;
+        }
+    }
+    return pos;
+}
+
+fn parse_stmt(
+    src: [i32; 64],
+    kinds: [i32; 32],
+    starts: [i32; 32],
+    ends: [i32; 32],
+    pos: i32,
+    stats: [i32; 8]
+) -> i32 {
+    if kinds[pos] != 1 {
+        return parse_error(20);
+    }
+    if kw_let(src, starts, ends, pos) != 0 {
+        pos = pos + 1;
+        pos = expect_kind(kinds, pos, 1);
+        if pos < 0 {
+            return pos;
+        }
+        pos = expect_punct(src, kinds, starts, ends, pos, 61);
+        if pos < 0 {
+            return pos;
+        }
+        pos = parse_expr(src, kinds, starts, ends, pos, stats);
+        if pos < 0 {
+            return pos;
+        }
+        pos = expect_punct(src, kinds, starts, ends, pos, 59);
+        if pos < 0 {
+            return pos;
+        }
+        stats[1] = stats[1] + 1;
+        return pos;
+    }
+    if kw_return(src, starts, ends, pos) != 0 {
+        pos = pos + 1;
+        pos = parse_expr(src, kinds, starts, ends, pos, stats);
+        if pos < 0 {
+            return pos;
+        }
+        pos = expect_punct(src, kinds, starts, ends, pos, 59);
+        if pos < 0 {
+            return pos;
+        }
+        stats[2] = stats[2] + 1;
+        return pos;
+    }
+    return parse_error(21);
+}
+
+fn parse_fn(
+    src: [i32; 64],
+    kinds: [i32; 32],
+    starts: [i32; 32],
+    ends: [i32; 32],
+    pos: i32,
+    stats: [i32; 8]
+) -> i32 {
+    if kinds[pos] != 1 {
+        return parse_error(30);
+    }
+    if kw_fn(src, starts, ends, pos) == 0 {
+        return parse_error(31);
+    }
+    pos = pos + 1;
+    // name
+    pos = expect_kind(kinds, pos, 1);
+    if pos < 0 {
+        return pos;
+    }
+    pos = expect_punct(src, kinds, starts, ends, pos, 40);
+    if pos < 0 {
+        return pos;
+    }
+    pos = expect_punct(src, kinds, starts, ends, pos, 41);
+    if pos < 0 {
+        return pos;
+    }
+    // optional -> i32
+    if kinds[pos] == 4 {
+        if punct_at(src, starts, ends, pos) == 45 {
+            if kinds[pos + 1] == 4 {
+                if punct_at(src, starts, ends, pos + 1) == 62 {
+                    pos = pos + 2;
+                    if kinds[pos] != 1 {
+                        return parse_error(32);
+                    }
+                    if kw_i32(src, starts, ends, pos) == 0 {
+                        return parse_error(33);
+                    }
+                    pos = pos + 1;
+                }
+            }
+        }
+    }
+    pos = expect_punct(src, kinds, starts, ends, pos, 123);
+    if pos < 0 {
+        return pos;
+    }
+    while kinds[pos] != 0 {
+        if kinds[pos] == 4 {
+            if punct_at(src, starts, ends, pos) == 125 {
+                break;
+            }
+        }
+        pos = parse_stmt(src, kinds, starts, ends, pos, stats);
+        if pos < 0 {
+            return pos;
+        }
+    }
+    pos = expect_punct(src, kinds, starts, ends, pos, 125);
+    if pos < 0 {
+        return pos;
+    }
+    stats[0] = stats[0] + 1;
+    return pos;
+}
+
+/// Parse whole program; returns final pos (>=0) or negative error.
+fn parse_program(
+    src: [i32; 64],
+    kinds: [i32; 32],
+    starts: [i32; 32],
+    ends: [i32; 32],
+    pos: i32,
+    stats: [i32; 8]
+) -> i32 {
+    if kinds[pos] == 0 {
+        return parse_error(40);
+    }
+    while kinds[pos] != 0 {
+        pos = parse_fn(src, kinds, starts, ends, pos, stats);
+        if pos < 0 {
+            return pos;
+        }
+    }
+    return pos;
+}
+
+fn zero_stats(stats: [i32; 8]) -> i32 {
+    stats[0] = 0;
+    stats[1] = 0;
+    stats[2] = 0;
+    stats[3] = 0;
+    stats[4] = 0;
+    stats[5] = 0;
+    stats[6] = 0;
+    stats[7] = 0;
+    return 0;
+}
+
+fn fill_ascii(src: [i32; 64], s0: i32, s1: i32, s2: i32, s3: i32, s4: i32, s5: i32, s6: i32, s7: i32) -> i32 {
+    // helper unused — fixtures filled inline
+    return 0;
+}
+
+fn run_parse(
+    src: [i32; 64],
+    n: i32,
+    kinds: [i32; 32],
+    starts: [i32; 32],
+    ends: [i32; 32],
+    stats: [i32; 8]
+) -> i32 {
+    let nt: i32 = lex_fill(src, n, kinds, starts, ends);
+    if nt < 2 {
+        return parse_error(50);
+    }
+    zero_stats(stats);
+    return parse_program(src, kinds, starts, ends, 0, stats);
+}
+
+fn main() -> i32 {
+    let src: [i32; 64];
+    let kinds: [i32; 32];
+    let starts: [i32; 32];
+    let ends: [i32; 32];
+    let stats: [i32; 8];
+    let n: i32 = 0;
+    let r: i32 = 0;
+    let i: i32 = 0;
+
+    // --- A: fn main(){return 42;} ---
+    // f n   m a i n ( ) { r e t u r n   4 2 ; }
+    // "fn main(){return 42;}"
+    let a: [i32; 64];
+    // build via sequential assigns
+    src[0] = 102;
+    src[1] = 110;
+    src[2] = 32;
+    src[3] = 109;
+    src[4] = 97;
+    src[5] = 105;
+    src[6] = 110;
+    src[7] = 40;
+    src[8] = 41;
+    src[9] = 123;
+    src[10] = 114;
+    src[11] = 101;
+    src[12] = 116;
+    src[13] = 117;
+    src[14] = 114;
+    src[15] = 110;
+    src[16] = 32;
+    src[17] = 52;
+    src[18] = 50;
+    src[19] = 59;
+    src[20] = 125;
+    n = 21;
+    r = run_parse(src, n, kinds, starts, ends, stats);
+    if r < 0 {
+        return 10;
+    }
+    if stats[0] != 1 {
+        return 11;
+    }
+    if stats[1] != 0 {
+        return 12;
+    }
+    if stats[2] != 1 {
+        return 13;
+    }
+    if stats[3] != 1 {
+        return 14;
+    }
+    if stats[4] != 42 {
+        return 15;
+    }
+
+    // --- B: fn main(){let x=1;return x;} ---
+    src[0] = 102;
+    src[1] = 110;
+    src[2] = 32;
+    src[3] = 109;
+    src[4] = 97;
+    src[5] = 105;
+    src[6] = 110;
+    src[7] = 40;
+    src[8] = 41;
+    src[9] = 123;
+    src[10] = 108;
+    src[11] = 101;
+    src[12] = 116;
+    src[13] = 32;
+    src[14] = 120;
+    src[15] = 61;
+    src[16] = 49;
+    src[17] = 59;
+    src[18] = 114;
+    src[19] = 101;
+    src[20] = 116;
+    src[21] = 117;
+    src[22] = 114;
+    src[23] = 110;
+    src[24] = 32;
+    src[25] = 120;
+    src[26] = 59;
+    src[27] = 125;
+    n = 28;
+    r = run_parse(src, n, kinds, starts, ends, stats);
+    if r < 0 {
+        return 20;
+    }
+    if stats[0] != 1 {
+        return 21;
+    }
+    if stats[1] != 1 {
+        return 22;
+    }
+    if stats[2] != 1 {
+        return 23;
+    }
+    if stats[3] != 1 {
+        return 24;
+    }
+    if stats[4] != 1 {
+        return 25;
+    }
+
+    // --- C: fn f()->i32{return 0;} ---
+    src[0] = 102;
+    src[1] = 110;
+    src[2] = 32;
+    src[3] = 102;
+    src[4] = 40;
+    src[5] = 41;
+    src[6] = 45;
+    src[7] = 62;
+    src[8] = 105;
+    src[9] = 51;
+    src[10] = 50;
+    src[11] = 123;
+    src[12] = 114;
+    src[13] = 101;
+    src[14] = 116;
+    src[15] = 117;
+    src[16] = 114;
+    src[17] = 110;
+    src[18] = 32;
+    src[19] = 48;
+    src[20] = 59;
+    src[21] = 125;
+    n = 22;
+    r = run_parse(src, n, kinds, starts, ends, stats);
+    if r < 0 {
+        return 30;
+    }
+    if stats[0] != 1 {
+        return 31;
+    }
+    if stats[2] != 1 {
+        return 32;
+    }
+    if stats[4] != 0 {
+        return 33;
+    }
+
+    // --- D: expr add  fn main(){return 1+2;} ---
+    src[0] = 102;
+    src[1] = 110;
+    src[2] = 32;
+    src[3] = 109;
+    src[4] = 97;
+    src[5] = 105;
+    src[6] = 110;
+    src[7] = 40;
+    src[8] = 41;
+    src[9] = 123;
+    src[10] = 114;
+    src[11] = 101;
+    src[12] = 116;
+    src[13] = 117;
+    src[14] = 114;
+    src[15] = 110;
+    src[16] = 32;
+    src[17] = 49;
+    src[18] = 43;
+    src[19] = 50;
+    src[20] = 59;
+    src[21] = 125;
+    n = 22;
+    r = run_parse(src, n, kinds, starts, ends, stats);
+    if r < 0 {
+        return 40;
+    }
+    if stats[3] != 2 {
+        return 41;
+    }
+    if stats[4] != 2 {
+        return 42;
+    }
+
+    // --- E: reject bare return;  ---
+    // fn main(){return;}
+    src[0] = 102;
+    src[1] = 110;
+    src[2] = 32;
+    src[3] = 109;
+    src[4] = 97;
+    src[5] = 105;
+    src[6] = 110;
+    src[7] = 40;
+    src[8] = 41;
+    src[9] = 123;
+    src[10] = 114;
+    src[11] = 101;
+    src[12] = 116;
+    src[13] = 117;
+    src[14] = 114;
+    src[15] = 110;
+    src[16] = 59;
+    src[17] = 125;
+    n = 18;
+    r = run_parse(src, n, kinds, starts, ends, stats);
+    if r >= 0 {
+        return 50;
+    }
+
+    // --- F: reject missing fn keyword ---
+    // main(){return 1;}
+    src[0] = 109;
+    src[1] = 97;
+    src[2] = 105;
+    src[3] = 110;
+    src[4] = 40;
+    src[5] = 41;
+    src[6] = 123;
+    src[7] = 114;
+    src[8] = 101;
+    src[9] = 116;
+    src[10] = 117;
+    src[11] = 114;
+    src[12] = 110;
+    src[13] = 32;
+    src[14] = 49;
+    src[15] = 59;
+    src[16] = 125;
+    n = 17;
+    r = run_parse(src, n, kinds, starts, ends, stats);
+    if r >= 0 {
+        return 60;
+    }
+
+    return 0;
+}

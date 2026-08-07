@@ -1,0 +1,187 @@
+// TB.4 — lexer engine (no main). Included by lex_buffer / parse_mini.
+
+#include "lex_common.k0"
+
+/// Fill kinds/starts/ends; return token count including trailing EOF.
+fn lex_fill(
+    src: [i32; 64],
+    n: i32,
+    kinds: [i32; 32],
+    starts: [i32; 32],
+    ends: [i32; 32]
+) -> i32 {
+    let i: i32 = 0;
+    let t: i32 = 0;
+    while i < n {
+        while i < n {
+            if is_ws(src[i]) == 0 {
+                break;
+            }
+            i = i + 1;
+        }
+        if i >= n {
+            break;
+        }
+        // // line comment
+        if src[i] == 47 {
+            if i + 1 < n {
+                if src[i + 1] == 47 {
+                    i = i + 2;
+                    while i < n {
+                        if src[i] == 10 {
+                            break;
+                        }
+                        i = i + 1;
+                    }
+                    continue;
+                }
+            }
+        }
+        if t >= 31 {
+            break;
+        }
+        let c: i32 = src[i];
+        let s: i32 = i;
+        if is_alpha(c) != 0 {
+            i = i + 1;
+            while i < n {
+                if is_alnum(src[i]) == 0 {
+                    break;
+                }
+                i = i + 1;
+            }
+            kinds[t] = 1;
+            starts[t] = s;
+            ends[t] = i;
+            t = t + 1;
+        } else {
+            if is_digit(c) != 0 {
+                i = i + 1;
+                while i < n {
+                    if is_digit(src[i]) == 0 {
+                        break;
+                    }
+                    i = i + 1;
+                }
+                kinds[t] = 2;
+                starts[t] = s;
+                ends[t] = i;
+                t = t + 1;
+            } else {
+                i = i + 1;
+                kinds[t] = 4;
+                starts[t] = s;
+                ends[t] = i;
+                t = t + 1;
+            }
+        }
+    }
+    kinds[t] = 0;
+    starts[t] = n;
+    ends[t] = n;
+    t = t + 1;
+    return t;
+}
+
+fn span_len(starts: [i32; 32], ends: [i32; 32], idx: i32) -> i32 {
+    return ends[idx] - starts[idx];
+}
+
+fn punct_at(src: [i32; 64], starts: [i32; 32], ends: [i32; 32], idx: i32) -> i32 {
+    if ends[idx] - starts[idx] != 1 {
+        return -1;
+    }
+    return src[starts[idx]];
+}
+
+fn int_value(src: [i32; 64], starts: [i32; 32], ends: [i32; 32], idx: i32) -> i32 {
+    let v: i32 = 0;
+    let i: i32 = starts[idx];
+    while i < ends[idx] {
+        v = v * 10 + (src[i] - 48);
+        i = i + 1;
+    }
+    return v;
+}
+
+// Keyword matchers (IDENT span vs fixed letters)
+fn kw_fn(src: [i32; 64], starts: [i32; 32], ends: [i32; 32], idx: i32) -> i32 {
+    if kinds_is_ident_span(starts, ends, idx, 2) == 0 {
+        return 0;
+    }
+    let s: i32 = starts[idx];
+    if src[s] != 102 {
+        return 0;
+    }
+    if src[s + 1] != 110 {
+        return 0;
+    }
+    return 1;
+}
+
+fn kw_let(src: [i32; 64], starts: [i32; 32], ends: [i32; 32], idx: i32) -> i32 {
+    if kinds_is_ident_span(starts, ends, idx, 3) == 0 {
+        return 0;
+    }
+    let s: i32 = starts[idx];
+    if src[s] != 108 {
+        return 0;
+    }
+    if src[s + 1] != 101 {
+        return 0;
+    }
+    if src[s + 2] != 116 {
+        return 0;
+    }
+    return 1;
+}
+
+fn kw_return(src: [i32; 64], starts: [i32; 32], ends: [i32; 32], idx: i32) -> i32 {
+    if kinds_is_ident_span(starts, ends, idx, 6) == 0 {
+        return 0;
+    }
+    let s: i32 = starts[idx];
+    if src[s] != 114 {
+        return 0;
+    }
+    if src[s + 1] != 101 {
+        return 0;
+    }
+    if src[s + 2] != 116 {
+        return 0;
+    }
+    if src[s + 3] != 117 {
+        return 0;
+    }
+    if src[s + 4] != 114 {
+        return 0;
+    }
+    if src[s + 5] != 110 {
+        return 0;
+    }
+    return 1;
+}
+
+fn kw_i32(src: [i32; 64], starts: [i32; 32], ends: [i32; 32], idx: i32) -> i32 {
+    if kinds_is_ident_span(starts, ends, idx, 3) == 0 {
+        return 0;
+    }
+    let s: i32 = starts[idx];
+    if src[s] != 105 {
+        return 0;
+    }
+    if src[s + 1] != 51 {
+        return 0;
+    }
+    if src[s + 2] != 50 {
+        return 0;
+    }
+    return 1;
+}
+
+fn kinds_is_ident_span(starts: [i32; 32], ends: [i32; 32], idx: i32, want: i32) -> i32 {
+    if ends[idx] - starts[idx] != want {
+        return 0;
+    }
+    return 1;
+}

@@ -1,95 +1,6 @@
-// TB.4 Phase 1 — lexer buffer: ASCII src → kind + span (start, end exclusive)
-// Host kcc compiles this. Exit 0 on golden fixtures.
-//
-// No strings in K0: source is [i32; N] code units. WS and // comments skipped
-// (not emitted). IDENT / INT coalesce; other bytes → single-char PUNCT.
+// TB.4 Phase 1 — lexer buffer golden fixtures (exit 0).
 
-#include "lex_common.k0"
-
-/// Fill kinds/starts/ends; return token count including trailing EOF.
-/// Array params are mutable (C pointers).
-fn lex_fill(
-    src: [i32; 64],
-    n: i32,
-    kinds: [i32; 32],
-    starts: [i32; 32],
-    ends: [i32; 32]
-) -> i32 {
-    let i: i32 = 0;
-    let t: i32 = 0;
-    while i < n {
-        // skip whitespace
-        while i < n {
-            if is_ws(src[i]) == 0 {
-                break;
-            }
-            i = i + 1;
-        }
-        if i >= n {
-            break;
-        }
-        // // line comment
-        if src[i] == 47 {
-            if i + 1 < n {
-                if src[i + 1] == 47 {
-                    i = i + 2;
-                    while i < n {
-                        if src[i] == 10 {
-                            break;
-                        }
-                        i = i + 1;
-                    }
-                    continue;
-                }
-            }
-        }
-        if t >= 31 {
-            // leave room for EOF
-            break;
-        }
-        let c: i32 = src[i];
-        let s: i32 = i;
-        if is_alpha(c) != 0 {
-            i = i + 1;
-            while i < n {
-                if is_alnum(src[i]) == 0 {
-                    break;
-                }
-                i = i + 1;
-            }
-            kinds[t] = 1;
-            starts[t] = s;
-            ends[t] = i;
-            t = t + 1;
-        } else {
-            if is_digit(c) != 0 {
-                i = i + 1;
-                while i < n {
-                    if is_digit(src[i]) == 0 {
-                        break;
-                    }
-                    i = i + 1;
-                }
-                kinds[t] = 2;
-                starts[t] = s;
-                ends[t] = i;
-                t = t + 1;
-            } else {
-                // single-char punct
-                i = i + 1;
-                kinds[t] = 4;
-                starts[t] = s;
-                ends[t] = i;
-                t = t + 1;
-            }
-        }
-    }
-    kinds[t] = 0;
-    starts[t] = n;
-    ends[t] = n;
-    t = t + 1;
-    return t;
-}
+#include "lex_engine.k0"
 
 fn expect_tok(
     kinds: [i32; 32],
@@ -120,8 +31,7 @@ fn main() -> i32 {
     let n: i32 = 0;
     let nt: i32 = 0;
 
-    // --- Fixture A: a=12+b  (no spaces) ---
-    // a = 12 + b
+    // A: a=12+b
     src[0] = 97;
     src[1] = 61;
     src[2] = 49;
@@ -130,7 +40,6 @@ fn main() -> i32 {
     src[5] = 98;
     n = 6;
     nt = lex_fill(src, n, kinds, starts, ends);
-    // IDENT PUNCT INT PUNCT IDENT EOF → 6
     if nt != 6 {
         return 10;
     }
@@ -153,8 +62,7 @@ fn main() -> i32 {
         return 16;
     }
 
-    // --- Fixture B: "x = 7" with spaces ---
-    // x space = space 7
+    // B: x = 7
     src[0] = 120;
     src[1] = 32;
     src[2] = 61;
@@ -162,7 +70,6 @@ fn main() -> i32 {
     src[4] = 55;
     n = 5;
     nt = lex_fill(src, n, kinds, starts, ends);
-    // IDENT PUNCT INT EOF → 4
     if nt != 4 {
         return 20;
     }
@@ -179,8 +86,7 @@ fn main() -> i32 {
         return 24;
     }
 
-    // --- Fixture C: comment then ident ---
-    // //z\n ab
+    // C: //z\nab
     src[0] = 47;
     src[1] = 47;
     src[2] = 122;
@@ -189,7 +95,6 @@ fn main() -> i32 {
     src[5] = 98;
     n = 6;
     nt = lex_fill(src, n, kinds, starts, ends);
-    // IDENT(ab) EOF → 2
     if nt != 2 {
         return 30;
     }
@@ -200,8 +105,7 @@ fn main() -> i32 {
         return 32;
     }
 
-    // --- Fixture D: fn-like (still IDENT in Phase 1) ---
-    // fn
+    // D: fn
     src[0] = 102;
     src[1] = 110;
     n = 2;
