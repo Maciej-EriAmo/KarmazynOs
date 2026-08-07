@@ -32,6 +32,7 @@
 # → KCC_VERIFY_OK
 ```
 
-## Nastepne
-1. TB.4 Phase 4 — self-host bootstrap loop  
-2. TB.5 own backend (daleko)
+## Nastepne (priorytet projektu)
+1. **Pauza TB.4** — Phase 0–3 wystarczy na teraz (P4 odłożone)  
+2. Tor A: shell polish Stage2 (gdy praca)  
+3. TB.4 Phase 4 / TB.5 — tylko świadomie, nie z inercji
