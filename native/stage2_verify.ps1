@@ -130,7 +130,7 @@ try {
         -e quit
     if ($LASTEXITCODE -ne 0) { throw "bubbles/info batch failed" }
 
-    Write-Host "`n[10] lifecycle.ksh — T×reach (orphan vacuum + root TOMB + unroot reap)"
+    Write-Host "`n[10] lifecycle.ksh - T x reach (orphan vacuum + root TOMB + unroot reap)"
     Push-Location $Root
     try {
         $life = Join-Path $Shell "examples\lifecycle.ksh"
@@ -140,6 +140,6 @@ try {
 } finally { Pop-Location }
 
 Write-Host "`n=== STAGE2_VERIFY_OK ===" -ForegroundColor Green
-Write-Host "Shell: $exe (0.3.2+ lifecycle T×reach)"
+Write-Host "Shell: $exe (0.3.2+ lifecycle T x reach)"
 Write-Host "Snap:  $Snap"
 exit 0
