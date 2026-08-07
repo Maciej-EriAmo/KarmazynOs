@@ -80,6 +80,8 @@ Product userspace powinien iść **wyżej** (zadania, widoki, gość), a nie kop
 
 **Reszta ma działać tak samo jak DB:** łączy się **szwami** z jądrem, co najwyżej jako minister — nigdy jako drugi król.
 
+**Uszczelnienie obejść:** [`SUBSTRATE_SEAL.md`](SUBSTRATE_SEAL.md) · env `KARMAZYN_SUBSTRATE_STRICT=1`.
+
 ```
 information = stabilization( H ∘ P ∘ A )     # wizja (README)
 prawo silnika (kod):  T = KIEDY · reach = CZY
