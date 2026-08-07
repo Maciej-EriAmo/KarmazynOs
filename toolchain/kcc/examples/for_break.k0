@@ -1,0 +1,24 @@
+// TB.3c / kcc 0.5 — for + break/continue smoke
+// sum 0..4 = 10; skip nothing; break path in second loop
+
+fn main() -> i32 {
+    let s: i64 = 0;
+    for (let i: i64 = 0; i < 5; i = i + 1) {
+        s = s + i;
+    }
+    // s == 10
+    let j: i64 = 0;
+    let t: i64 = 0;
+    while j < 20 {
+        j = j + 1;
+        if j < 3 {
+            continue;
+        }
+        if j > 5 {
+            break;
+        }
+        t = t + 1;
+    }
+    // t == 3 (j=3,4,5)
+    return s + t;
+}

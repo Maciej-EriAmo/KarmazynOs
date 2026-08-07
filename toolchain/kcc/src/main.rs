@@ -144,7 +144,7 @@ fn compile_c(c_path: &Path, bin: &Path) -> Result<(), String> {
 
 fn print_help() {
     println!(
-        "kcc 0.4 — Karmazyn own compiler (K0 → C99)
+        "kcc 0.5 — Karmazyn own compiler (K0 → C99)
 
 USAGE:
   kcc <file.k0> [-o out.c]
@@ -160,7 +160,8 @@ FLAGS:
 LANGUAGE:
   #include \"other.k0\"
   fixed arrays [T; N], a[i], array params
-  sem 0.4: undeclared, arity, no f64 %, type-unify, return-paths
+  for (init; cond; step) {{ }}  break;  continue;   (TB.3c / 0.5)
+  sem: undeclared, arity, no f64 %, type-unify, return-paths, break-in-loop
 
 POLICY:
   Own:     K0 frontend + codegen
@@ -267,5 +268,63 @@ fn main() -> i32 {
         let c = emit_c(&p, true).unwrap();
         assert!(c.contains("abort"));
         assert!(c.contains("stdlib.h"));
+    }
+
+    #[test]
+    fn for_loop_emits_c_for() {
+        let src = r#"
+fn main() -> i32 {
+    let s: i64 = 0;
+    for (let i: i64 = 0; i < 5; i = i + 1) {
+        s = s + i;
+    }
+    return s;
+}
+"#;
+        let p = parse(src).expect("parse for");
+        sem::check(&p).expect("sem for");
+        let c = emit_c(&p, false).expect("emit for");
+        assert!(c.contains("for ("), "expected C for: {c}");
+        assert!(c.contains("i ="), "step assign missing: {c}");
+        assert!(c.contains('+') || c.contains(" + "), "increment missing: {c}");
+    }
+
+    #[test]
+    fn break_continue_in_loop() {
+        let src = r#"
+fn main() -> i32 {
+    let s: i64 = 0;
+    let i: i64 = 0;
+    while i < 10 {
+        i = i + 1;
+        if i == 3 {
+            continue;
+        }
+        if i == 7 {
+            break;
+        }
+        s = s + i;
+    }
+    return s;
+}
+"#;
+        let p = parse(src).expect("parse");
+        sem::check(&p).expect("sem");
+        let c = emit_c(&p, false).expect("emit");
+        assert!(c.contains("break;"));
+        assert!(c.contains("continue;"));
+    }
+
+    #[test]
+    fn break_outside_loop_rejected() {
+        let src = r#"
+fn main() -> i32 {
+    break;
+    return 0;
+}
+"#;
+        let p = parse(src).unwrap();
+        let err = sem::check(&p).unwrap_err();
+        assert!(err.contains("break"), "{err}");
     }
 }

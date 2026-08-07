@@ -62,6 +62,15 @@ pub enum Stmt {
         cond: Expr,
         body: Block,
     },
+    /// C-style `for (init; cond; step) { body }` — init/step optional.
+    For {
+        init: Option<Box<Stmt>>,
+        cond: Option<Expr>,
+        step: Option<Box<Stmt>>,
+        body: Block,
+    },
+    Break,
+    Continue,
 }
 
 #[derive(Debug, Clone)]

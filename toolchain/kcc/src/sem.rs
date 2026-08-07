@@ -39,7 +39,7 @@ fn check_fn(f: &FnDef, fns: &HashMap<String, FnSig>) -> Result<(), String> {
         }
         locals.insert(n.clone(), t.clone());
     }
-    check_block(&f.body, &mut locals, fns, &f.name, &f.ret)?;
+    check_block(&f.body, &mut locals, fns, &f.name, &f.ret, 0)?;
     if !returns_on_all_paths(&f.body) {
         return Err(format!(
             "fn `{}`: not all control-flow paths return a value (return type `{}`)",
@@ -127,6 +127,7 @@ fn check_block(
     fns: &HashMap<String, FnSig>,
     fn_name: &str,
     ret_ty: &Type,
+    loop_depth: u32,
 ) -> Result<(), String> {
     // block-scoped: snapshot keys, restore after (simple shadowing ban for MVP)
     let snapshot: Vec<String> = locals.keys().cloned().collect();
@@ -238,9 +239,9 @@ fn check_block(
                         type_name(&ct)
                     ));
                 }
-                check_block(then_b, locals, fns, fn_name, ret_ty)?;
+                check_block(then_b, locals, fns, fn_name, ret_ty, loop_depth)?;
                 if let Some(eb) = else_b {
-                    check_block(eb, locals, fns, fn_name, ret_ty)?;
+                    check_block(eb, locals, fns, fn_name, ret_ty, loop_depth)?;
                 }
             }
             Stmt::While { cond, body } => {
@@ -252,7 +253,64 @@ fn check_block(
                         type_name(&ct)
                     ));
                 }
-                check_block(body, locals, fns, fn_name, ret_ty)?;
+                check_block(body, locals, fns, fn_name, ret_ty, loop_depth + 1)?;
+            }
+            Stmt::For {
+                init,
+                cond,
+                step,
+                body,
+            } => {
+                if let Some(ini) = init {
+                    // reuse match arms by wrapping as single-stmt block
+                    check_block(
+                        &Block {
+                            stmts: vec![(**ini).clone()],
+                        },
+                        locals,
+                        fns,
+                        fn_name,
+                        ret_ty,
+                        loop_depth,
+                    )?;
+                }
+                if let Some(c) = cond {
+                    check_expr(c, locals, fns, fn_name)?;
+                    let ct = expr_type(c, locals, fns)?;
+                    if !matches!(ct, Type::Bool | Type::I32 | Type::I64 | Type::F64) {
+                        return Err(format!(
+                            "fn `{fn_name}`: for condition has type `{}`",
+                            type_name(&ct)
+                        ));
+                    }
+                }
+                check_block(body, locals, fns, fn_name, ret_ty, loop_depth + 1)?;
+                if let Some(st) = step {
+                    check_block(
+                        &Block {
+                            stmts: vec![(**st).clone()],
+                        },
+                        locals,
+                        fns,
+                        fn_name,
+                        ret_ty,
+                        loop_depth + 1,
+                    )?;
+                }
+            }
+            Stmt::Break => {
+                if loop_depth == 0 {
+                    return Err(format!(
+                        "fn `{fn_name}`: `break` outside of loop"
+                    ));
+                }
+            }
+            Stmt::Continue => {
+                if loop_depth == 0 {
+                    return Err(format!(
+                        "fn `{fn_name}`: `continue` outside of loop"
+                    ));
+                }
             }
         }
     }

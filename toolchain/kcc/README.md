@@ -41,7 +41,7 @@ Gate (TB.1–TB.3 + 0.4 type-unify / return-paths):
 # → KCC_VERIFY_OK  (builds with --safe)
 ```
 
-## K0 language (0.4)
+## K0 language (0.5)
 
 - `fn name(a: ty, …) -> ty { … }`
 - types: `i32` `i64` `f64` `bool` · fixed arrays `[f64; 8]`

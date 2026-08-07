@@ -101,7 +101,8 @@ fn fn_proto(f: &FnDef) -> Result<String, String> {
 
 fn mangle_local(n: &str) -> String {
     match n {
-        "int" | "return" | "if" | "else" | "while" | "true" | "false" => format!("k0_{n}"),
+        "int" | "return" | "if" | "else" | "while" | "for" | "break" | "continue"
+        | "true" | "false" => format!("k0_{n}"),
         _ => n.to_string(),
     }
 }
@@ -229,6 +230,107 @@ fn emit_block(
                 writeln!(out, "{}while ({}) {{", pad, emit_expr(cond, ctx)?).unwrap();
                 emit_block(out, body, indent + 1, ctx)?;
                 writeln!(out, "{pad}}}").unwrap();
+            }
+            Stmt::For {
+                init,
+                cond,
+                step,
+                body,
+            } => {
+                // Emit as C for: for (init; cond; step) { body }
+                write!(out, "{pad}for (").unwrap();
+                if let Some(ini) = init {
+                    match ini.as_ref() {
+                        Stmt::Let { name, ty, init: iv } => {
+                            let t = match ty {
+                                Some(t) => t.clone(),
+                                None => {
+                                    let e = iv.as_ref().ok_or("for-init let needs init")?;
+                                    infer_type(e, &ctx.types)
+                                }
+                            };
+                            if matches!(t, Type::Array { .. }) {
+                                return Err("for-init array not supported".into());
+                            }
+                            let e = iv
+                                .as_ref()
+                                .ok_or("for-init scalar needs initializer")?;
+                            write!(
+                                out,
+                                "{} = {}",
+                                c_var_decl(name, &t)?,
+                                emit_expr(e, ctx)?
+                            )
+                            .unwrap();
+                            ctx.types.insert(name.clone(), t);
+                        }
+                        Stmt::Assign { name, value } => {
+                            write!(
+                                out,
+                                "{} = {}",
+                                mangle_local(name),
+                                emit_expr(value, ctx)?
+                            )
+                            .unwrap();
+                        }
+                        Stmt::IndexAssign { name, index, value } => {
+                            write!(
+                                out,
+                                "{}[{}] = {}",
+                                mangle_local(name),
+                                emit_expr(index, ctx)?,
+                                emit_expr(value, ctx)?
+                            )
+                            .unwrap();
+                        }
+                        other => {
+                            return Err(format!("unsupported for-init form: {other:?}"));
+                        }
+                    }
+                }
+                write!(out, "; ").unwrap();
+                if let Some(c) = cond {
+                    write!(out, "{}", emit_expr(c, ctx)?).unwrap();
+                }
+                write!(out, "; ").unwrap();
+                if let Some(st) = step {
+                    match st.as_ref() {
+                        Stmt::Assign { name, value } => {
+                            write!(
+                                out,
+                                "{} = {}",
+                                mangle_local(name),
+                                emit_expr(value, ctx)?
+                            )
+                            .unwrap();
+                        }
+                        Stmt::IndexAssign { name, index, value } => {
+                            write!(
+                                out,
+                                "{}[{}] = {}",
+                                mangle_local(name),
+                                emit_expr(index, ctx)?,
+                                emit_expr(value, ctx)?
+                            )
+                            .unwrap();
+                        }
+                        Stmt::Expr(e) => {
+                            write!(out, "{}", emit_expr(e, ctx)?).unwrap();
+                        }
+                        other => {
+                            return Err(format!("unsupported for-step form: {other:?}"));
+                        }
+                    }
+                }
+                writeln!(out, ") {{").unwrap();
+                emit_block(out, body, indent + 1, ctx)?;
+                writeln!(out, "{pad}}}").unwrap();
+            }
+            Stmt::Break => {
+                writeln!(out, "{pad}break;").unwrap();
+            }
+            Stmt::Continue => {
+                writeln!(out, "{pad}continue;").unwrap();
             }
         }
     }

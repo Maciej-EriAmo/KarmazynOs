@@ -194,6 +194,17 @@ impl<'a> Parser<'a> {
                 let body = self.parse_block()?;
                 Ok(Stmt::While { cond, body })
             }
+            Tok::For => self.parse_for(),
+            Tok::Break => {
+                self.bump()?;
+                self.eat(&Tok::Semi)?;
+                Ok(Stmt::Break)
+            }
+            Tok::Continue => {
+                self.bump()?;
+                self.eat(&Tok::Semi)?;
+                Ok(Stmt::Continue)
+            }
             Tok::Ident(_) => {
                 let name = self.expect_ident()?;
                 // name[index] = value
@@ -253,6 +264,142 @@ impl<'a> Parser<'a> {
                 Ok(Stmt::Expr(e))
             }
         }
+    }
+
+    /// `for (init; cond; step) { body }` — empty parts allowed.
+    fn parse_for(&mut self) -> Result<Stmt, String> {
+        self.eat(&Tok::For)?;
+        self.eat(&Tok::LParen)?;
+        let init = if self.cur == Tok::Semi {
+            self.bump()?;
+            None
+        } else {
+            Some(Box::new(self.parse_for_init()?))
+        };
+        let cond = if self.cur == Tok::Semi {
+            self.bump()?;
+            None
+        } else {
+            let e = self.parse_expr()?;
+            self.eat(&Tok::Semi)?;
+            Some(e)
+        };
+        let step = if self.cur == Tok::RParen {
+            None
+        } else {
+            Some(Box::new(self.parse_for_step()?))
+        };
+        self.eat(&Tok::RParen)?;
+        let body = self.parse_block()?;
+        Ok(Stmt::For {
+            init,
+            cond,
+            step,
+            body,
+        })
+    }
+
+    fn parse_for_init(&mut self) -> Result<Stmt, String> {
+        // let …;  or  name = …;  or  name[i] = …;
+        match &self.cur {
+            Tok::Let => {
+                self.bump()?;
+                let name = self.expect_ident()?;
+                let ty = if self.cur == Tok::Colon {
+                    self.bump()?;
+                    Some(self.parse_type()?)
+                } else {
+                    None
+                };
+                let init = if self.cur == Tok::Assign {
+                    self.bump()?;
+                    Some(self.parse_expr()?)
+                } else if matches!(ty, Some(Type::Array { .. })) {
+                    None
+                } else {
+                    return Err(format!(
+                        "line {}: for-init let needs initializer",
+                        self.lx.line
+                    ));
+                };
+                self.eat(&Tok::Semi)?;
+                Ok(Stmt::Let { name, ty, init })
+            }
+            Tok::Ident(_) => {
+                let name = self.expect_ident()?;
+                if self.cur == Tok::LBracket {
+                    self.bump()?;
+                    let index = self.parse_expr()?;
+                    self.eat(&Tok::RBracket)?;
+                    self.eat(&Tok::Assign)?;
+                    let value = self.parse_expr()?;
+                    self.eat(&Tok::Semi)?;
+                    Ok(Stmt::IndexAssign {
+                        name,
+                        index,
+                        value,
+                    })
+                } else {
+                    self.eat(&Tok::Assign)?;
+                    let value = self.parse_expr()?;
+                    self.eat(&Tok::Semi)?;
+                    Ok(Stmt::Assign { name, value })
+                }
+            }
+            _ => Err(format!(
+                "line {}: for-init expected let or assignment, got {:?}",
+                self.lx.line, self.cur
+            )),
+        }
+    }
+
+    fn parse_for_step(&mut self) -> Result<Stmt, String> {
+        // name = expr  |  name[i] = expr  |  expr  (no required trailing ;)
+        let name = match &self.cur {
+            Tok::Ident(_) => self.expect_ident()?,
+            _ => {
+                let e = self.parse_expr()?;
+                return Ok(Stmt::Expr(e));
+            }
+        };
+        if self.cur == Tok::LBracket {
+            self.bump()?;
+            let index = self.parse_expr()?;
+            self.eat(&Tok::RBracket)?;
+            self.eat(&Tok::Assign)?;
+            let value = self.parse_expr()?;
+            return Ok(Stmt::IndexAssign {
+                name,
+                index,
+                value,
+            });
+        }
+        if self.cur == Tok::Assign {
+            self.bump()?;
+            let value = self.parse_expr()?;
+            return Ok(Stmt::Assign { name, value });
+        }
+        // bare call or ident as step expr
+        let expr = if self.cur == Tok::LParen {
+            self.bump()?;
+            let mut args = Vec::new();
+            if self.cur != Tok::RParen {
+                loop {
+                    args.push(self.parse_expr()?);
+                    if self.cur == Tok::Comma {
+                        self.bump()?;
+                        continue;
+                    }
+                    break;
+                }
+            }
+            self.eat(&Tok::RParen)?;
+            Expr::Call { name, args }
+        } else {
+            Expr::Ident(name)
+        };
+        let expr = self.finish_expr(expr)?;
+        Ok(Stmt::Expr(expr))
     }
 
     fn finish_expr(&mut self, left: Expr) -> Result<Expr, String> {

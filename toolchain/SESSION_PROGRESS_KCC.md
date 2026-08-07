@@ -2,7 +2,7 @@
 # SESSION_PROGRESS — kcc / Tor B (wlasny kompilator)
 
 **Data:** 2026-08-06  
-**Repo:** KarmazynOs `main` (kcc **0.4** / TB.2f + **TB.3b** golden reach)
+**Repo:** KarmazynOs `main` (kcc **0.5** / TB.3c for+break + TB.2f/TB.3b golden reach)
 
 ## Polityka
 - Kompilator = **wlasny** (`kcc`, jezyk K0 → C99)
