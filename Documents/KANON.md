@@ -39,10 +39,31 @@ Nie zastępuje `README.md` / `philosophy.pl.md` / `BOOTSTRAP_STAGES.pl.md` — *
 **Zasady wynikające z modelu:**
 
 1. **Substrat rządzi** — reguły T×reach są w jednym miejscu; języki ich nie redefiniują.  
-2. **Języki są cienkie** — w tym „pisanie w Rustcie” *poza* crate jądra (np. tool) też jest warstwą, nie drugim silnikiem.  
-3. **CPython nie jest jądrem** i **nie konkuruje z Rustem jądra** — to gość/host UI.  
-4. **Nie budujemy „systemu w Pythonie” ani „systemu w Julii”** — budujemy **klientów substratu**.  
-5. **Tor A/B** to sposoby *dostarczenia i kompilacji* wokół silnika, nie zamienniki silnika.
+2. **Języki / userspace są cienkie** — ten sam status: **klient silnika**, nie współwłaściciel prawa.  
+3. **Atomy i bąble są niżej** — żyją **w substracie (jądro)**. Userspace ich **nie „widzi”** jako swojego modelu świata; widzi efekt (API produktu, I/O, skrypt).  
+4. **CPython / Lua / Studio / shell-app** — klienci; nie konkurują z jądrem.  
+5. **Tor A/B** — dostarczenie i kompilacja wokół silnika, nie zamienniki silnika.
+
+### Userspace = klient (klasycznie)
+
+```
+  userspace / narzędzia     nie trzymają prawdy o A/B
+       │  wołają (opcjonalnie) fasadę / API
+       │  NIE są właścicielem atomów i bąbli
+  ───────┼───────────────────────────────────
+  jądro / substrat          ATOMY · BĄBLE · T · reach
+                            tu jest model; tu GC; tu prawo
+```
+
+| Poziom | Widzi | Nie jest |
+|--------|--------|----------|
+| **Userspace** | to, co warstwa produktu/API wystawi (ekran, plik, wynik skryptu) | magazynem atomów/bąbli |
+| **Jądro (substrat)** | A, bąble, roots, T, reach | „aplikacją” |
+
+**Shell / `ksub_*` / diagnostic REPL** — to **uprzywilejowany operator jądra** (okno serwisowe), nie wzorzec „każdy userspace mówi atom/bind”.  
+Product userspace powinien iść **wyżej** (zadania, widoki, gość), a nie kopiować modelu jądra do każdego skryptu.
+
+**Wniosek:** userspace jest **takim samym klientem substratu** jak inna cienka warstwa — tylko z innej strony (UX). Nie ma osobnego „userspace Store”.
 
 ```
 information = stabilization( H ∘ P ∘ A )     # wizja (README)
