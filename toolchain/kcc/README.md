@@ -34,12 +34,14 @@ cargo test --release
 .\target\release\kcc.exe examples\store_mini.k0 --cc -o ..\..\out\kcc\store_mini
 ```
 
-Gate (TB.1–TB.3d + 0.4 type-unify / return-paths):
+Gate (TB.1–TB.3d+ + TB.4 Phase 0 seed; local full gate):
 
 ```powershell
 .\toolchain\verify_kcc.ps1
-# → KCC_VERIFY_OK  (builds with --safe)
+# → KCC_VERIFY_OK  (builds with --safe; structs + tok_kind)
 ```
+
+CI `gate-product` also runs `cargo test` on `toolchain/kcc` (no gcc link of .k0 on Linux yet).
 
 ## K0 language (0.6.1)
 

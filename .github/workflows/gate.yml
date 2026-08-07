@@ -21,6 +21,9 @@ jobs:
           cargo test --manifest-path native/karmazyn_slab/Cargo.toml
           cargo test --manifest-path native/karmazyn_substrate/Cargo.toml
 
+      - name: cargo test (kcc Tor B — unit/sem/codegen)
+        run: cargo test --manifest-path toolchain/kcc/Cargo.toml
+
       - name: cargo build release
         run: cargo build --release --manifest-path native/karmazyn_substrate/Cargo.toml
 

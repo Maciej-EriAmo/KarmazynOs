@@ -1,8 +1,8 @@
 # SESSION_CONTINUE — KarmazynOs (kontynuacja)
 
 **Data:** 2026-08-07  
-**Repo:** `main` (kcc **0.6.1**, TB.4 Phase 0, Tor A `ksub_client`)  
-**Holon:** projekt `[Karmazyn]` — boot: `python agent_boot.py --project Karmazyn`
+**Repo:** `main` (kcc **0.6.1**, TB.4 Phase 0, Tor A `ksub_client`; docs/CI parity tidy)  
+**Holon:** projekt `[Karmazyn]` — boot: `cd C:\Users\drwis\Karmin_Ae` → `python agent_boot.py --project Karmazyn`
 
 ---
 

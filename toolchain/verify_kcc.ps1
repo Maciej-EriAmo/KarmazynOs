@@ -1,5 +1,6 @@
-# Own-compiler gate (Tor B TB.1-TB.3):
-#   stage0 rustc builds kcc; kcc builds critical .k0; golden law vs slab.
+# Own-compiler gate (Tor B TB.1–TB.3d+ + TB.4 Phase 0 seed):
+#   stage0 rustc builds kcc; kcc builds critical .k0; golden law vs slab;
+#   structs/nested/return-struct; tok_kind self-host seed.
 # Foreign: rustc (stage0), gcc (link), optional python for table golden.
 # Own: kcc frontend+codegen + .k0 sources.
 #
@@ -16,7 +17,7 @@ $Out = Join-Path $Root "out\kcc"
 $Slab = Join-Path $Root "native\karmazyn_slab"
 New-Item -ItemType Directory -Force -Path $Out | Out-Null
 
-Write-Host "=== kcc verify TB.1-TB.3 (own compiler) ===" -ForegroundColor Cyan
+Write-Host "=== kcc verify TB.1-TB.3d+ / TB.4 Phase0 (own compiler) ===" -ForegroundColor Cyan
 Write-Host "kcc crate: $Kcc"
 
 Push-Location $Kcc
@@ -119,5 +120,5 @@ if ($pyCmd) {
 
 Write-Host ""
 Write-Host "=== KCC_VERIFY_OK ===" -ForegroundColor Green
-Write-Host "Own: kcc + .k0. Stage0: rustc (kcc+slab tests). Link: gcc. Golden: TB.3 thermal + TB.3b reach."
+Write-Host "Own: kcc + .k0. Stage0: rustc (kcc+slab tests). Link: gcc. Golden: TB.3/3b + structs + TB.4 P0."
 exit 0

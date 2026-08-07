@@ -173,7 +173,7 @@ Wyższe warstwy (Cynober / KarminQL / Lua / analityka) *na* fundamencie — nie 
 | Stage 1 | A | Runtime: jądro/prawo Store bez Pythona | ✅ DONE |
 | Stage 2 (shell+snap) | A | Runtime: używalność bez Pythona | ⚡ milestone + `stage2_verify` |
 | `bootstrap_from_scratch` | A | Build na **host** rustc, bez Pythona | ✅ starter (+ `.sh`, prefix) |
-| Gentoo stage1–3 / LFS toolchain→rebuild | B | **Własne narzędzia** → kompilacja **ważnych bibliotek** | 🚧 **kcc** TB.1 (`thermal.k0`); self-host TB.4 ❌ |
+| Gentoo stage1–3 / LFS toolchain→rebuild | B | **Własne narzędzia** → kompilacja **ważnych bibliotek** | 🚧 **kcc** 0.6.1 (TB.3d+); self-host TB.4 **Phase 0** |
 
 **Dzisiaj (2026-08-06):**  
 Tor A: Stage1 + shell/`KSUB_SNAP`.  

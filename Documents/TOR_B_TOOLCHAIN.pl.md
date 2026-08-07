@@ -90,4 +90,4 @@ cd C:\Users\drwis\KarmazynOs
 
 ---
 
-*2026-08-06: TB.0–TB.3b + TB.2b–f — store_mini T×reach; kcc 0.4; golden reach A–D ↔ slab.*
+*2026-08-07: TB.0–TB.3d+ (kcc **0.6.1** nested+return-struct) + TB.4 **Phase 0** (`kcc_selfhost/tok_kind.k0`); golden TB.3/3b intact.*

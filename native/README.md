@@ -25,8 +25,9 @@ native/
     src/{lib,atom,store,ffi,slab}.rs
     examples/stage1_bootstrap.rs  # Stage 1 gate (pure Rust)
   karmazyn_shell/            # Stage 2 MVP — interactive shell (no Python)
-  c_smoke/stage1_c_smoke.c   # Stage 1 C ABI smoke
-  stage1_verify.ps1          # Stage 1 full gate (slab+substrate+C, no Python)
+  c_smoke/stage1_c_smoke.c   # Stage 1 C ABI smoke (orphan/root/TOMB)
+  c_smoke/ksub_client.c      # Tor A thin C client (value/T/bind/lookup/unbind)
+  stage1_verify.ps1          # Stage 1 full gate (slab+substrate+C clients, no Python)
   karmazyn_substrate_rs/     # PyO3 extension (phase 4)
     Cargo.toml
     pyproject.toml           # maturin
@@ -202,15 +203,27 @@ Status / TODO: `Luneta2/postępy.md` § „Substrat Rust ↔ Luneta / JS”.
 
 ## C ABI (stable seam)
 
+Header: `karmazyn_substrate/include/karmazyn_substrate.h` (matches `ffi.rs`).
+
 | Symbol | Role |
 |--------|------|
 | `ksub_version` | ABI string |
 | `ksub_store_new` / `ksub_store_free` | Store lifetime |
 | `ksub_atom_new` / `ksub_has_atom` / `ksub_delete_atom` / `ksub_heat` | Atoms |
+| `ksub_atom_set_value` / `ksub_atom_value` | Opaque value token |
+| `ksub_atom_t` / `ksub_atom_set_t` / `ksub_atom_is_dead` | Thermal / TOMB |
+| `ksub_atom_upsert` / `ksub_atom_ids` | Upsert + id listing |
 | `ksub_bubble_new` / `ksub_bind` / `ksub_unbind` / `ksub_lookup` | Bubbles |
 | `ksub_set_root` / `ksub_unset_root` | Roots |
 | `ksub_tick` / `ksub_settle` / `ksub_stats` | Thermodynamics + GC |
 | `ksub_register_env_of` / `ksub_register_extra_reach` | Language hooks |
+| `ksub_string_free` | Free host-owned C strings from substrate |
+
+Clients: `c_smoke/stage1_c_smoke.c`, `c_smoke/ksub_client.c` (via `stage1_verify.ps1`).
+
+**Link tip (MinGW/Windows):** prefer linking the built DLL path directly  
+(`…/karmazyn_substrate.dll`) rather than `-lkarmazyn_substrate`, so a stale  
+`lib*.dll.a` cannot hide new exports.
 
 Language payloads are **opaque `u64` tokens** (e.g. Python `id(obj)`).  
 The core never interprets Lua/Python values — only calls host hooks.
