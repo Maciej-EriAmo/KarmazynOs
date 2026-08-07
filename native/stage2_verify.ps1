@@ -83,9 +83,33 @@ try {
     & $exe -e "load $Snap" -e "save $Snap2" -e quit
     if ($LASTEXITCODE -ne 0) { throw "double save failed" }
     if (-not (Test-Path $Snap2)) { throw "roundtrip snap missing" }
+
+    Write-Host "`n[7] assert / list / unbind / set_t (shell 0.3.1)"
+    & $exe `
+        -e "atom var a 80" `
+        -e "bubble r" `
+        -e "root 0" `
+        -e "bind 0 name 0" `
+        -e "assert has 0" `
+        -e "assert lookup 0 name 0" `
+        -e "assert t 0 ge 70" `
+        -e "list" `
+        -e "set_t 0 40" `
+        -e "assert t 0 lt 50" `
+        -e "unbind 0 name" `
+        -e "assert nohas 99" `
+        -e quit
+    if ($LASTEXITCODE -ne 0) { throw "assert/list batch failed" }
+
+    Write-Host "`n[8] assert failure must exit non-zero"
+    & $exe -e "atom var z 10" -e "assert has 99" -e quit
+    if ($LASTEXITCODE -eq 0) {
+        throw "expected non-zero exit on failed assert"
+    }
+    Write-Host "  ok (exit $LASTEXITCODE)"
 } finally { Pop-Location }
 
 Write-Host "`n=== STAGE2_VERIFY_OK ===" -ForegroundColor Green
-Write-Host "Shell: $exe"
+Write-Host "Shell: $exe (0.3.1+ assert/list/unbind)"
 Write-Host "Snap:  $Snap"
 exit 0

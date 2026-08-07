@@ -11,7 +11,7 @@
 | # | Co | Status |
 |---|-----|--------|
 | **1** | **Stop / konsolidacja** — bramki zielone, nie gonić TB.4 P4 | ✅ **teraz** |
-| **2** | **Tor A używalność** — shell polish / komendy Stage2 | następna praca (gdy ruszamy) |
+| **2** | **Tor A używalność** — shell polish Stage2 | ✅ **0.3.1** assert/list/unbind/… |
 | **3** | CI tarcza — `gate-product` + lokalny `verify_kcc` | trzymać, nie rozbudowywać na siłę |
 | **4** | TB.4 Phase 4 self-host bootstrap | **odłożone** (świadomie, niski ROI teraz) |
 | **5** | Product (Starlink / SDL / …) | poza gate’ami A/B |
@@ -26,7 +26,7 @@
 |-----|------|
 | **B kcc 0.6.1** | structs nested + return-struct; `struct_point` exit 50 |
 | **B TB.4 P0–3** | lex → parse → IR/sem/emit C buffer/eval (`emit_mini`) |
-| **A** | `ksub_client` + stage1; header/`string_free`; CI testuje kcc units |
+| **A** | `ksub_client` + stage1; **shell 0.3.1** (assert/list/val/unbind); CI kcc units |
 | **Docs/CI parity** | banery, TOR_B, native README |
 
 Tip: `5571dcc` na origin.
@@ -51,7 +51,7 @@ cd C:\Users\drwis\Karmin_Ae
 python agent_boot.py --project Karmazyn
 
 cd C:\Users\drwis\KarmazynOs
-# domyślnie: shell polish (priorytet 2), NIE TB.4 P4
+# shell 0.3.1 green; next: więcej komend / product / stop
 .\native\stage2_verify.ps1
 ```
 
