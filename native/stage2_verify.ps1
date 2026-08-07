@@ -107,9 +107,31 @@ try {
         throw "expected non-zero exit on failed assert"
     }
     Write-Host "  ok (exit $LASTEXITCODE)"
+
+    Write-Host "`n[9] bubbles/binds/info/upsert/assert stats (shell 0.3.2)"
+    & $exe `
+        -e "atom var p 50" `
+        -e "bubble root" `
+        -e "root 0" `
+        -e "bubble child 0" `
+        -e "bind 1 x 0" `
+        -e "assert root 0" `
+        -e "assert noroot 1" `
+        -e "assert lookup 1 x 0" `
+        -e "binds 1" `
+        -e "bubbles" `
+        -e "roots" `
+        -e "info 0" `
+        -e "upsert 7 var fixed 30 5" `
+        -e "assert has 7" `
+        -e "assert val 7 5" `
+        -e "assert stats total ge 2" `
+        -e "assert stats bubbles eq 2" `
+        -e quit
+    if ($LASTEXITCODE -ne 0) { throw "bubbles/info batch failed" }
 } finally { Pop-Location }
 
 Write-Host "`n=== STAGE2_VERIFY_OK ===" -ForegroundColor Green
-Write-Host "Shell: $exe (0.3.1+ assert/list/unbind)"
+Write-Host "Shell: $exe (0.3.2+ bubbles/binds/assert stats)"
 Write-Host "Snap:  $Snap"
 exit 0

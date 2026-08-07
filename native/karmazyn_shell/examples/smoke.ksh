@@ -12,6 +12,13 @@ assert lookup 0 hi 0
 assert nodead 0
 assert t 0 gt 0
 list
+bubbles
+roots
+binds 0
+info 0
+assert val 0 99
+assert stats total eq 1
+assert root 0
 stats
 save out/shell_smoke.ksub
 load out/shell_smoke.ksub

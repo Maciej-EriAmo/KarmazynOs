@@ -5,8 +5,9 @@
 //!   cargo run --release -- -e "atom var x 50" -e stats -e quit
 //!   cargo run --release -- examples/smoke.ksh
 //!
-//! Commands: help | version | stats | atom | heat | tick | settle | bubble | root |
-//!           unroot | bind | unbind | lookup | has | t | set_t | dead | del |
+//! Commands: help | version | stats | atom | upsert | heat | tick | settle |
+//!           bubble | bubbles | roots | binds | info | root | unroot |
+//!           bind | unbind | lookup | has | t | set_t | dead | del |
 //!           val | setval | list | assert | echo | save | load | quit
 
 use karmazyn_substrate::{state_for_t, Store, T_INIT};
@@ -193,6 +194,55 @@ fn dispatch(s: &Store, line: &str) -> Outcome {
                 s.get_atom_t(id).unwrap_or(-1.0)
             );
         }
+        "upsert" => {
+            // upsert <aid> <s> <e> [t] [token]
+            if parts.len() < 4 {
+                println!("usage: upsert <aid> <s> <e> [t] [token]");
+                return Outcome::Err;
+            }
+            let Ok(aid) = parts[1].parse::<u32>() else {
+                println!("bad aid");
+                return Outcome::Err;
+            };
+            let t = parts
+                .get(4)
+                .and_then(|x| x.parse::<f64>().ok())
+                .unwrap_or(T_INIT);
+            let tok = parts
+                .get(5)
+                .and_then(|x| x.parse::<u64>().ok())
+                .unwrap_or(0);
+            if s.atom_upsert(aid, parts[2], parts[3], t, tok) {
+                println!(
+                    "upsert aid={aid} t={t:.3} token={tok} state={}",
+                    s.get_atom_t(aid).map(state_for_t).unwrap_or("?")
+                );
+            } else {
+                println!("upsert failed");
+                return Outcome::Err;
+            }
+        }
+        "info" => {
+            let Some(id) = parts.get(1).and_then(|x| x.parse::<u32>().ok()) else {
+                println!("usage: info <aid>");
+                return Outcome::Err;
+            };
+            match s.atom_se(id) {
+                Some((ss, ee)) => {
+                    let t = s.get_atom_t(id).unwrap_or(-1.0);
+                    let st = s.get_atom_t(id).map(state_for_t).unwrap_or("?");
+                    let dead = s.atom_is_dead(id).unwrap_or(false);
+                    let tok = s.atom_value_token(id).unwrap_or(0);
+                    println!(
+                        "aid={id} s={ss} e={ee} t={t:.3} state={st} dead={dead} token={tok}"
+                    );
+                }
+                None => {
+                    println!("no atom {id}");
+                    return Outcome::Err;
+                }
+            }
+        }
         "heat" => {
             let Some(id) = parts.get(1).and_then(|x| x.parse::<u32>().ok()) else {
                 println!("usage: heat <aid>");
@@ -230,9 +280,71 @@ fn dispatch(s: &Store, line: &str) -> Outcome {
             println!("settle {n}");
         }
         "bubble" => {
+            // bubble [label] [parent_bid]
             let label = parts.get(1).copied().unwrap_or("b");
-            let bid = s.bubble_new(label, None);
-            println!("bid={bid}");
+            let parent = parts.get(2).and_then(|x| x.parse::<u32>().ok());
+            if parts.get(2).is_some() && parent.is_none() {
+                println!("usage: bubble [label] [parent_bid]");
+                return Outcome::Err;
+            }
+            let bid = s.bubble_new(label, parent);
+            match parent {
+                Some(p) => println!("bid={bid} parent={p}"),
+                None => println!("bid={bid}"),
+            }
+        }
+        "bubbles" | "listb" => {
+            let mut ids = s.bubble_ids();
+            ids.sort_unstable();
+            if ids.is_empty() {
+                println!("(no bubbles)");
+            } else {
+                for bid in ids {
+                    let label = s.bubble_label(bid).unwrap_or_else(|| "?".into());
+                    let parent = match s.bubble_parent(bid) {
+                        Some(Some(p)) => format!("{p}"),
+                        Some(None) => "-".into(),
+                        None => "?".into(),
+                    };
+                    let root = if s.is_root(bid) { "root" } else { "" };
+                    let nbind = s
+                        .bubble_bindings(bid)
+                        .map(|b| b.len())
+                        .unwrap_or(0);
+                    println!(
+                        "bid={bid} label={label} parent={parent} binds={nbind} {root}"
+                    );
+                }
+            }
+        }
+        "roots" => {
+            let roots = s.root_ids();
+            if roots.is_empty() {
+                println!("(no roots)");
+            } else {
+                for bid in roots {
+                    let label = s.bubble_label(bid).unwrap_or_else(|| "?".into());
+                    println!("root bid={bid} label={label}");
+                }
+            }
+        }
+        "binds" => {
+            let Some(bid) = parts.get(1).and_then(|x| x.parse::<u32>().ok()) else {
+                println!("usage: binds <bid>");
+                return Outcome::Err;
+            };
+            match s.bubble_bindings(bid) {
+                None => {
+                    println!("no bubble {bid}");
+                    return Outcome::Err;
+                }
+                Some(v) if v.is_empty() => println!("(no bindings)"),
+                Some(v) => {
+                    for (name, aid) in v {
+                        println!("{name} → {aid}");
+                    }
+                }
+            }
         }
         "root" => {
             let Some(bid) = parts.get(1).and_then(|x| x.parse::<u32>().ok()) else {
@@ -404,7 +516,8 @@ fn dispatch(s: &Store, line: &str) -> Outcome {
             }
         }
         "list" | "atoms" | "ls" => {
-            let ids = s.atom_ids();
+            let mut ids = s.atom_ids();
+            ids.sort_unstable();
             if ids.is_empty() {
                 println!("(no atoms)");
             } else {
@@ -412,7 +525,11 @@ fn dispatch(s: &Store, line: &str) -> Outcome {
                     let t = s.get_atom_t(id).unwrap_or(-1.0);
                     let st = s.get_atom_t(id).map(state_for_t).unwrap_or("?");
                     let dead = s.atom_is_dead(id).unwrap_or(false);
-                    println!("aid={id} t={t:.3} state={st} dead={dead}");
+                    let se = s
+                        .atom_se(id)
+                        .map(|(a, b)| format!("{a}/{b}"))
+                        .unwrap_or_else(|| "?".into());
+                    println!("aid={id} {se} t={t:.3} state={st} dead={dead}");
                 }
             }
         }
@@ -429,9 +546,13 @@ fn dispatch(s: &Store, line: &str) -> Outcome {
             //   assert dead <aid>
             //   assert nodead <aid>
             //   assert t <aid> <op> <f64>   op: eq|gt|lt|ge|le
+            //   assert val <aid> <u64>
+            //   assert stats <field> <op> <n>  field: total|alive|dead|bubbles|reaped|…
+            //   assert root <bid>
+            //   assert noroot <bid>
             if parts.len() < 2 {
                 println!(
-                    "usage: assert has|nohas|dead|nodead|lookup|t …"
+                    "usage: assert has|nohas|dead|nodead|lookup|t|val|stats|root|noroot …"
                 );
                 return Outcome::Err;
             }
@@ -509,6 +630,79 @@ fn dispatch(s: &Store, line: &str) -> Outcome {
                         },
                     }
                 }
+                "val" | "token" => {
+                    if parts.len() < 4 {
+                        println!("usage: assert val <aid> <u64>");
+                        return Outcome::Err;
+                    }
+                    let Some(id) = parts.get(2).and_then(|x| x.parse::<u32>().ok()) else {
+                        println!("bad aid");
+                        return Outcome::Err;
+                    };
+                    let Some(want) = parts.get(3).and_then(|x| x.parse::<u64>().ok()) else {
+                        println!("bad token");
+                        return Outcome::Err;
+                    };
+                    s.atom_value_token(id) == Some(want)
+                }
+                "stats" => {
+                    if parts.len() < 5 {
+                        println!(
+                            "usage: assert stats <field> eq|gt|lt|ge|le <n>"
+                        );
+                        return Outcome::Err;
+                    }
+                    let field = parts[2].to_ascii_lowercase();
+                    let op = parts[3].to_ascii_lowercase();
+                    let Some(rhs) = parts.get(4).and_then(|x| x.parse::<u64>().ok()) else {
+                        println!("bad n");
+                        return Outcome::Err;
+                    };
+                    let st = s.stats();
+                    let lhs: u64 = match field.as_str() {
+                        "total" => st.total as u64,
+                        "hot" => st.hot as u64,
+                        "warm" => st.warm as u64,
+                        "cold" => st.cold as u64,
+                        "tomb" => st.tomb as u64,
+                        "alive" => st.alive as u64,
+                        "dead" => st.dead as u64,
+                        "reaped" => st.reaped,
+                        "retained_tomb" | "retained" => st.retained_tomb as u64,
+                        "bubbles" => st.bubbles as u64,
+                        _ => {
+                            println!(
+                                "assert stats: field total|hot|warm|cold|tomb|alive|dead|reaped|retained|bubbles"
+                            );
+                            return Outcome::Err;
+                        }
+                    };
+                    match op.as_str() {
+                        "eq" | "==" => lhs == rhs,
+                        "gt" | ">" => lhs > rhs,
+                        "lt" | "<" => lhs < rhs,
+                        "ge" | ">=" => lhs >= rhs,
+                        "le" | "<=" => lhs <= rhs,
+                        _ => {
+                            println!("assert stats: bad op");
+                            return Outcome::Err;
+                        }
+                    }
+                }
+                "root" => {
+                    let Some(bid) = parts.get(2).and_then(|x| x.parse::<u32>().ok()) else {
+                        println!("usage: assert root <bid>");
+                        return Outcome::Err;
+                    };
+                    s.is_root(bid)
+                }
+                "noroot" => {
+                    let Some(bid) = parts.get(2).and_then(|x| x.parse::<u32>().ok()) else {
+                        println!("usage: assert noroot <bid>");
+                        return Outcome::Err;
+                    };
+                    !s.is_root(bid)
+                }
                 other => {
                     println!("assert: unknown check `{other}`");
                     return Outcome::Err;
@@ -534,23 +728,28 @@ fn print_help() {
         "commands:
   version                       shell version
   stats                         store counters
-  list | atoms                  list atom ids + T/state
+  list | atoms                  list atoms (s/e, T, state)
+  bubbles | listb               list bubbles
+  roots                         list root bubble ids
+  binds <bid>                   list bindings in bubble
+  info <aid>                    atom s/e/t/token
   atom <s> <e> [t]              create atom (default t=T_INIT)
+  upsert <aid> <s> <e> [t] [tok]  create/update fixed id
   heat <aid>                    heat atom
   set_t <aid> <t>               set temperature
   tick [n]                      one tick or settle n
   settle <n>                    n ticks
-  bubble [label]                new bubble
+  bubble [label] [parent]       new bubble (optional parent)
   root <bid> / unroot <bid>     root set
   bind <bid> <name> <aid>       bind name → atom
   unbind <bid> <name>           remove binding
-  lookup <bid> <name>           resolve binding
+  lookup <bid> <name>           resolve binding (parent chain)
   has <aid> / t <aid> / dead <aid>
   del <aid>                     delete atom
-  val <aid> / setval <aid> <u64>  opaque value token
-  assert has|nohas|dead|nodead|lookup|t …
-  echo <text>                   print rest of line
-  save <path> / load <path>     KSUB_SNAP v1 persist (no Python)
+  val <aid> / setval <aid> <u64>
+  assert has|nohas|dead|nodead|lookup|t|val|stats|root|noroot …
+  echo <text>
+  save <path> / load <path>     KSUB_SNAP v1 (no Python)
   help | quit
 
 batch: non-zero exit if a command fails (assert/save/bind/…)"

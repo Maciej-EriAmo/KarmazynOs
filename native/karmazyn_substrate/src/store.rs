@@ -453,6 +453,46 @@ impl Store {
     pub fn atom_count(&self) -> usize {
         self.lock().atoms.len()
     }
+
+    /// Atom labels (S, E) if present.
+    pub fn atom_se(&self, aid: AtomId) -> Option<(String, String)> {
+        self.lock()
+            .atoms
+            .get(&aid)
+            .map(|a| (a.s.clone(), a.e.clone()))
+    }
+
+    pub fn bubble_ids(&self) -> Vec<BubbleId> {
+        self.lock().bubbles.keys().copied().collect()
+    }
+
+    pub fn bubble_label(&self, bid: BubbleId) -> Option<String> {
+        self.lock().bubbles.get(&bid).map(|b| b.label.clone())
+    }
+
+    pub fn bubble_parent(&self, bid: BubbleId) -> Option<Option<BubbleId>> {
+        self.lock().bubbles.get(&bid).map(|b| b.parent)
+    }
+
+    pub fn bubble_bindings(&self, bid: BubbleId) -> Option<Vec<(String, AtomId)>> {
+        self.lock().bubbles.get(&bid).map(|b| {
+            let mut v: Vec<_> = b
+                .bindings
+                .iter()
+                .map(|(n, a)| (n.clone(), *a))
+                .collect();
+            v.sort_by(|a, b| a.0.cmp(&b.0));
+            v
+        })
+    }
+
+    pub fn root_ids(&self) -> Vec<BubbleId> {
+        self.lock().roots.clone()
+    }
+
+    pub fn is_root(&self, bid: BubbleId) -> bool {
+        self.lock().roots.contains(&bid)
+    }
 }
 
 #[cfg(test)]
