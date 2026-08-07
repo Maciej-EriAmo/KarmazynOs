@@ -61,7 +61,8 @@ cd C:\Users\drwis\KarmazynOs
 | **TB.2f** | kcc 0.4: type-unify (let/assign/call/return) + return-path coverage | ✅ |
 | **TB.3** | Golden `k0_state_code` ↔ `state_for_t` (slab + python) | ✅ |
 | **TB.3b** | Golden store_mini reach A–D ↔ `SlabStore` (decay 0.92, settle 80/4) | ✅ |
-| **TB.3c** | kcc 0.5: or + reak/continue | done |
+| **TB.3c** | kcc 0.5: for + break/continue | ✅ |
+| **TB.3d** | kcc 0.6: struct + field access/assign + by-value params | ✅ |
 | **TB.4** | Self-host: `kcc` w K0 (kcc kompiluje siebie) | ❌ daleko |
 | **TB.5** | Własny backend (bez gcc) — opcjonalnie | ❌ |
 

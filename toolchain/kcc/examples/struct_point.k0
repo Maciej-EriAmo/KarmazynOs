@@ -1,0 +1,21 @@
+// TB.3d / kcc 0.6 — struct define + field access/assign + whole-struct copy
+// exit: 32  ((10+2)+20 after copy)
+
+struct Point {
+    x: i64
+    y: i64
+}
+
+fn sum_xy(p: Point) -> i64 {
+    return p.x + p.y;
+}
+
+fn main() -> i32 {
+    let a: Point;
+    a.x = 10;
+    a.y = 20;
+    let b: Point;
+    b = a;
+    b.x = b.x + 2;
+    return sum_xy(b);
+}

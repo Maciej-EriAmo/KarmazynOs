@@ -144,7 +144,7 @@ fn compile_c(c_path: &Path, bin: &Path) -> Result<(), String> {
 
 fn print_help() {
     println!(
-        "kcc 0.5 — Karmazyn own compiler (K0 → C99)
+        "kcc 0.6 — Karmazyn own compiler (K0 → C99)
 
 USAGE:
   kcc <file.k0> [-o out.c]
@@ -161,7 +161,8 @@ LANGUAGE:
   #include \"other.k0\"
   fixed arrays [T; N], a[i], array params
   for (init; cond; step) {{ }}  break;  continue;   (TB.3c / 0.5)
-  sem: undeclared, arity, no f64 %, type-unify, return-paths, break-in-loop
+  struct Name {{ field: ty … }}  p.f  p.f = e  (TB.3d / 0.6)
+  sem: undeclared, arity, no f64 %, type-unify, return-paths, break-in-loop, fields
 
 POLICY:
   Own:     K0 frontend + codegen
@@ -287,6 +288,43 @@ fn main() -> i32 {
         assert!(c.contains("for ("), "expected C for: {c}");
         assert!(c.contains("i ="), "step assign missing: {c}");
         assert!(c.contains('+') || c.contains(" + "), "increment missing: {c}");
+    }
+
+    #[test]
+    fn struct_define_field_access() {
+        let src = r#"
+struct Point {
+    x: i64
+    y: i64
+}
+fn main() -> i32 {
+    let p: Point;
+    p.x = 10;
+    p.y = 20;
+    return p.x + p.y;
+}
+"#;
+        let p = parse(src).expect("parse struct");
+        sem::check(&p).expect("sem struct");
+        let c = emit_c(&p, false).expect("emit struct");
+        assert!(c.contains("typedef struct Point"), "missing typedef: {c}");
+        assert!(c.contains("p.x"), "missing field: {c}");
+        assert!(c.contains("memset"), "struct zero-init: {c}");
+    }
+
+    #[test]
+    fn struct_rejects_unknown_field() {
+        let src = r#"
+struct Point { x: i64 }
+fn main() -> i32 {
+    let p: Point;
+    p.y = 1;
+    return 0;
+}
+"#;
+        let p = parse(src).unwrap();
+        let e = sem::check(&p).unwrap_err();
+        assert!(e.contains("no field") || e.contains("y"), "{e}");
     }
 
     #[test]

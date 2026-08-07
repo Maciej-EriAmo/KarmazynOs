@@ -22,19 +22,29 @@ pub fn emit_c(prog: &Program, safe: bool) -> Result<String, String> {
     }
     writeln!(out).unwrap();
 
+    // struct typedefs first (TB.3d)
     for item in &prog.items {
-        let Item::Fn(f) = item;
-        if matches!(f.ret, Type::Array { .. }) {
-            return Err(format!("fn {} cannot return array yet", f.name));
+        if let Item::Struct(s) = item {
+            emit_struct_typedef(&mut out, s)?;
+            writeln!(out).unwrap();
         }
-        writeln!(out, "{};", fn_proto(f)?).unwrap();
+    }
+
+    for item in &prog.items {
+        if let Item::Fn(f) = item {
+            if matches!(f.ret, Type::Array { .. } | Type::Named(_)) {
+                return Err(format!("fn {} cannot return array/struct yet", f.name));
+            }
+            writeln!(out, "{};", fn_proto(f)?).unwrap();
+        }
     }
     writeln!(out).unwrap();
 
     for item in &prog.items {
-        let Item::Fn(f) = item;
-        emit_fn(&mut out, f, safe)?;
-        writeln!(out).unwrap();
+        if let Item::Fn(f) = item {
+            emit_fn(&mut out, f, safe)?;
+            writeln!(out).unwrap();
+        }
     }
 
     if prog
@@ -47,12 +57,31 @@ pub fn emit_c(prog: &Program, safe: bool) -> Result<String, String> {
     Ok(out)
 }
 
-fn c_elem_type(t: &Type) -> Result<&'static str, String> {
+fn emit_struct_typedef(out: &mut String, s: &StructDef) -> Result<(), String> {
+    // typedef struct Name { ... } Name;
+    writeln!(out, "typedef struct {} {{", s.name).unwrap();
+    for (fname, fty) in &s.fields {
+        match fty {
+            Type::Array { elem, len } => {
+                let e = c_elem_type(elem)?;
+                writeln!(out, "    {e} {fname}[{len}];").unwrap();
+            }
+            _ => {
+                writeln!(out, "    {} {};", c_type(fty)?, fname).unwrap();
+            }
+        }
+    }
+    writeln!(out, "}} {};", s.name).unwrap();
+    Ok(())
+}
+
+fn c_elem_type(t: &Type) -> Result<String, String> {
     match t {
-        Type::I32 => Ok("int32_t"),
-        Type::I64 => Ok("int64_t"),
-        Type::F64 => Ok("double"),
-        Type::Bool => Ok("bool"),
+        Type::I32 => Ok("int32_t".into()),
+        Type::I64 => Ok("int64_t".into()),
+        Type::F64 => Ok("double".into()),
+        Type::Bool => Ok("bool".into()),
+        Type::Named(n) => Ok(n.clone()),
         Type::Array { .. } => Err("nested array element".into()),
     }
 }
@@ -60,7 +89,7 @@ fn c_elem_type(t: &Type) -> Result<&'static str, String> {
 fn c_type(t: &Type) -> Result<String, String> {
     match t {
         Type::Array { .. } => Err("use c_var_decl for arrays".into()),
-        _ => Ok(c_elem_type(t)?.to_string()),
+        _ => c_elem_type(t),
     }
 }
 
@@ -102,7 +131,7 @@ fn fn_proto(f: &FnDef) -> Result<String, String> {
 fn mangle_local(n: &str) -> String {
     match n {
         "int" | "return" | "if" | "else" | "while" | "for" | "break" | "continue"
-        | "true" | "false" => format!("k0_{n}"),
+        | "true" | "false" | "struct" => format!("k0_{n}"),
         _ => n.to_string(),
     }
 }
@@ -159,6 +188,24 @@ fn emit_block(
                             ));
                         }
                     }
+                    Type::Named(_) => {
+                        // zero-init only (field-by-field assign after); whole-struct copy via `p = q`
+                        let decl = c_var_decl(name, &t)?;
+                        writeln!(out, "{pad}{decl};").unwrap();
+                        writeln!(
+                            out,
+                            "{}memset(&{}, 0, sizeof({}));",
+                            pad,
+                            mangle_local(name),
+                            mangle_local(name)
+                        )
+                        .unwrap();
+                        if init.is_some() {
+                            return Err(format!(
+                                "struct let `{name}`: zero-init only (use field assigns or `p = q`)"
+                            ));
+                        }
+                    }
                     _ => {
                         let e = init
                             .as_ref()
@@ -200,6 +247,16 @@ fn emit_block(
                     }
                 }
                 writeln!(out, "{pad}{arr}[{idx}] = {val};").unwrap();
+            }
+            Stmt::FieldAssign { name, field, value } => {
+                writeln!(
+                    out,
+                    "{pad}{}.{} = {};",
+                    mangle_local(name),
+                    field,
+                    emit_expr(value, ctx)?
+                )
+                .unwrap();
             }
             Stmt::Return(None) => {
                 writeln!(out, "{pad}return;").unwrap();
@@ -249,8 +306,8 @@ fn emit_block(
                                     infer_type(e, &ctx.types)
                                 }
                             };
-                            if matches!(t, Type::Array { .. }) {
-                                return Err("for-init array not supported".into());
+                            if matches!(t, Type::Array { .. } | Type::Named(_)) {
+                                return Err("for-init array/struct not supported".into());
                             }
                             let e = iv
                                 .as_ref()
@@ -351,6 +408,8 @@ fn infer_type(e: &Expr, types: &HashMap<String, Type>) -> Type {
             },
             _ => Type::I64,
         },
+        // Field type not fully resolved in codegen (sem already checked); scalar fallback.
+        Expr::Field { .. } => Type::I64,
         Expr::Binary { op, left, right } => match op {
             BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge | BinOp::And
             | BinOp::Or => Type::Bool,
@@ -407,6 +466,10 @@ fn emit_expr(e: &Expr, ctx: &Ctx) -> Result<String, String> {
                 }
             }
             format!("({b}[{i}])")
+        }
+        Expr::Field { base, field } => {
+            let b = emit_expr(base, ctx)?;
+            format!("({b}.{field})")
         }
         Expr::Unary { op, expr } => {
             let x = emit_expr(expr, ctx)?;

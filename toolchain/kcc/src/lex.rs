@@ -15,6 +15,7 @@ pub enum Tok {
     For,
     Break,
     Continue,
+    Struct,
     True,
     False,
     /// Types
@@ -48,6 +49,7 @@ pub enum Tok {
     AndAnd,
     OrOr,
     Not,
+    Dot,
     Eof,
 }
 
@@ -215,6 +217,10 @@ impl<'a> Lexer<'a> {
                 self.bump();
                 Ok(Tok::Not)
             }
+            b'.' => {
+                self.bump();
+                Ok(Tok::Dot)
+            }
             b'0'..=b'9' => self.number(),
             b'a'..=b'z' | b'A'..=b'Z' | b'_' => self.ident_or_kw(),
             _ => Err(format!(
@@ -270,6 +276,7 @@ impl<'a> Lexer<'a> {
             "for" => Tok::For,
             "break" => Tok::Break,
             "continue" => Tok::Continue,
+            "struct" => Tok::Struct,
             "true" => Tok::True,
             "false" => Tok::False,
             "i32" => Tok::TyI32,

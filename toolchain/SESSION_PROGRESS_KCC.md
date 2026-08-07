@@ -1,33 +1,32 @@
 
 # SESSION_PROGRESS — kcc / Tor B (wlasny kompilator)
 
-**Data:** 2026-08-06  
-**Repo:** KarmazynOs `main` (kcc **0.5** / TB.3c for+break + TB.2f/TB.3b golden reach)
+**Data:** 2026-08-07  
+**Repo:** KarmazynOs `main` (kcc **0.6** / TB.3d structs + TB.3c for/break + TB.2f/TB.3b golden)
 
 ## Polityka
 - Kompilator = **wlasny** (`kcc`, jezyk K0 → C99)
 - Edytor / OS / stage0 `rustc` (tylko build kcc) / `gcc` (link) = obce OK
 - NIE: self-host kcc (TB.4), NIE: full rustc
 
-## Stan kcc 0.4
+## Stan kcc 0.6
 | Element | Stan |
 |---------|------|
 | lex / parse / codegen | OK |
 | `#include "x.k0"` | OK |
 | fixed arrays + index + array params | OK |
-| `sem` undeclared / arity / `%` f64 / redef | OK |
+| `for` / `break` / `continue` | OK (0.5 / TB.3c) |
+| **structs** define + `p.f` + `p.f = e` + by-value params | OK (0.6 / TB.3d) |
+| `sem` undeclared / arity / `%` f64 / redef / fields | OK |
 | `--safe` bounds → `abort()` | OK |
 | **type-unify** let/assign/index/call/return | OK (0.4) |
 | **return-path** all branches return | OK (0.4) |
-| cargo tests | 17 |
-| golden reach store_mini↔slab | OK (TB.3b, 5 tests + thermal 3) |
+| golden reach store_mini↔slab | OK (TB.3b) |
 
 ## Critical K0 (kompilowane tylko kcc)
-- `thermal_lib.k0` — progi T, state_code, tick/heat/decay
-- `thermal.k0` — bateria granic
-- `tick_skeleton.k0` — lifecycle T
-- `atom_table.k0` — pin/vacuum mini
-- `store_mini.k0` — T×reach (root/bind/walk/settle)
+- `thermal_lib.k0` / `thermal.k0` / `tick_skeleton.k0`
+- `atom_table.k0` / `store_mini.k0`
+- `for_break.k0` / **`struct_point.k0`** (exit 32)
 
 ## Gate
 ```
@@ -40,10 +39,10 @@
 - `Documents/BOOTSTRAP_STAGES.pl.md` (Tor A vs B)
 - `toolchain/kcc/README.md`
 
-## Nastepne (opcjonalne)
+## Nastepne
 1. TB.4 self-host (daleko)  
 2. TB.5 own backend bez gcc (daleko)  
-3. Tor A shell polish (poza Tor B)
+3. Optional: return-struct / nested field polish
 
 ## Holon
-Fact + set-work / close w holonOs (projekt Karmazyn).
+Fact + close w Karmin_Ae (projekt Karmazyn).

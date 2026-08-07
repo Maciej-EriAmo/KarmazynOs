@@ -41,12 +41,59 @@ impl<'a> Parser<'a> {
 
     fn parse_item(&mut self) -> Result<Item, String> {
         match &self.cur {
+            Tok::Struct => Ok(Item::Struct(self.parse_struct()?)),
             Tok::Fn => Ok(Item::Fn(self.parse_fn()?)),
             other => Err(format!(
-                "line {}: expected fn, got {:?}",
+                "line {}: expected struct or fn, got {:?}",
                 self.lx.line, other
             )),
         }
+    }
+
+    fn parse_struct(&mut self) -> Result<StructDef, String> {
+        self.eat(&Tok::Struct)?;
+        let name = self.expect_ident()?;
+        self.eat(&Tok::LBrace)?;
+        let mut fields = Vec::new();
+        while self.cur != Tok::RBrace && self.cur != Tok::Eof {
+            let fname = self.expect_ident()?;
+            self.eat(&Tok::Colon)?;
+            let ty = self.parse_type()?;
+            if fields.iter().any(|(n, _)| n == &fname) {
+                return Err(format!(
+                    "line {}: duplicate field `{fname}` in struct `{name}`",
+                    self.lx.line
+                ));
+            }
+            fields.push((fname, ty));
+            if self.cur == Tok::Comma {
+                self.bump()?;
+                continue;
+            }
+            if self.cur == Tok::Semi {
+                self.bump()?;
+                continue;
+            }
+            // allow newline-style: field: ty field: ty
+            if self.cur != Tok::RBrace {
+                // require separator unless closing
+                if !matches!(self.cur, Tok::Ident(_)) {
+                    break;
+                }
+            }
+        }
+        self.eat(&Tok::RBrace)?;
+        // optional trailing semi after struct
+        if self.cur == Tok::Semi {
+            self.bump()?;
+        }
+        if fields.is_empty() {
+            return Err(format!(
+                "line {}: struct `{name}` needs at least one field",
+                self.lx.line
+            ));
+        }
+        Ok(StructDef { name, fields })
     }
 
     fn parse_fn(&mut self) -> Result<FnDef, String> {
@@ -116,6 +163,11 @@ impl<'a> Parser<'a> {
             Tok::TyI64 => Type::I64,
             Tok::TyF64 => Type::F64,
             Tok::TyBool => Type::Bool,
+            Tok::Ident(name) => {
+                let name = name.clone();
+                self.bump()?;
+                return Ok(Type::Named(name));
+            }
             other => {
                 return Err(format!(
                     "line {}: expected type, got {:?}",
@@ -151,11 +203,11 @@ impl<'a> Parser<'a> {
                 let init = if self.cur == Tok::Assign {
                     self.bump()?;
                     Some(self.parse_expr()?)
-                } else if matches!(ty, Some(Type::Array { .. })) {
-                    None // zero-init array
+                } else if matches!(ty, Some(Type::Array { .. }) | Some(Type::Named(_))) {
+                    None // zero-init array / struct
                 } else {
                     return Err(format!(
-                        "line {}: let requires initializer (except fixed arrays)",
+                        "line {}: let requires initializer (except fixed arrays/structs)",
                         self.lx.line
                     ));
                 };
@@ -207,6 +259,30 @@ impl<'a> Parser<'a> {
             }
             Tok::Ident(_) => {
                 let name = self.expect_ident()?;
+                // name.field = value
+                if self.cur == Tok::Dot {
+                    self.bump()?;
+                    let field = self.expect_ident()?;
+                    if self.cur == Tok::Assign {
+                        self.bump()?;
+                        let value = self.parse_expr()?;
+                        self.eat(&Tok::Semi)?;
+                        return Ok(Stmt::FieldAssign {
+                            name,
+                            field,
+                            value,
+                        });
+                    }
+                    // name.field as expr stmt
+                    let mut expr = Expr::Field {
+                        base: Box::new(Expr::Ident(name)),
+                        field,
+                    };
+                    expr = self.parse_postfix(expr)?;
+                    let expr = self.finish_expr(expr)?;
+                    self.eat(&Tok::Semi)?;
+                    return Ok(Stmt::Expr(expr));
+                }
                 // name[index] = value
                 if self.cur == Tok::LBracket {
                     self.bump()?;
@@ -254,6 +330,7 @@ impl<'a> Parser<'a> {
                 } else {
                     Expr::Ident(name)
                 };
+                let expr = self.parse_postfix(expr)?;
                 let expr = self.finish_expr(expr)?;
                 self.eat(&Tok::Semi)?;
                 Ok(Stmt::Expr(expr))
@@ -407,6 +484,33 @@ impl<'a> Parser<'a> {
         self.parse_binop_rest(left, 0)
     }
 
+    /// Postfix: `.field` and `[index]` (left-associative chain).
+    fn parse_postfix(&mut self, mut expr: Expr) -> Result<Expr, String> {
+        loop {
+            match &self.cur {
+                Tok::Dot => {
+                    self.bump()?;
+                    let field = self.expect_ident()?;
+                    expr = Expr::Field {
+                        base: Box::new(expr),
+                        field,
+                    };
+                }
+                Tok::LBracket => {
+                    self.bump()?;
+                    let index = self.parse_expr()?;
+                    self.eat(&Tok::RBracket)?;
+                    expr = Expr::Index {
+                        base: Box::new(expr),
+                        index: Box::new(index),
+                    };
+                }
+                _ => break,
+            }
+        }
+        Ok(expr)
+    }
+
     fn parse_expr(&mut self) -> Result<Expr, String> {
         self.parse_binop(0)
     }
@@ -500,7 +604,7 @@ impl<'a> Parser<'a> {
             Tok::Ident(name) => {
                 let name = name.clone();
                 self.bump()?;
-                let mut expr = if self.cur == Tok::LParen {
+                let expr = if self.cur == Tok::LParen {
                     self.bump()?;
                     let mut args = Vec::new();
                     if self.cur != Tok::RParen {
@@ -518,17 +622,7 @@ impl<'a> Parser<'a> {
                 } else {
                     Expr::Ident(name)
                 };
-                // postfix index: a[i]
-                while self.cur == Tok::LBracket {
-                    self.bump()?;
-                    let index = self.parse_expr()?;
-                    self.eat(&Tok::RBracket)?;
-                    expr = Expr::Index {
-                        base: Box::new(expr),
-                        index: Box::new(index),
-                    };
-                }
-                Ok(expr)
+                self.parse_postfix(expr)
             }
             Tok::LParen => {
                 self.bump()?;

@@ -9,29 +9,85 @@ use std::collections::HashMap;
 
 /// Function signature: (param types, return type).
 type FnSig = (Vec<Type>, Type);
+/// struct name → fields
+type Structs = HashMap<String, Vec<(String, Type)>>;
 
 pub fn check(prog: &Program) -> Result<(), String> {
+    let mut structs: Structs = HashMap::new();
     let mut fns: HashMap<String, FnSig> = HashMap::new();
+
     for item in &prog.items {
-        let Item::Fn(f) = item;
-        if fns.contains_key(&f.name) {
-            return Err(format!("redefinition of function `{}`", f.name));
+        match item {
+            Item::Struct(s) => {
+                if structs.contains_key(&s.name) {
+                    return Err(format!("redefinition of struct `{}`", s.name));
+                }
+                if fns.contains_key(&s.name) {
+                    return Err(format!("`{}` already defined as function", s.name));
+                }
+                for (fname, fty) in &s.fields {
+                    type_is_known(fty, &structs).map_err(|e| {
+                        format!("struct `{}` field `{fname}`: {e}", s.name)
+                    })?;
+                    if matches!(fty, Type::Array { elem, .. } if matches!(elem.as_ref(), Type::Array { .. })) {
+                        return Err(format!(
+                            "struct `{}` field `{fname}`: nested arrays not supported",
+                            s.name
+                        ));
+                    }
+                }
+                structs.insert(s.name.clone(), s.fields.clone());
+            }
+            Item::Fn(f) => {
+                if fns.contains_key(&f.name) {
+                    return Err(format!("redefinition of function `{}`", f.name));
+                }
+                if structs.contains_key(&f.name) {
+                    return Err(format!("`{}` already defined as struct", f.name));
+                }
+                if matches!(f.ret, Type::Array { .. } | Type::Named(_)) {
+                    return Err(format!(
+                        "function `{}` cannot return array/struct yet",
+                        f.name
+                    ));
+                }
+                for (pn, pt) in &f.params {
+                    type_is_known(pt, &structs)
+                        .map_err(|e| format!("fn `{}` param `{pn}`: {e}", f.name))?;
+                }
+                let params: Vec<Type> = f.params.iter().map(|(_, t)| t.clone()).collect();
+                fns.insert(f.name.clone(), (params, f.ret.clone()));
+            }
         }
-        if matches!(f.ret, Type::Array { .. }) {
-            return Err(format!("function `{}` cannot return an array", f.name));
-        }
-        let params: Vec<Type> = f.params.iter().map(|(_, t)| t.clone()).collect();
-        fns.insert(f.name.clone(), (params, f.ret.clone()));
     }
 
     for item in &prog.items {
-        let Item::Fn(f) = item;
-        check_fn(f, &fns)?;
+        if let Item::Fn(f) = item {
+            check_fn(f, &fns, &structs)?;
+        }
     }
     Ok(())
 }
 
-fn check_fn(f: &FnDef, fns: &HashMap<String, FnSig>) -> Result<(), String> {
+fn type_is_known(t: &Type, structs: &Structs) -> Result<(), String> {
+    match t {
+        Type::I32 | Type::I64 | Type::F64 | Type::Bool => Ok(()),
+        Type::Array { elem, .. } => type_is_known(elem, structs),
+        Type::Named(n) => {
+            if structs.contains_key(n) {
+                Ok(())
+            } else {
+                Err(format!("unknown type `{n}`"))
+            }
+        }
+    }
+}
+
+fn check_fn(
+    f: &FnDef,
+    fns: &HashMap<String, FnSig>,
+    structs: &Structs,
+) -> Result<(), String> {
     let mut locals: HashMap<String, Type> = HashMap::new();
     for (n, t) in &f.params {
         if locals.contains_key(n) {
@@ -39,7 +95,7 @@ fn check_fn(f: &FnDef, fns: &HashMap<String, FnSig>) -> Result<(), String> {
         }
         locals.insert(n.clone(), t.clone());
     }
-    check_block(&f.body, &mut locals, fns, &f.name, &f.ret, 0)?;
+    check_block(&f.body, &mut locals, fns, structs, &f.name, &f.ret, 0)?;
     if !returns_on_all_paths(&f.body) {
         return Err(format!(
             "fn `{}`: not all control-flow paths return a value (return type `{}`)",
@@ -101,6 +157,7 @@ fn type_name(t: &Type) -> String {
         Type::F64 => "f64".into(),
         Type::Bool => "bool".into(),
         Type::Array { elem, len } => format!("[{}; {}]", type_name(elem), len),
+        Type::Named(n) => n.clone(),
     }
 }
 
@@ -125,6 +182,7 @@ fn check_block(
     b: &Block,
     locals: &mut HashMap<String, Type>,
     fns: &HashMap<String, FnSig>,
+    structs: &Structs,
     fn_name: &str,
     ret_ty: &Type,
     loop_depth: u32,
@@ -147,12 +205,15 @@ fn check_block(
                         let e = init.as_ref().ok_or_else(|| {
                             format!("fn `{fn_name}`: let `{name}` needs type or init")
                         })?;
-                        expr_type(e, locals, fns)?
+                        expr_type(e, locals, fns, structs)?
                     }
                 };
+                type_is_known(&t, structs).map_err(|e| {
+                    format!("fn `{fn_name}`: let `{name}`: {e}")
+                })?;
                 if let Some(e) = init {
-                    check_expr(e, locals, fns, fn_name)?;
-                    let got = expr_type(e, locals, fns)?;
+                    check_expr(e, locals, fns, structs, fn_name)?;
+                    let got = expr_type(e, locals, fns, structs)?;
                     expect_type(
                         &t,
                         &got,
@@ -160,9 +221,14 @@ fn check_block(
                         &format!("let `{name}` initializer"),
                     )?;
                 }
-                if matches!(t, Type::Array { .. }) && init.is_some() {
+                if matches!(t, Type::Array { .. } | Type::Named(_)) && init.is_some() {
                     return Err(format!(
-                        "fn `{fn_name}`: array `{name}` must use zero-init (no initializer)"
+                        "fn `{fn_name}`: array/struct `{name}` must use zero-init (no initializer)"
+                    ));
+                }
+                if matches!(t, Type::Named(_)) && init.is_none() && ty.is_none() {
+                    return Err(format!(
+                        "fn `{fn_name}`: struct `{name}` needs explicit type"
                     ));
                 }
                 locals.insert(name.clone(), t);
@@ -174,8 +240,8 @@ fn check_block(
                         "fn `{fn_name}`: assign to undeclared `{name}`"
                     ));
                 };
-                check_expr(value, locals, fns, fn_name)?;
-                let got = expr_type(value, locals, fns)?;
+                check_expr(value, locals, fns, structs, fn_name)?;
+                let got = expr_type(value, locals, fns, structs)?;
                 expect_type(
                     &dst,
                     &got,
@@ -194,16 +260,16 @@ fn check_block(
                         "fn `{fn_name}`: `{name}` is not an array"
                     ));
                 };
-                check_expr(index, locals, fns, fn_name)?;
-                let idx_t = expr_type(index, locals, fns)?;
+                check_expr(index, locals, fns, structs, fn_name)?;
+                let idx_t = expr_type(index, locals, fns, structs)?;
                 if !matches!(idx_t, Type::I32 | Type::I64) {
                     return Err(format!(
                         "fn `{fn_name}`: array index must be integer, got `{}`",
                         type_name(&idx_t)
                     ));
                 }
-                check_expr(value, locals, fns, fn_name)?;
-                let got = expr_type(value, locals, fns)?;
+                check_expr(value, locals, fns, structs, fn_name)?;
+                let got = expr_type(value, locals, fns, structs)?;
                 expect_type(
                     &elem,
                     &got,
@@ -211,10 +277,38 @@ fn check_block(
                     &format!("index-assign `{name}[…]`"),
                 )?;
             }
+            Stmt::FieldAssign { name, field, value } => {
+                let Some(t) = locals.get(name).cloned() else {
+                    return Err(format!(
+                        "fn `{fn_name}`: field-assign undeclared `{name}`"
+                    ));
+                };
+                let Type::Named(sn) = t else {
+                    return Err(format!(
+                        "fn `{fn_name}`: `{name}` is not a struct"
+                    ));
+                };
+                let fields = structs.get(&sn).ok_or_else(|| {
+                    format!("fn `{fn_name}`: unknown struct `{sn}`")
+                })?;
+                let Some((_, fty)) = fields.iter().find(|(n, _)| n == field) else {
+                    return Err(format!(
+                        "fn `{fn_name}`: struct `{sn}` has no field `{field}`"
+                    ));
+                };
+                check_expr(value, locals, fns, structs, fn_name)?;
+                let got = expr_type(value, locals, fns, structs)?;
+                expect_type(
+                    fty,
+                    &got,
+                    fn_name,
+                    &format!("field-assign `{name}.{field}`"),
+                )?;
+            }
             Stmt::Return(e) => match e {
                 Some(ex) => {
-                    check_expr(ex, locals, fns, fn_name)?;
-                    let got = expr_type(ex, locals, fns)?;
+                    check_expr(ex, locals, fns, structs, fn_name)?;
+                    let got = expr_type(ex, locals, fns, structs)?;
                     expect_type(ret_ty, &got, fn_name, "return value")?;
                 }
                 None => {
@@ -224,14 +318,14 @@ fn check_block(
                     ));
                 }
             },
-            Stmt::Expr(e) => check_expr(e, locals, fns, fn_name)?,
+            Stmt::Expr(e) => check_expr(e, locals, fns, structs, fn_name)?,
             Stmt::If {
                 cond,
                 then_b,
                 else_b,
             } => {
-                check_expr(cond, locals, fns, fn_name)?;
-                let ct = expr_type(cond, locals, fns)?;
+                check_expr(cond, locals, fns, structs, fn_name)?;
+                let ct = expr_type(cond, locals, fns, structs)?;
                 // allow bool or numeric (C truthiness of ints / comparisons already bool)
                 if !matches!(ct, Type::Bool | Type::I32 | Type::I64 | Type::F64) {
                     return Err(format!(
@@ -239,21 +333,21 @@ fn check_block(
                         type_name(&ct)
                     ));
                 }
-                check_block(then_b, locals, fns, fn_name, ret_ty, loop_depth)?;
+                check_block(then_b, locals, fns, structs, fn_name, ret_ty, loop_depth)?;
                 if let Some(eb) = else_b {
-                    check_block(eb, locals, fns, fn_name, ret_ty, loop_depth)?;
+                    check_block(eb, locals, fns, structs, fn_name, ret_ty, loop_depth)?;
                 }
             }
             Stmt::While { cond, body } => {
-                check_expr(cond, locals, fns, fn_name)?;
-                let ct = expr_type(cond, locals, fns)?;
+                check_expr(cond, locals, fns, structs, fn_name)?;
+                let ct = expr_type(cond, locals, fns, structs)?;
                 if !matches!(ct, Type::Bool | Type::I32 | Type::I64 | Type::F64) {
                     return Err(format!(
                         "fn `{fn_name}`: while condition has type `{}`",
                         type_name(&ct)
                     ));
                 }
-                check_block(body, locals, fns, fn_name, ret_ty, loop_depth + 1)?;
+                check_block(body, locals, fns, structs, fn_name, ret_ty, loop_depth + 1)?;
             }
             Stmt::For {
                 init,
@@ -262,21 +356,21 @@ fn check_block(
                 body,
             } => {
                 if let Some(ini) = init {
-                    // reuse match arms by wrapping as single-stmt block
                     check_block(
                         &Block {
                             stmts: vec![(**ini).clone()],
                         },
                         locals,
                         fns,
+                        structs,
                         fn_name,
                         ret_ty,
                         loop_depth,
                     )?;
                 }
                 if let Some(c) = cond {
-                    check_expr(c, locals, fns, fn_name)?;
-                    let ct = expr_type(c, locals, fns)?;
+                    check_expr(c, locals, fns, structs, fn_name)?;
+                    let ct = expr_type(c, locals, fns, structs)?;
                     if !matches!(ct, Type::Bool | Type::I32 | Type::I64 | Type::F64) {
                         return Err(format!(
                             "fn `{fn_name}`: for condition has type `{}`",
@@ -284,7 +378,7 @@ fn check_block(
                         ));
                     }
                 }
-                check_block(body, locals, fns, fn_name, ret_ty, loop_depth + 1)?;
+                check_block(body, locals, fns, structs, fn_name, ret_ty, loop_depth + 1)?;
                 if let Some(st) = step {
                     check_block(
                         &Block {
@@ -292,6 +386,7 @@ fn check_block(
                         },
                         locals,
                         fns,
+                        structs,
                         fn_name,
                         ret_ty,
                         loop_depth + 1,
@@ -328,6 +423,7 @@ fn check_expr(
     e: &Expr,
     locals: &HashMap<String, Type>,
     fns: &HashMap<String, FnSig>,
+    structs: &Structs,
     fn_name: &str,
 ) -> Result<(), String> {
     match e {
@@ -340,8 +436,8 @@ fn check_expr(
             }
         }
         Expr::Index { base, index } => {
-            check_expr(base, locals, fns, fn_name)?;
-            check_expr(index, locals, fns, fn_name)?;
+            check_expr(base, locals, fns, structs, fn_name)?;
+            check_expr(index, locals, fns, structs, fn_name)?;
             match base.as_ref() {
                 Expr::Ident(n) => {
                     let Some(t) = locals.get(n) else {
@@ -350,7 +446,7 @@ fn check_expr(
                     if !matches!(t, Type::Array { .. }) {
                         return Err(format!("fn `{fn_name}`: `{n}` is not an array"));
                     }
-                    let idx_t = expr_type(index, locals, fns)?;
+                    let idx_t = expr_type(index, locals, fns, structs)?;
                     if !matches!(idx_t, Type::I32 | Type::I64) {
                         return Err(format!(
                             "fn `{fn_name}`: array index must be integer, got `{}`",
@@ -366,9 +462,28 @@ fn check_expr(
             }
             Ok(())
         }
+        Expr::Field { base, field } => {
+            check_expr(base, locals, fns, structs, fn_name)?;
+            let bt = expr_type(base, locals, fns, structs)?;
+            let Type::Named(sn) = bt else {
+                return Err(format!(
+                    "fn `{fn_name}`: field access on non-struct `{}`",
+                    type_name(&bt)
+                ));
+            };
+            let fields = structs.get(&sn).ok_or_else(|| {
+                format!("fn `{fn_name}`: unknown struct `{sn}`")
+            })?;
+            if !fields.iter().any(|(n, _)| n == field) {
+                return Err(format!(
+                    "fn `{fn_name}`: struct `{sn}` has no field `{field}`"
+                ));
+            }
+            Ok(())
+        }
         Expr::Unary { op, expr } => {
-            check_expr(expr, locals, fns, fn_name)?;
-            let t = expr_type(expr, locals, fns)?;
+            check_expr(expr, locals, fns, structs, fn_name)?;
+            let t = expr_type(expr, locals, fns, structs)?;
             match op {
                 UnOp::Not => {
                     if !matches!(t, Type::Bool | Type::I32 | Type::I64) {
@@ -390,10 +505,10 @@ fn check_expr(
             Ok(())
         }
         Expr::Binary { op, left, right } => {
-            check_expr(left, locals, fns, fn_name)?;
-            check_expr(right, locals, fns, fn_name)?;
-            let lt = expr_type(left, locals, fns)?;
-            let rt = expr_type(right, locals, fns)?;
+            check_expr(left, locals, fns, structs, fn_name)?;
+            check_expr(right, locals, fns, structs, fn_name)?;
+            let lt = expr_type(left, locals, fns, structs)?;
+            let rt = expr_type(right, locals, fns, structs)?;
             match op {
                 BinOp::And | BinOp::Or => {
                     if !matches!(lt, Type::Bool | Type::I32 | Type::I64)
@@ -419,10 +534,8 @@ fn check_expr(
                     }
                 }
                 BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div => {
-                    if matches!(lt, Type::Bool)
-                        || matches!(rt, Type::Bool)
-                        || matches!(lt, Type::Array { .. })
-                        || matches!(rt, Type::Array { .. })
+                    if matches!(lt, Type::Bool | Type::Array { .. } | Type::Named(_))
+                        || matches!(rt, Type::Bool | Type::Array { .. } | Type::Named(_))
                     {
                         return Err(format!(
                             "fn `{fn_name}`: arithmetic on non-numeric type"
@@ -430,6 +543,16 @@ fn check_expr(
                     }
                 }
                 BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {
+                    // no struct/array compare (C has no == for aggregates in K0 MVP)
+                    if matches!(lt, Type::Array { .. } | Type::Named(_))
+                        || matches!(rt, Type::Array { .. } | Type::Named(_))
+                    {
+                        return Err(format!(
+                            "fn `{fn_name}`: cannot compare aggregate `{}` vs `{}`",
+                            type_name(&lt),
+                            type_name(&rt)
+                        ));
+                    }
                     // allow same family (int/float/bool)
                     let ok = types_compatible(&lt, &rt)
                         || types_compatible(&rt, &lt)
@@ -458,8 +581,8 @@ fn check_expr(
                 ));
             }
             for (i, a) in args.iter().enumerate() {
-                check_expr(a, locals, fns, fn_name)?;
-                let got = expr_type(a, locals, fns)?;
+                check_expr(a, locals, fns, structs, fn_name)?;
+                let got = expr_type(a, locals, fns, structs)?;
                 expect_type(
                     &params[i],
                     &got,
@@ -476,6 +599,7 @@ fn expr_type(
     e: &Expr,
     locals: &HashMap<String, Type>,
     fns: &HashMap<String, FnSig>,
+    structs: &Structs,
 ) -> Result<Type, String> {
     Ok(match e {
         Expr::Int(_) => Type::I64,
@@ -493,14 +617,28 @@ fn expr_type(
             },
             _ => Type::I64,
         },
+        Expr::Field { base, field } => {
+            let bt = expr_type(base, locals, fns, structs)?;
+            let Type::Named(sn) = bt else {
+                return Err(format!("field access on non-struct `{}`", type_name(&bt)));
+            };
+            let fields = structs
+                .get(&sn)
+                .ok_or_else(|| format!("unknown struct `{sn}`"))?;
+            fields
+                .iter()
+                .find(|(n, _)| n == field)
+                .map(|(_, t)| t.clone())
+                .ok_or_else(|| format!("struct `{sn}` has no field `{field}`"))?
+        }
         Expr::Unary { op: UnOp::Not, .. } => Type::Bool,
-        Expr::Unary { expr, .. } => expr_type(expr, locals, fns)?,
+        Expr::Unary { expr, .. } => expr_type(expr, locals, fns, structs)?,
         Expr::Binary { op, left, right } => match op {
             BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge | BinOp::And
             | BinOp::Or => Type::Bool,
             _ => {
-                let l = expr_type(left, locals, fns)?;
-                let r = expr_type(right, locals, fns)?;
+                let l = expr_type(left, locals, fns, structs)?;
+                let r = expr_type(right, locals, fns, structs)?;
                 if matches!(l, Type::F64) || matches!(r, Type::F64) {
                     Type::F64
                 } else if matches!(l, Type::I64) || matches!(r, Type::I64) {
@@ -655,5 +793,37 @@ fn main() -> i32 {
         )
         .unwrap();
         check(&p).expect("int→f64 ok");
+    }
+
+    #[test]
+    fn accepts_struct_fields() {
+        let p = parse(
+            r#"
+struct Point { x: i64 y: i64 }
+fn main() -> i32 {
+    let p: Point;
+    p.x = 1;
+    p.y = 2;
+    return p.x + p.y;
+}
+"#,
+        )
+        .unwrap();
+        check(&p).expect("struct ok");
+    }
+
+    #[test]
+    fn rejects_unknown_struct_type() {
+        let p = parse(
+            r#"
+fn main() -> i32 {
+    let p: Nope;
+    return 0;
+}
+"#,
+        )
+        .unwrap();
+        let e = check(&p).unwrap_err();
+        assert!(e.contains("unknown type") || e.contains("Nope"), "{e}");
     }
 }

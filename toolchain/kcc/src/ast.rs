@@ -8,6 +8,8 @@ pub enum Type {
     Bool,
     /// Fixed-size array, e.g. `[f64; 8]`.
     Array { elem: Box<Type>, len: u32 },
+    /// User `struct Name { ... }` (TB.3d).
+    Named(String),
 }
 
 #[derive(Debug, Clone)]
@@ -17,7 +19,14 @@ pub struct Program {
 
 #[derive(Debug, Clone)]
 pub enum Item {
+    Struct(StructDef),
     Fn(FnDef),
+}
+
+#[derive(Debug, Clone)]
+pub struct StructDef {
+    pub name: String,
+    pub fields: Vec<(String, Type)>,
 }
 
 #[derive(Debug, Clone)]
@@ -49,6 +58,12 @@ pub enum Stmt {
     IndexAssign {
         name: String,
         index: Expr,
+        value: Expr,
+    },
+    /// `name.field = value` (base is local ident for MVP)
+    FieldAssign {
+        name: String,
+        field: String,
         value: Expr,
     },
     Return(Option<Expr>),
@@ -83,6 +98,11 @@ pub enum Expr {
     Index {
         base: Box<Expr>,
         index: Box<Expr>,
+    },
+    /// `base.field`
+    Field {
+        base: Box<Expr>,
+        field: String,
     },
     Unary {
         op: UnOp,

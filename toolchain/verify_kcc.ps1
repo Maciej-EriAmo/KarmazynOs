@@ -64,6 +64,18 @@ try {
     Invoke-K0 "atom_table.k0" "atom_table"
     Invoke-K0 "store_mini.k0" "store_mini"
 
+    # TB.3d structs — exit 32 ((10+2)+20 after whole-struct copy)
+    Write-Host "  kcc struct_point.k0 (--safe) expect exit 32"
+    $spSrc = Join-Path $Kcc "examples\struct_point.k0"
+    $spBin = Join-Path $Out "struct_point"
+    & $exe $spSrc --safe --cc -o $spBin
+    if ($LASTEXITCODE -ne 0) { throw "kcc struct_point failed" }
+    $spRun = if (Test-Path "$spBin.exe") { "$spBin.exe" } else { $spBin }
+    & $spRun
+    if ($LASTEXITCODE -ne 32) { throw "struct_point expected exit 32, got $LASTEXITCODE" }
+    $spC = Get-Content (Join-Path $Out "struct_point.c") -Raw
+    if ($spC -notmatch "typedef struct Point") { throw "struct_point.c missing typedef" }
+
     $cText = Get-Content (Join-Path $Out "thermal_smoke.c") -Raw
     if ($cText -notmatch "k0_state_code") { throw "C missing k0_state_code" }
     $cStore = Get-Content (Join-Path $Out "store_mini.c") -Raw
