@@ -191,6 +191,6 @@ Lua nie blokuje żadnego toru.
 
 ---
 
-*Dokument żywy. Aktualizacja 2026-08-06 — Tor A: stage2_verify + install_prefix + bootstrap.sh; Tor B = kcc osobno.*
+*Dokument żywy. Aktualizacja 2026-08-07 — Tor A: stage2 + ksub_client; Tor B: kcc 0.6.1 + TB.4 Phase 0.*
 
 
