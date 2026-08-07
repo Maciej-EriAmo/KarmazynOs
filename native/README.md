@@ -24,7 +24,7 @@ native/
     Cargo.toml               # features: default=["std"]; dep: karmazyn_slab
     src/{lib,atom,store,ffi,slab}.rs
     examples/stage1_bootstrap.rs  # Stage 1 gate (pure Rust)
-  karmazyn_shell/            # Stage 2 MVP — interactive shell (no Python)
+  karmazyn_shell/            # Stage 2 shell 0.3.2 — batch/assert + lifecycle T×reach
   c_smoke/stage1_c_smoke.c   # Stage 1 C ABI smoke (orphan/root/TOMB)
   c_smoke/ksub_client.c      # Tor A thin C client (value/T/bind/lookup/unbind)
   stage1_verify.ps1          # Stage 1 full gate (slab+substrate+C clients, no Python)

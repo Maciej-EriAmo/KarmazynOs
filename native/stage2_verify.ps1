@@ -129,9 +129,17 @@ try {
         -e "assert stats bubbles eq 2" `
         -e quit
     if ($LASTEXITCODE -ne 0) { throw "bubbles/info batch failed" }
+
+    Write-Host "`n[10] lifecycle.ksh — T×reach (orphan vacuum + root TOMB + unroot reap)"
+    Push-Location $Root
+    try {
+        $life = Join-Path $Shell "examples\lifecycle.ksh"
+        & $exe $life
+        if ($LASTEXITCODE -ne 0) { throw "lifecycle.ksh failed" }
+    } finally { Pop-Location }
 } finally { Pop-Location }
 
 Write-Host "`n=== STAGE2_VERIFY_OK ===" -ForegroundColor Green
-Write-Host "Shell: $exe (0.3.2+ bubbles/binds/assert stats)"
+Write-Host "Shell: $exe (0.3.2+ lifecycle T×reach)"
 Write-Host "Snap:  $Snap"
 exit 0
