@@ -6,31 +6,69 @@ Nie zastępuje `README.md` / `philosophy.pl.md` / `BOOTSTRAP_STAGES.pl.md` — *
 
 ---
 
-## 0. Jedno zdanie
+## 0. Model (bez zamętu)
 
-KarmazynOs to **przestrzeń dynamicznej informacji** z prawem termodynamicznym w substracie —  
-**nie** bootowalny „pełny OS” (dopóki L2+ nie jest zrobione i nie kłamiemy w bannerach).
+```
+                    ┌─────────────────────────────┐
+                    │  CIENKIE WARSTWY (języki)    │
+                    │  Python · Lua · shell · Lisp │
+                    │  Studio · kcc · nawet „app”  │
+                    │  w Rust poza jądrem          │
+                    └─────────────┬───────────────┘
+                                  │ woła / linkuje
+                    ┌─────────────▼───────────────┐
+                    │  RUST = KOŚCI + WYKONANIE   │
+                    │  implementacja silnika,     │
+                    │  rlib / cdylib / C ABI      │
+                    └─────────────┬───────────────┘
+                                  │ jest
+                    ┌─────────────▼───────────────┐
+                    │  SUBSTRAT = JEDYNY SILNIK   │
+                    │  rządzi wszystkim           │
+                    │  Store · T×reach · prawo    │
+                    └─────────────────────────────┘
+```
+
+| Byt | Rola | Nie jest |
+|-----|------|----------|
+| **Substrat** | **Jedyny silnik.** Prawo: atomy, T, bąble, roots, reach-GC. Wszystko inne jest klientem. | Językiem aplikacji |
+| **Rust** | **Kości i warstwa wykonawcza** substratu (oraz cienkie narzędzia: shell, kentry, kcc-stage0). | „Konkurencyjnym jądrem” obok substratu |
+| **Python / Lua / Lisp / Studio / …** | **Cienkie warstwy** — składnia, I/O, UX, skrypty. Wołają silnik (native DLL / rlib / C ABI). | Silnikiem; nie rządzą prawem Store |
+| **Python Store (legacy)** | Referencja / golden / rescue — **to samo prawo**, nie drugi król | Domyślnym władcą (default = native) |
+
+**Zasady wynikające z modelu:**
+
+1. **Substrat rządzi** — reguły T×reach są w jednym miejscu; języki ich nie redefiniują.  
+2. **Języki są cienkie** — w tym „pisanie w Rustcie” *poza* crate jądra (np. tool) też jest warstwą, nie drugim silnikiem.  
+3. **CPython nie jest jądrem** i **nie konkuruje z Rustem jądra** — to gość/host UI.  
+4. **Nie budujemy „systemu w Pythonie” ani „systemu w Julii”** — budujemy **klientów substratu**.  
+5. **Tor A/B** to sposoby *dostarczenia i kompilacji* wokół silnika, nie zamienniki silnika.
 
 ```
 information = stabilization( H ∘ P ∘ A )     # wizja (README)
-prawo jądra (dziś w kodzie):  T = KIEDY · reach = CZY
+prawo silnika (kod):  T = KIEDY · reach = CZY
 ```
+
+KarmazynOs to **przestrzeń informacji napędzana substratem** —  
+**nie** bootowalny „pełny OS” (dopóki L2+ nie jest w KANON z bramką).
 
 ---
 
-## 1. Trzy półki (nie mylić)
+## 1. Trzy półki (nie mylić z warstwami silnika)
+
+Półki = **co wolno twierdzić**. Warstwy = **kto rządzi**.
 
 | Półka | Znaczenie | Wolno mówić |
 |-------|-----------|-------------|
-| **KANON** | Obowiązuje w kodzie bramek; regresja = błąd | „mamy”, „domknięte”, `*_VERIFY_OK` |
-| **HOST** | Product / dev na maszynie użytkownika; może używać Pythona, SDL, Lua | „działa na hoście”, nie „samodzielny OS” |
+| **KANON** | Substrat + bramki; regresja = błąd | „mamy”, „domknięte”, `*_VERIFY_OK` |
+| **HOST** | Cienka warstwa na maszynie dev (Studio, boot.py, SDL) | „działa na hoście”, nie „samodzielny OS” |
 | **PLAN** | Docs, roadmap, szkielety | „plan”, „papier”, „nie wdrożone” |
 
 **Zasada Z0 (PROJECT.md):** nie mówić „mamy GRUB / ISO / desktop OS”, dopóki to nie jest w **KANON** z bramką.
 
 ---
 
-## 2. KANON — prawo substratu (Tor A Stage 1)
+## 2. KANON — silnik (substrat, Tor A Stage 1)
 
 **Formuła:** temperatura mówi **kiedy**, osiągalność mówi **czy**.
 
@@ -44,11 +82,11 @@ prawo jądra (dziś w kodzie):  T = KIEDY · reach = CZY
 
 | Artefakt | Rola |
 |----------|------|
-| `native/karmazyn_slab` | freestanding / no_std, to samo prawo |
-| `native/karmazyn_substrate` | host Store + **C ABI** `ksub_*` |
-| `native/c_smoke/*` | C bez Pythona |
+| `native/karmazyn_slab` | freestanding / no_std — to samo prawo |
+| `native/karmazyn_substrate` | **silnik** host: Store + **C ABI** `ksub_*` (Rust = kości) |
+| `native/c_smoke/*` | cienka warstwa C na silniku |
 | `native/stage1_verify.ps1` | bramka Stage 1 |
-| Python `Store` | **referencja / golden**, nie nośnik Stage 1 |
+| Python `Store` | cienka / golden kopia prawa — **nie** konkurencyjny silnik |
 
 **Bramka:** `.\native\stage1_verify.ps1` → `STAGE1_VERIFY_OK`.
 
@@ -61,21 +99,21 @@ prawo jądra (dziś w kodzie):  T = KIEDY · reach = CZY
 
 ---
 
-## 3. KANON — używalność bez Pythona (Tor A Stage 2)
+## 3. KANON — cienka warstwa bez Pythona (Tor A Stage 2)
 
-**Cel:** system da się **używać** na binarnym jądrze (shell + snapshot).
+**Cel:** **używać silnika** bez CPythona (shell + snapshot) — shell nie jest silnikiem.
 
 | Artefakt | Rola |
 |----------|------|
-| `native/karmazyn_shell` (0.3.2+) | REPL / batch / assert / save-load |
-| `examples/lifecycle.ksh` | **to samo prawo T×reach** w skrypcie shella |
-| `KSUB_SNAP` | persist Store (atoms, bubbles, binds, roots) |
+| `native/karmazyn_shell` (0.3.2+) | cienka warstwa REPL/batch na rlib Store |
+| `examples/lifecycle.ksh` | to samo prawo T×reach przez shell |
+| `KSUB_SNAP` | persist stanu **silnika** |
 | `native/stage2_verify.ps1` | bramka Stage 2 |
 
 **Bramka:** `.\native\stage2_verify.ps1` → `STAGE2_VERIFY_OK`.
 
-**To NIE jest Gentoo-stage2.**  
-Gentoo/LFS-stage2 = *własnymi narzędziami* przebudowujesz biblioteki. Shell = **Tor A runtime**.
+**To NIE jest Gentoo-stage2** i **nie jest jądrem**.  
+Shell / Lisp / Lua / Python = klienci substratu.
 
 ---
 
@@ -102,21 +140,21 @@ Gentoo/LFS-stage2 = *własnymi narzędziami* przebudowujesz biblioteki. Shell = 
 
 ---
 
-## 5. HOST — product (L1)
+## 5. HOST — cienkie warstwy product (L1)
 
-Działa na hoście; **może** zależeć od Pythona / pygame / Lua. Nie jest warunkiem Stage 1–2.
+To **nie silnik**. To skóra na hoście: boot, Studio, skrypty.  
+**Musi** wołać substrat (`KARMAZYN_SUBSTRATE=native` = właściwa droga).
 
 | Obszar | Path (orientacyjnie) |
 |--------|----------------------|
 | Boot / REPL host | `software/karmazyn_boot.py`, root mirror |
 | Studio SDL | `karmazyn_studio.py` |
-| Guest Lua | `LUA/`, `lua_bin/` |
-| Substrat z Pythona | `KARMAZYN_SUBSTRATE=native\|python` |
-| Holon (pamięć SE) | osobny workspace **Karmin_Ae** — nie mylić z jądrem |
+| Lua / mini-Lisp / … | goście — cienkie języki na Store |
+| Holon (pamięć SE) | **Karmin_Ae** — osobny produkt; nie silnik Karmazyn |
 
 **Uczciwe sformułowania:**  
-„Product host runtime”, „dev-boot”, „Studio na hoście”.  
-**Nie:** „samodzielny system operacyjny”.
+„cienka warstwa / Studio / gość na substracie”.  
+**Nie:** „jądro w Pythonie”, „CPython rządzi Karmazynem”, „samodzielny OS”.
 
 ---
 
@@ -185,11 +223,12 @@ cd C:\Users\drwis\KarmazynOs
 
 ## 11. Zakazy narracyjne
 
-1. Mówić „mamy OS / GRUB / bare-metal Store”, gdy jest tylko host + marker.  
-2. Nazywać shell **Gentoo-stage2**.  
-3. Twierdzić „self-host kcc”, bez Phase 4 + bramki.  
-4. Traktować Python Store jako **jedyny** kanon (native jest default substratu).  
-5. Mieszać **Karmin_Ae (pamięć SE)** z jądrem KarmazynOs.
+1. Mówić, że **język** (Python, Lua, Lisp, Julia…) **rządzi** — rządzi tylko **substrat**.  
+2. Mówić „jądro w CPython” / „przejście na Rust” tak, jakby silnika jeszcze nie było — **silnik już jest (substrat w Rust)**.  
+3. Nazywać shell **Gentoo-stage2** albo „OS”.  
+4. Twierdzić „self-host kcc” bez Phase 4 + bramki.  
+5. Traktować Python Store jako konkurencyjny silnik (to cienka / golden warstwa).  
+6. Mieszać **Karmin_Ae** z substratem KarmazynOs.
 
 ---
 
