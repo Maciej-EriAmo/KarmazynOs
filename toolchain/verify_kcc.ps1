@@ -1,6 +1,6 @@
-# Own-compiler gate (Tor B TB.1–TB.3d+ + TB.4 Phase 0–2):
+# Own-compiler gate (Tor B TB.1–TB.3d+ + TB.4 Phase 0–3):
 #   stage0 rustc builds kcc; kcc builds critical .k0; golden law vs slab;
-#   structs; self-host: tok_kind + lex_buffer + parse_mini.
+#   structs; self-host: tok_kind + lex_buffer + parse_mini + emit_mini.
 # Foreign: rustc (stage0), gcc (link), optional python for table golden.
 # Own: kcc frontend+codegen + .k0 sources.
 #
@@ -17,7 +17,7 @@ $Out = Join-Path $Root "out\kcc"
 $Slab = Join-Path $Root "native\karmazyn_slab"
 New-Item -ItemType Directory -Force -Path $Out | Out-Null
 
-Write-Host "=== kcc verify TB.1-TB.3d+ / TB.4 Phase0-2 (own compiler) ===" -ForegroundColor Cyan
+Write-Host "=== kcc verify TB.1-TB.3d+ / TB.4 Phase0-3 (own compiler) ===" -ForegroundColor Cyan
 Write-Host "kcc crate: $Kcc"
 
 Push-Location $Kcc
@@ -107,6 +107,15 @@ try {
     & $pmRun
     if ($LASTEXITCODE -ne 0) { throw "parse_mini expected exit 0, got $LASTEXITCODE" }
 
+    Write-Host "  kcc emit_mini.k0 (TB.4 Phase 3) expect exit 0"
+    $emSrc = Join-Path $Root "toolchain\kcc_selfhost\emit_mini.k0"
+    $emBin = Join-Path $Out "emit_mini"
+    & $exe $emSrc --safe --cc -o $emBin
+    if ($LASTEXITCODE -ne 0) { throw "kcc emit_mini failed" }
+    $emRun = if (Test-Path "$emBin.exe") { "$emBin.exe" } else { $emBin }
+    & $emRun
+    if ($LASTEXITCODE -ne 0) { throw "emit_mini expected exit 0, got $LASTEXITCODE" }
+
     $cText = Get-Content (Join-Path $Out "thermal_smoke.c") -Raw
     if ($cText -notmatch "k0_state_code") { throw "C missing k0_state_code" }
     $cStore = Get-Content (Join-Path $Out "store_mini.c") -Raw
@@ -138,5 +147,5 @@ if ($pyCmd) {
 
 Write-Host ""
 Write-Host "=== KCC_VERIFY_OK ===" -ForegroundColor Green
-Write-Host "Own: kcc + .k0. Stage0: rustc (kcc+slab tests). Link: gcc. Golden: TB.3/3b + structs + TB.4 P0-2."
+Write-Host "Own: kcc + .k0. Stage0: rustc (kcc+slab tests). Link: gcc. Golden: TB.3/3b + structs + TB.4 P0-3."
 exit 0

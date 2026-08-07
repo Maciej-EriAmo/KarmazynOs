@@ -64,7 +64,7 @@ cd C:\Users\drwis\KarmazynOs
 | **TB.3c** | kcc 0.5: for + break/continue | ✅ |
 | **TB.3d** | kcc 0.6: struct + field access/assign + by-value params | ✅ |
 | **TB.3d+** | kcc 0.6.1: nested fields + return-struct | ✅ |
-| **TB.4** | Self-host: `kcc` w K0 | 🚧 **Phase 2** (`parse_mini.k0` fn/let/return) |
+| **TB.4** | Self-host: `kcc` w K0 | 🚧 **Phase 3** (`emit_mini` IR/sem/emit/eval) |
 | **TB.5** | Własny backend (bez gcc) — opcjonalnie | ❌ |
 
 ## LFS analogia (aktualna)
@@ -90,4 +90,4 @@ cd C:\Users\drwis\KarmazynOs
 
 ---
 
-*2026-08-07: TB.0–TB.3d+ (kcc **0.6.1**) + TB.4 **Phase 2** (`parse_mini` fn/let/return/expr; lex Phase 0–1); golden TB.3/3b intact.*
+*2026-08-07: TB.0–TB.3d+ (kcc **0.6.1**) + TB.4 **Phase 3** (`emit_mini` IR+sem+emit C+eval; Phase 0–2 lex/parse); golden TB.3/3b intact.*

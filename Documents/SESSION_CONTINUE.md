@@ -1,7 +1,7 @@
 # SESSION_CONTINUE — KarmazynOs (kontynuacja)
 
 **Data:** 2026-08-07  
-**Repo:** `main` (kcc **0.6.1**, TB.4 **Phase 2** parse_mini, Tor A `ksub_client`)  
+**Repo:** `main` (kcc **0.6.1**, TB.4 **Phase 3** emit_mini, Tor A `ksub_client`)  
 **Holon:** projekt `[Karmazyn]` — boot: `cd C:\Users\drwis\Karmin_Ae` → `python agent_boot.py --project Karmazyn`
 
 ---
@@ -17,9 +17,9 @@
 - example `struct_point.k0` exit **50**
 - gate `verify_kcc` + 25 cargo tests
 
-### 3. TB.4 self-host — **Phase 0–2**
-- Phase 0–1: `lex_common` / `lex_engine` / `tok_kind` / `lex_buffer`
-- Phase 2: `parse_mini.k0` — fn/let/return/expr + reject bare return
+### 3. TB.4 self-host — **Phase 0–3**
+- Phase 0–2: lex + parse_mini
+- Phase 3: `emit_mini.k0` — IR, sem (undeclared), emit C buffer, eval
 - w `verify_kcc` (exit 0)
 
 ### 4. Tor A — thin C client
@@ -41,7 +41,7 @@ cd C:\Users\drwis\KarmazynOs
 
 ## Next (opcjonalne)
 
-1. TB.4 Phase 3 — sem + emit C subset  
+1. TB.4 Phase 4 — bootstrap self-host loop  
 2. Shell: więcej komend / polish Stage2  
 3. Tor A product (Starlink / SDL) — poza gate’ami  
 4. **Stop** — bramki zielone

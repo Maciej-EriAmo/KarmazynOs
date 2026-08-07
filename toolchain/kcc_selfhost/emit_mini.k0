@@ -1,0 +1,1173 @@
+// TB.4 Phase 3 — sem + emit C subset + eval
+// Pipeline: ASCII src → lex → IR (RPN stmts) → sem → emit C bytes → eval
+//
+// IR ops (ops[], a[], b[]):
+//   1 INT     a=value
+//   2 IDENT   a=start b=end (src span)
+//   3 ADD
+//   4 SUB
+//   5 LET     a=name_start b=name_end; next ops until 8 form expr
+//   6 RET     next ops until 8 form expr
+//   7 FN      one function body follows
+//   8 END     end of expr / end of fn (context)
+//
+// stats: [0]n_fn [1]n_let [2]n_ret [3]n_int [4]last_int [5]eval_result [6]emit_len
+// Exit 0 on pass.
+
+#include "lex_engine.k0"
+
+fn perr(code: i32) -> i32 {
+    return 0 - (200 + code);
+}
+
+fn ir_push(ops: [i32; 64], a: [i32; 64], b: [i32; 64], n: i32, op: i32, aa: i32, bb: i32) -> i32 {
+    if n >= 63 {
+        return perr(1);
+    }
+    ops[n] = op;
+    a[n] = aa;
+    b[n] = bb;
+    return n + 1;
+}
+
+fn expect_kind(kinds: [i32; 32], pos: i32, want: i32) -> i32 {
+    if kinds[pos] != want {
+        return perr(2);
+    }
+    return pos + 1;
+}
+
+fn expect_punct(
+    src: [i32; 64],
+    kinds: [i32; 32],
+    starts: [i32; 32],
+    ends: [i32; 32],
+    pos: i32,
+    ch: i32
+) -> i32 {
+    if kinds[pos] != 4 {
+        return perr(3);
+    }
+    if punct_at(src, starts, ends, pos) != ch {
+        return perr(4);
+    }
+    return pos + 1;
+}
+
+// --- parse into IR; returns new pos or negative; *pn is ir length via array ---
+
+fn parse_primary_ir(
+    src: [i32; 64],
+    kinds: [i32; 32],
+    starts: [i32; 32],
+    ends: [i32; 32],
+    pos: i32,
+    ops: [i32; 64],
+    oa: [i32; 64],
+    ob: [i32; 64],
+    irn: [i32; 1],
+    stats: [i32; 8]
+) -> i32 {
+    let nn: i32 = 0;
+    let v: i32 = 0;
+    if kinds[pos] == 2 {
+        v = int_value(src, starts, ends, pos);
+        nn = ir_push(ops, oa, ob, irn[0], 1, v, 0);
+        if nn < 0 {
+            return nn;
+        }
+        irn[0] = nn;
+        stats[3] = stats[3] + 1;
+        stats[4] = v;
+        return pos + 1;
+    }
+    if kinds[pos] == 1 {
+        nn = ir_push(ops, oa, ob, irn[0], 2, starts[pos], ends[pos]);
+        if nn < 0 {
+            return nn;
+        }
+        irn[0] = nn;
+        return pos + 1;
+    }
+    return perr(10);
+}
+
+fn parse_expr_ir(
+    src: [i32; 64],
+    kinds: [i32; 32],
+    starts: [i32; 32],
+    ends: [i32; 32],
+    pos: i32,
+    ops: [i32; 64],
+    oa: [i32; 64],
+    ob: [i32; 64],
+    irn: [i32; 1],
+    stats: [i32; 8]
+) -> i32 {
+    let ch: i32 = 0;
+    let op: i32 = 0;
+    let nn: i32 = 0;
+    pos = parse_primary_ir(src, kinds, starts, ends, pos, ops, oa, ob, irn, stats);
+    if pos < 0 {
+        return pos;
+    }
+    while 1 == 1 {
+        if kinds[pos] != 4 {
+            break;
+        }
+        ch = punct_at(src, starts, ends, pos);
+        if ch != 43 {
+            if ch != 45 {
+                break;
+            }
+        }
+        if ch == 45 {
+            if kinds[pos + 1] == 4 {
+                if punct_at(src, starts, ends, pos + 1) == 62 {
+                    break;
+                }
+            }
+        }
+        pos = pos + 1;
+        pos = parse_primary_ir(src, kinds, starts, ends, pos, ops, oa, ob, irn, stats);
+        if pos < 0 {
+            return pos;
+        }
+        op = 3;
+        if ch == 45 {
+            op = 4;
+        }
+        nn = ir_push(ops, oa, ob, irn[0], op, 0, 0);
+        if nn < 0 {
+            return nn;
+        }
+        irn[0] = nn;
+    }
+    return pos;
+}
+
+fn parse_stmt_ir(
+    src: [i32; 64],
+    kinds: [i32; 32],
+    starts: [i32; 32],
+    ends: [i32; 32],
+    pos: i32,
+    ops: [i32; 64],
+    oa: [i32; 64],
+    ob: [i32; 64],
+    irn: [i32; 1],
+    stats: [i32; 8]
+) -> i32 {
+    let ns: i32 = 0;
+    let ne: i32 = 0;
+    let nn: i32 = 0;
+    if kinds[pos] != 1 {
+        return perr(20);
+    }
+    if kw_let(src, starts, ends, pos) != 0 {
+        pos = pos + 1;
+        if kinds[pos] != 1 {
+            return perr(21);
+        }
+        ns = starts[pos];
+        ne = ends[pos];
+        pos = pos + 1;
+        pos = expect_punct(src, kinds, starts, ends, pos, 61);
+        if pos < 0 {
+            return pos;
+        }
+        nn = ir_push(ops, oa, ob, irn[0], 5, ns, ne);
+        if nn < 0 {
+            return nn;
+        }
+        irn[0] = nn;
+        pos = parse_expr_ir(src, kinds, starts, ends, pos, ops, oa, ob, irn, stats);
+        if pos < 0 {
+            return pos;
+        }
+        nn = ir_push(ops, oa, ob, irn[0], 8, 0, 0);
+        if nn < 0 {
+            return nn;
+        }
+        irn[0] = nn;
+        pos = expect_punct(src, kinds, starts, ends, pos, 59);
+        if pos < 0 {
+            return pos;
+        }
+        stats[1] = stats[1] + 1;
+        return pos;
+    }
+    if kw_return(src, starts, ends, pos) != 0 {
+        pos = pos + 1;
+        nn = ir_push(ops, oa, ob, irn[0], 6, 0, 0);
+        if nn < 0 {
+            return nn;
+        }
+        irn[0] = nn;
+        pos = parse_expr_ir(src, kinds, starts, ends, pos, ops, oa, ob, irn, stats);
+        if pos < 0 {
+            return pos;
+        }
+        nn = ir_push(ops, oa, ob, irn[0], 8, 0, 0);
+        if nn < 0 {
+            return nn;
+        }
+        irn[0] = nn;
+        pos = expect_punct(src, kinds, starts, ends, pos, 59);
+        if pos < 0 {
+            return pos;
+        }
+        stats[2] = stats[2] + 1;
+        return pos;
+    }
+    return perr(22);
+}
+
+fn parse_fn_ir(
+    src: [i32; 64],
+    kinds: [i32; 32],
+    starts: [i32; 32],
+    ends: [i32; 32],
+    pos: i32,
+    ops: [i32; 64],
+    oa: [i32; 64],
+    ob: [i32; 64],
+    irn: [i32; 1],
+    stats: [i32; 8]
+) -> i32 {
+    if kinds[pos] != 1 {
+        return perr(30);
+    }
+    if kw_fn(src, starts, ends, pos) == 0 {
+        return perr(31);
+    }
+    pos = pos + 1;
+    pos = expect_kind(kinds, pos, 1);
+    if pos < 0 {
+        return pos;
+    }
+    pos = expect_punct(src, kinds, starts, ends, pos, 40);
+    if pos < 0 {
+        return pos;
+    }
+    pos = expect_punct(src, kinds, starts, ends, pos, 41);
+    if pos < 0 {
+        return pos;
+    }
+    if kinds[pos] == 4 {
+        if punct_at(src, starts, ends, pos) == 45 {
+            if kinds[pos + 1] == 4 {
+                if punct_at(src, starts, ends, pos + 1) == 62 {
+                    pos = pos + 2;
+                    if kinds[pos] != 1 {
+                        return perr(32);
+                    }
+                    if kw_i32(src, starts, ends, pos) == 0 {
+                        return perr(33);
+                    }
+                    pos = pos + 1;
+                }
+            }
+        }
+    }
+    pos = expect_punct(src, kinds, starts, ends, pos, 123);
+    if pos < 0 {
+        return pos;
+    }
+    let nn: i32 = 0;
+    nn = ir_push(ops, oa, ob, irn[0], 7, 0, 0);
+    if nn < 0 {
+        return nn;
+    }
+    irn[0] = nn;
+    while kinds[pos] != 0 {
+        if kinds[pos] == 4 {
+            if punct_at(src, starts, ends, pos) == 125 {
+                break;
+            }
+        }
+        pos = parse_stmt_ir(src, kinds, starts, ends, pos, ops, oa, ob, irn, stats);
+        if pos < 0 {
+            return pos;
+        }
+    }
+    pos = expect_punct(src, kinds, starts, ends, pos, 125);
+    if pos < 0 {
+        return pos;
+    }
+    nn = ir_push(ops, oa, ob, irn[0], 8, 0, 0);
+    if nn < 0 {
+        return nn;
+    }
+    irn[0] = nn;
+    stats[0] = stats[0] + 1;
+    return pos;
+}
+
+fn parse_all_ir(
+    src: [i32; 64],
+    kinds: [i32; 32],
+    starts: [i32; 32],
+    ends: [i32; 32],
+    ops: [i32; 64],
+    oa: [i32; 64],
+    ob: [i32; 64],
+    irn: [i32; 1],
+    stats: [i32; 8]
+) -> i32 {
+    irn[0] = 0;
+    stats[0] = 0;
+    stats[1] = 0;
+    stats[2] = 0;
+    stats[3] = 0;
+    stats[4] = 0;
+    let pos: i32 = 0;
+    if kinds[pos] == 0 {
+        return perr(40);
+    }
+    while kinds[pos] != 0 {
+        pos = parse_fn_ir(src, kinds, starts, ends, pos, ops, oa, ob, irn, stats);
+        if pos < 0 {
+            return pos;
+        }
+    }
+    return pos;
+}
+
+// --- span equality ---
+fn span_eq(src: [i32; 64], s1: i32, e1: i32, s2: i32, e2: i32) -> i32 {
+    if e1 - s1 != e2 - s2 {
+        return 0;
+    }
+    let i: i32 = 0;
+    let n: i32 = e1 - s1;
+    while i < n {
+        if src[s1 + i] != src[s2 + i] {
+            return 0;
+        }
+        i = i + 1;
+    }
+    return 1;
+}
+
+// --- sem: declared names for IDENT in expr ---
+fn sem_check(
+    src: [i32; 64],
+    ops: [i32; 64],
+    oa: [i32; 64],
+    ob: [i32; 64],
+    n: i32
+) -> i32 {
+    let ds: [i32; 16];
+    let de: [i32; 16];
+    let nd: i32 = 0;
+    let i: i32 = 0;
+    let op: i32 = 0;
+    let j: i32 = 0;
+    let k: i32 = 0;
+    let ok: i32 = 0;
+    while i < n {
+        op = ops[i];
+        if op == 7 {
+            nd = 0;
+            i = i + 1;
+            continue;
+        }
+        if op == 5 {
+            j = 0;
+            while j < nd {
+                if span_eq(src, oa[i], ob[i], ds[j], de[j]) != 0 {
+                    return perr(50);
+                }
+                j = j + 1;
+            }
+            if nd >= 16 {
+                return perr(51);
+            }
+            ds[nd] = oa[i];
+            de[nd] = ob[i];
+            nd = nd + 1;
+            i = i + 1;
+            while i < n {
+                if ops[i] == 8 {
+                    i = i + 1;
+                    break;
+                }
+                if ops[i] == 2 {
+                    ok = 0;
+                    k = 0;
+                    while k < nd {
+                        if span_eq(src, oa[i], ob[i], ds[k], de[k]) != 0 {
+                            ok = 1;
+                        }
+                        k = k + 1;
+                    }
+                    if ok == 0 {
+                        return perr(52);
+                    }
+                }
+                i = i + 1;
+            }
+            continue;
+        }
+        if op == 6 {
+            i = i + 1;
+            while i < n {
+                if ops[i] == 8 {
+                    i = i + 1;
+                    break;
+                }
+                if ops[i] == 2 {
+                    ok = 0;
+                    k = 0;
+                    while k < nd {
+                        if span_eq(src, oa[i], ob[i], ds[k], de[k]) != 0 {
+                            ok = 1;
+                        }
+                        k = k + 1;
+                    }
+                    if ok == 0 {
+                        return perr(53);
+                    }
+                }
+                i = i + 1;
+            }
+            continue;
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+// --- eval expr from ir[i..] until END; returns value, writes end index to oute[0] ---
+fn eval_expr(
+    src: [i32; 64],
+    ops: [i32; 64],
+    oa: [i32; 64],
+    ob: [i32; 64],
+    i: i32,
+    n: i32,
+    env_s: [i32; 16],
+    env_e: [i32; 16],
+    env_v: [i32; 16],
+    nenv: i32,
+    oute: [i32; 1]
+) -> i32 {
+    let st: [i32; 16];
+    let sp: i32 = 0;
+    while i < n {
+        let op: i32 = ops[i];
+        if op == 8 {
+            oute[0] = i + 1;
+            if sp < 1 {
+                return 0;
+            }
+            return st[sp - 1];
+        }
+        if op == 1 {
+            st[sp] = oa[i];
+            sp = sp + 1;
+            i = i + 1;
+            continue;
+        }
+        if op == 2 {
+            let k: i32 = 0;
+            let found: i32 = 0;
+            let val: i32 = 0;
+            while k < nenv {
+                if span_eq(src, oa[i], ob[i], env_s[k], env_e[k]) != 0 {
+                    found = 1;
+                    val = env_v[k];
+                }
+                k = k + 1;
+            }
+            st[sp] = val;
+            sp = sp + 1;
+            i = i + 1;
+            continue;
+        }
+        if op == 3 {
+            let r: i32 = st[sp - 1];
+            let l: i32 = st[sp - 2];
+            sp = sp - 2;
+            st[sp] = l + r;
+            sp = sp + 1;
+            i = i + 1;
+            continue;
+        }
+        if op == 4 {
+            let r2: i32 = st[sp - 1];
+            let l2: i32 = st[sp - 2];
+            sp = sp - 2;
+            st[sp] = l2 - r2;
+            sp = sp + 1;
+            i = i + 1;
+            continue;
+        }
+        i = i + 1;
+    }
+    oute[0] = i;
+    return 0;
+}
+
+fn eval_program(
+    src: [i32; 64],
+    ops: [i32; 64],
+    oa: [i32; 64],
+    ob: [i32; 64],
+    n: i32
+) -> i32 {
+    let env_s: [i32; 16];
+    let env_e: [i32; 16];
+    let env_v: [i32; 16];
+    let nenv: i32 = 0;
+    let i: i32 = 0;
+    let oute: [i32; 1];
+    let last: i32 = 0;
+    while i < n {
+        if ops[i] == 7 {
+            nenv = 0;
+            i = i + 1;
+            continue;
+        }
+        if ops[i] == 5 {
+            let ns: i32 = oa[i];
+            let ne: i32 = ob[i];
+            i = i + 1;
+            let v: i32 = eval_expr(src, ops, oa, ob, i, n, env_s, env_e, env_v, nenv, oute);
+            i = oute[0];
+            env_s[nenv] = ns;
+            env_e[nenv] = ne;
+            env_v[nenv] = v;
+            nenv = nenv + 1;
+            continue;
+        }
+        if ops[i] == 6 {
+            i = i + 1;
+            last = eval_expr(src, ops, oa, ob, i, n, env_s, env_e, env_v, nenv, oute);
+            i = oute[0];
+            continue;
+        }
+        i = i + 1;
+    }
+    return last;
+}
+
+// --- emit C into out[] as ASCII; returns length ---
+fn emit_ch(out: [i32; 256], n: i32, c: i32) -> i32 {
+    if n >= 255 {
+        return n;
+    }
+    out[n] = c;
+    return n + 1;
+}
+
+fn emit_span(out: [i32; 256], n: i32, src: [i32; 64], s: i32, e: i32) -> i32 {
+    let i: i32 = s;
+    while i < e {
+        n = emit_ch(out, n, src[i]);
+        i = i + 1;
+    }
+    return n;
+}
+
+fn emit_lit(out: [i32; 256], n: i32, v: i32) -> i32 {
+    // decimal (non-negative MVP)
+    if v == 0 {
+        return emit_ch(out, n, 48);
+    }
+    let digs: [i32; 16];
+    let nd: i32 = 0;
+    let x: i32 = v;
+    while x > 0 {
+        digs[nd] = x % 10;
+        nd = nd + 1;
+        x = x / 10;
+    }
+    let j: i32 = nd;
+    while j > 0 {
+        j = j - 1;
+        n = emit_ch(out, n, 48 + digs[j]);
+    }
+    return n;
+}
+
+fn emit_cstr(out: [i32; 256], n: i32, p0: i32, p1: i32, p2: i32, p3: i32, p4: i32, p5: i32, p6: i32, p7: i32, len: i32) -> i32 {
+    // emit up to 8 fixed bytes from args
+    if len > 0 {
+        n = emit_ch(out, n, p0);
+    }
+    if len > 1 {
+        n = emit_ch(out, n, p1);
+    }
+    if len > 2 {
+        n = emit_ch(out, n, p2);
+    }
+    if len > 3 {
+        n = emit_ch(out, n, p3);
+    }
+    if len > 4 {
+        n = emit_ch(out, n, p4);
+    }
+    if len > 5 {
+        n = emit_ch(out, n, p5);
+    }
+    if len > 6 {
+        n = emit_ch(out, n, p6);
+    }
+    if len > 7 {
+        n = emit_ch(out, n, p7);
+    }
+    return n;
+}
+
+fn emit_expr_c(
+    out: [i32; 256],
+    n: i32,
+    src: [i32; 64],
+    ops: [i32; 64],
+    oa: [i32; 64],
+    ob: [i32; 64],
+    i: i32,
+    irn: i32,
+    oute: [i32; 1]
+) -> i32 {
+    // RPN → left-assoc infix with parens: (a)+(b)
+    let st_s: [i32; 16];
+    let st_e: [i32; 16];
+    // store as spans into a scratch area of out? Simpler: rebuild using recursive emission to temp
+    // MVP: only support INT, IDENT, binary + - by walking RPN with string stack as (start,end) in out buffer pieces
+    // Use parallel start/len in out for fragments — too heavy.
+    // Flat approach: if single INT/IDENT no binops; if binops emit fully parenthesized from RPN stack of fragment ranges in `out`.
+
+    let frag_s: [i32; 16];
+    let frag_e: [i32; 16];
+    let sp: i32 = 0;
+    let base: i32 = n;
+
+    while i < irn {
+        if ops[i] == 8 {
+            oute[0] = i + 1;
+            if sp >= 1 {
+                // copy fragment already in place — fragments point into out
+                n = frag_e[sp - 1];
+            }
+            return n;
+        }
+        if ops[i] == 1 {
+            let s0: i32 = n;
+            n = emit_lit(out, n, oa[i]);
+            frag_s[sp] = s0;
+            frag_e[sp] = n;
+            sp = sp + 1;
+            i = i + 1;
+            continue;
+        }
+        if ops[i] == 2 {
+            let s1: i32 = n;
+            n = emit_span(out, n, src, oa[i], ob[i]);
+            frag_s[sp] = s1;
+            frag_e[sp] = n;
+            sp = sp + 1;
+            i = i + 1;
+            continue;
+        }
+        if op_is_binop(ops[i]) != 0 {
+            // pop right, left — they are already contiguous in out if we rewrote;
+            // rebuild: save left/right text by indices, write (left)op(right) at end
+            let rs: i32 = frag_s[sp - 1];
+            let re: i32 = frag_e[sp - 1];
+            let ls: i32 = frag_s[sp - 2];
+            let le: i32 = frag_e[sp - 2];
+            sp = sp - 2;
+            // copy left and right to temp arrays
+            let L: [i32; 64];
+            let R: [i32; 64];
+            let nl: i32 = 0;
+            let nr: i32 = 0;
+            let t: i32 = ls;
+            while t < le {
+                L[nl] = out[t];
+                nl = nl + 1;
+                t = t + 1;
+            }
+            t = rs;
+            while t < re {
+                R[nr] = out[t];
+                nr = nr + 1;
+                t = t + 1;
+            }
+            // rewind n to min(ls,rs) — left should be before right
+            n = ls;
+            if rs < ls {
+                n = rs;
+            }
+            let s2: i32 = n;
+            n = emit_ch(out, n, 40);
+            t = 0;
+            while t < nl {
+                n = emit_ch(out, n, L[t]);
+                t = t + 1;
+            }
+            n = emit_ch(out, n, 41);
+            if ops[i] == 3 {
+                n = emit_ch(out, n, 43);
+            } else {
+                n = emit_ch(out, n, 45);
+            }
+            n = emit_ch(out, n, 40);
+            t = 0;
+            while t < nr {
+                n = emit_ch(out, n, R[t]);
+                t = t + 1;
+            }
+            n = emit_ch(out, n, 41);
+            frag_s[sp] = s2;
+            frag_e[sp] = n;
+            sp = sp + 1;
+            i = i + 1;
+            continue;
+        }
+        i = i + 1;
+    }
+    oute[0] = i;
+    return n;
+}
+
+fn op_is_binop(op: i32) -> i32 {
+    if op == 3 {
+        return 1;
+    }
+    if op == 4 {
+        return 1;
+    }
+    return 0;
+}
+
+fn emit_program(
+    src: [i32; 64],
+    ops: [i32; 64],
+    oa: [i32; 64],
+    ob: [i32; 64],
+    irn: i32,
+    out: [i32; 256]
+) -> i32 {
+    let n: i32 = 0;
+    let oute: [i32; 1];
+    // int main(void){\n
+    n = emit_ch(out, n, 105);
+    n = emit_ch(out, n, 110);
+    n = emit_ch(out, n, 116);
+    n = emit_ch(out, n, 32);
+    n = emit_ch(out, n, 109);
+    n = emit_ch(out, n, 97);
+    n = emit_ch(out, n, 105);
+    n = emit_ch(out, n, 110);
+    n = emit_ch(out, n, 40);
+    n = emit_ch(out, n, 118);
+    n = emit_ch(out, n, 111);
+    n = emit_ch(out, n, 105);
+    n = emit_ch(out, n, 100);
+    n = emit_ch(out, n, 41);
+    n = emit_ch(out, n, 123);
+    n = emit_ch(out, n, 10);
+    let i: i32 = 0;
+    while i < irn {
+        if ops[i] == 7 {
+            i = i + 1;
+            continue;
+        }
+        if ops[i] == 5 {
+            // int32_t name = expr;\n
+            n = emit_ch(out, n, 32);
+            n = emit_ch(out, n, 32);
+            n = emit_ch(out, n, 105);
+            n = emit_ch(out, n, 110);
+            n = emit_ch(out, n, 116);
+            n = emit_ch(out, n, 51);
+            n = emit_ch(out, n, 50);
+            n = emit_ch(out, n, 95);
+            n = emit_ch(out, n, 116);
+            n = emit_ch(out, n, 32);
+            n = emit_span(out, n, src, oa[i], ob[i]);
+            n = emit_ch(out, n, 32);
+            n = emit_ch(out, n, 61);
+            n = emit_ch(out, n, 32);
+            i = i + 1;
+            n = emit_expr_c(out, n, src, ops, oa, ob, i, irn, oute);
+            i = oute[0];
+            n = emit_ch(out, n, 59);
+            n = emit_ch(out, n, 10);
+            continue;
+        }
+        if ops[i] == 6 {
+            n = emit_ch(out, n, 32);
+            n = emit_ch(out, n, 32);
+            n = emit_ch(out, n, 114);
+            n = emit_ch(out, n, 101);
+            n = emit_ch(out, n, 116);
+            n = emit_ch(out, n, 117);
+            n = emit_ch(out, n, 114);
+            n = emit_ch(out, n, 110);
+            n = emit_ch(out, n, 32);
+            i = i + 1;
+            n = emit_expr_c(out, n, src, ops, oa, ob, i, irn, oute);
+            i = oute[0];
+            n = emit_ch(out, n, 59);
+            n = emit_ch(out, n, 10);
+            continue;
+        }
+        i = i + 1;
+    }
+    n = emit_ch(out, n, 125);
+    n = emit_ch(out, n, 10);
+    return n;
+}
+
+fn match_prefix(out: [i32; 256], n: i32, p0: i32, p1: i32, p2: i32, p3: i32, p4: i32, p5: i32, p6: i32, p7: i32, p8: i32, p9: i32, len: i32) -> i32 {
+    if n < len {
+        return 0;
+    }
+    if len > 0 {
+        if out[0] != p0 {
+            return 0;
+        }
+    }
+    if len > 1 {
+        if out[1] != p1 {
+            return 0;
+        }
+    }
+    if len > 2 {
+        if out[2] != p2 {
+            return 0;
+        }
+    }
+    if len > 3 {
+        if out[3] != p3 {
+            return 0;
+        }
+    }
+    if len > 4 {
+        if out[4] != p4 {
+            return 0;
+        }
+    }
+    if len > 5 {
+        if out[5] != p5 {
+            return 0;
+        }
+    }
+    if len > 6 {
+        if out[6] != p6 {
+            return 0;
+        }
+    }
+    if len > 7 {
+        if out[7] != p7 {
+            return 0;
+        }
+    }
+    if len > 8 {
+        if out[8] != p8 {
+            return 0;
+        }
+    }
+    if len > 9 {
+        if out[9] != p9 {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+fn contains_seq(out: [i32; 256], n: i32, a: i32, b: i32, c: i32, d: i32, e: i32, e_len: i32) -> i32 {
+    // search for sequence of e_len chars (1..5)
+    let i: i32 = 0;
+    while i + e_len <= n {
+        let ok: i32 = 1;
+        if e_len > 0 {
+            if out[i] != a {
+                ok = 0;
+            }
+        }
+        if e_len > 1 {
+            if out[i + 1] != b {
+                ok = 0;
+            }
+        }
+        if e_len > 2 {
+            if out[i + 2] != c {
+                ok = 0;
+            }
+        }
+        if e_len > 3 {
+            if out[i + 3] != d {
+                ok = 0;
+            }
+        }
+        if e_len > 4 {
+            if out[i + 4] != e {
+                ok = 0;
+            }
+        }
+        if ok != 0 {
+            return 1;
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+fn compile_pipeline(
+    src: [i32; 64],
+    nsrc: i32,
+    kinds: [i32; 32],
+    starts: [i32; 32],
+    ends: [i32; 32],
+    ops: [i32; 64],
+    oa: [i32; 64],
+    ob: [i32; 64],
+    irn: [i32; 1],
+    stats: [i32; 8],
+    out: [i32; 256]
+) -> i32 {
+    let nt: i32 = lex_fill(src, nsrc, kinds, starts, ends);
+    if nt < 2 {
+        return perr(60);
+    }
+    let pr: i32 = parse_all_ir(src, kinds, starts, ends, ops, oa, ob, irn, stats);
+    if pr < 0 {
+        return pr;
+    }
+    let sc: i32 = sem_check(src, ops, oa, ob, irn[0]);
+    if sc < 0 {
+        return sc;
+    }
+    let ev: i32 = eval_program(src, ops, oa, ob, irn[0]);
+    stats[5] = ev;
+    let el: i32 = emit_program(src, ops, oa, ob, irn[0], out);
+    stats[6] = el;
+    return 0;
+}
+
+fn main() -> i32 {
+    let src: [i32; 64];
+    let kinds: [i32; 32];
+    let starts: [i32; 32];
+    let ends: [i32; 32];
+    let ops: [i32; 64];
+    let oa: [i32; 64];
+    let ob: [i32; 64];
+    let irn: [i32; 1];
+    let stats: [i32; 8];
+    let out: [i32; 256];
+    let n: i32 = 0;
+    let r: i32 = 0;
+
+    // A: fn main(){return 42;}  → eval 42, C starts with "int main", contains return
+    src[0] = 102;
+    src[1] = 110;
+    src[2] = 32;
+    src[3] = 109;
+    src[4] = 97;
+    src[5] = 105;
+    src[6] = 110;
+    src[7] = 40;
+    src[8] = 41;
+    src[9] = 123;
+    src[10] = 114;
+    src[11] = 101;
+    src[12] = 116;
+    src[13] = 117;
+    src[14] = 114;
+    src[15] = 110;
+    src[16] = 32;
+    src[17] = 52;
+    src[18] = 50;
+    src[19] = 59;
+    src[20] = 125;
+    n = 21;
+    r = compile_pipeline(src, n, kinds, starts, ends, ops, oa, ob, irn, stats, out);
+    if r < 0 {
+        return 10;
+    }
+    if stats[5] != 42 {
+        return 11;
+    }
+    // "int main"
+    if match_prefix(out, stats[6], 105, 110, 116, 32, 109, 97, 105, 110, 40, 118, 10) == 0 {
+        // prefix int main(v — 10 chars: i n t space m a i n ( v
+        return 12;
+    }
+    // "return" as r e t u r
+    if contains_seq(out, stats[6], 114, 101, 116, 117, 114, 5) == 0 {
+        return 13;
+    }
+    // digits 4 2
+    if contains_seq(out, stats[6], 52, 50, 0, 0, 0, 2) == 0 {
+        return 14;
+    }
+
+    // B: fn main(){let x=1;return x;} → eval 1
+    src[0] = 102;
+    src[1] = 110;
+    src[2] = 32;
+    src[3] = 109;
+    src[4] = 97;
+    src[5] = 105;
+    src[6] = 110;
+    src[7] = 40;
+    src[8] = 41;
+    src[9] = 123;
+    src[10] = 108;
+    src[11] = 101;
+    src[12] = 116;
+    src[13] = 32;
+    src[14] = 120;
+    src[15] = 61;
+    src[16] = 49;
+    src[17] = 59;
+    src[18] = 114;
+    src[19] = 101;
+    src[20] = 116;
+    src[21] = 117;
+    src[22] = 114;
+    src[23] = 110;
+    src[24] = 32;
+    src[25] = 120;
+    src[26] = 59;
+    src[27] = 125;
+    n = 28;
+    r = compile_pipeline(src, n, kinds, starts, ends, ops, oa, ob, irn, stats, out);
+    if r < 0 {
+        return 20;
+    }
+    if stats[5] != 1 {
+        return 21;
+    }
+    if stats[1] != 1 {
+        return 22;
+    }
+    // int32_t
+    if contains_seq(out, stats[6], 105, 110, 116, 51, 50, 5) == 0 {
+        return 23;
+    }
+
+    // C: return 1+2 → eval 3
+    src[0] = 102;
+    src[1] = 110;
+    src[2] = 32;
+    src[3] = 109;
+    src[4] = 97;
+    src[5] = 105;
+    src[6] = 110;
+    src[7] = 40;
+    src[8] = 41;
+    src[9] = 123;
+    src[10] = 114;
+    src[11] = 101;
+    src[12] = 116;
+    src[13] = 117;
+    src[14] = 114;
+    src[15] = 110;
+    src[16] = 32;
+    src[17] = 49;
+    src[18] = 43;
+    src[19] = 50;
+    src[20] = 59;
+    src[21] = 125;
+    n = 22;
+    r = compile_pipeline(src, n, kinds, starts, ends, ops, oa, ob, irn, stats, out);
+    if r < 0 {
+        return 30;
+    }
+    if stats[5] != 3 {
+        return 31;
+    }
+    // emitted has +
+    if contains_seq(out, stats[6], 43, 0, 0, 0, 0, 1) == 0 {
+        return 32;
+    }
+
+    // D: sem reject undeclared  fn main(){return y;}
+    src[0] = 102;
+    src[1] = 110;
+    src[2] = 32;
+    src[3] = 109;
+    src[4] = 97;
+    src[5] = 105;
+    src[6] = 110;
+    src[7] = 40;
+    src[8] = 41;
+    src[9] = 123;
+    src[10] = 114;
+    src[11] = 101;
+    src[12] = 116;
+    src[13] = 117;
+    src[14] = 114;
+    src[15] = 110;
+    src[16] = 32;
+    src[17] = 121;
+    src[18] = 59;
+    src[19] = 125;
+    n = 20;
+    r = compile_pipeline(src, n, kinds, starts, ends, ops, oa, ob, irn, stats, out);
+    if r >= 0 {
+        return 40;
+    }
+
+    // E: let a=10; let b=a+5; return b → 15
+    src[0] = 102;
+    src[1] = 110;
+    src[2] = 32;
+    src[3] = 109;
+    src[4] = 97;
+    src[5] = 105;
+    src[6] = 110;
+    src[7] = 40;
+    src[8] = 41;
+    src[9] = 123;
+    src[10] = 108;
+    src[11] = 101;
+    src[12] = 116;
+    src[13] = 32;
+    src[14] = 97;
+    src[15] = 61;
+    src[16] = 49;
+    src[17] = 48;
+    src[18] = 59;
+    src[19] = 108;
+    src[20] = 101;
+    src[21] = 116;
+    src[22] = 32;
+    src[23] = 98;
+    src[24] = 61;
+    src[25] = 97;
+    src[26] = 43;
+    src[27] = 53;
+    src[28] = 59;
+    src[29] = 114;
+    src[30] = 101;
+    src[31] = 116;
+    src[32] = 117;
+    src[33] = 114;
+    src[34] = 110;
+    src[35] = 32;
+    src[36] = 98;
+    src[37] = 59;
+    src[38] = 125;
+    n = 39;
+    r = compile_pipeline(src, n, kinds, starts, ends, ops, oa, ob, irn, stats, out);
+    if r < 0 {
+        return 50;
+    }
+    if stats[5] != 15 {
+        return 51;
+    }
+    if stats[1] != 2 {
+        return 52;
+    }
+
+    return 0;
+}
