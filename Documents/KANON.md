@@ -65,6 +65,21 @@ Product userspace powinien iść **wyżej** (zadania, widoki, gość), a nie kop
 
 **Wniosek:** userspace jest **takim samym klientem substratu** jak inna cienka warstwa — tylko z innej strony (UX). Nie ma osobnego „userspace Store”.
 
+### Król i ministrowie
+
+| Rola | Kto | Wolno |
+|------|-----|--------|
+| **Król** | **tylko substrat** (prawo A/B/T/reach) | stanowi prawo, trzyma prawdę stanu |
+| **Minister** | Karmin_DB, Holon, Studio, shell, Lua, Python, kcc, Cynober wire… | służy, zarządza domeną, woła króla przez szwy |
+| **Uzurpator** (zakaz) | cokolwiek z własnym „Store prawdy” obok jądra | — |
+
+- **Karmin_DB** = minister skarbu (trwałość, KarminQL, sieć) — **nie** król.  
+- **Holon** = minister pamięci SE (handoff) — **nie** baza-król.  
+- **Studio / boot / języki** = ministrowie dworu i posłowie — cienkie warstwy.  
+- **Shell / `ksub_*`** = minister spraw wewnętrznych / adjutant (sys) — bliżej tronu, nadal **nie** król.
+
+**Reszta ma działać tak samo jak DB:** łączy się **szwami** z jądrem, co najwyżej jako minister — nigdy jako drugi król.
+
 ```
 information = stabilization( H ∘ P ∘ A )     # wizja (README)
 prawo silnika (kod):  T = KIEDY · reach = CZY
