@@ -1,86 +1,59 @@
 # SESSION_CONTINUE — KarmazynOs (kontynuacja)
 
-**Data:** 2026-08-06  
-**Repo:** `main` @ **`3f73f76`** (push origin)  
-**Holon:** projekt `[Karmazyn]` — `close` zapisany; boot: `python agent_boot.py --project Karmazyn`
+**Data:** 2026-08-07  
+**Repo:** `main` (kcc **0.6.1**, TB.4 Phase 0, Tor A `ksub_client`)  
+**Holon:** projekt `[Karmazyn]` — boot: `python agent_boot.py --project Karmazyn`
 
 ---
 
-## Co domknięte w tej sesji (kolejność)
+## Domknięte w tej sesji
 
-### Tor B — własny kompilator `kcc`
-| Commit | Treść |
-|--------|--------|
-| `53206f0` | **kcc 0.4 (TB.2f)** type-unify + return-path; 17 tests; `verify_kcc` OK |
-| `9724060` | **TB.3b** golden store_mini reach A–D ↔ `SlabStore` (decay 0.92, settle 80/4) |
+### 1. Push
+- kcc 0.6 TB.3d structs → origin/main
 
-- Gate: `.\toolchain\verify_kcc.ps1` → `KCC_VERIFY_OK`
-- Docs: `Documents/TOR_B_TOOLCHAIN.pl.md`, `toolchain/SESSION_PROGRESS_KCC.md`, `toolchain/kcc/README.md`
-- **TB.4 self-host / TB.5 no-gcc — NIE** (daleko, niepilne)
+### 2. Polish kcc 0.6.1 (TB.3d+)
+- nested fields: `r.origin.x = …`
+- return-struct by value
+- example `struct_point.k0` exit **50**
+- gate `verify_kcc` + 25 cargo tests
 
-### Tor A — runtime bez Pythona
-| Commit | Treść |
-|--------|--------|
-| `d2a887e` | shell **0.3**, `stage2_verify.ps1`, `install_prefix.ps1`, `bootstrap_from_scratch.sh`, batch fail-exit |
-| `3f73f76` | Cargo.lock 0.3.0 |
+### 3. TB.4 self-host — **Phase 0 only**
+- `toolchain/kcc_selfhost/README.md` (fazy 0–4)
+- `tok_kind.k0` — classify_byte + kind codes (host kcc)
+- w `verify_kcc` (exit 0)
 
-- Gate: `.\native\stage2_verify.ps1` → `STAGE2_VERIFY_OK`
-- Prefix: `.\native\install_prefix.ps1` → `dist\prefix\`
-- Full starter: `.\native\bootstrap_from_scratch.ps1` (stage1 + stage2)
-- Docs: `Documents/BOOTSTRAP_STAGES.pl.md`, `native/README.md`
-
-### Inne (wcześniej w sesji / git)
-| Commit | Treść |
-|--------|--------|
-| `4fdaa3e` | `Documents/STARLINK_DOSWIDCZENIE.md` (z holonOs → Karmazyn) |
+### 4. Tor A — thin C client
+- `native/c_smoke/ksub_client.c` — value/heat/T/bind/lookup/unbind/settle
+- `stage1_verify.ps1` buduje stage1_c_smoke **+** ksub_client
 
 ---
 
-## Stan Tora A / B (skrót)
-
-| Etykieta | Status |
-|----------|--------|
-| Stage 1 (jądro + C ABI) | ✅ `stage1_verify` |
-| Stage 2 (shell + KSUB_SNAP) | ⚡ milestone + **`stage2_verify`** |
-| Stage 3 starter (host rustc) | ✅ ps1 + **sh** + **prefix** |
-| Tor B kcc 0.4 + TB.3b golden | ✅ pauza sensowna |
-| TB.4 / own rustc | ❌ nie robić „na zapas” |
-
----
-
-## Next (opcjonalne — wybór na start sesji)
-
-1. **Tor A:** cienki klient C na `ksub_*` (shell już jest rlib); więcej komend shell.  
-2. **Tor A product:** Starlink / boot seed / SDL — poza gate’ami A/B.  
-3. **Tor B:** TB.4 self-host — tylko świadomie długi.  
-4. **Stop** — bramki zielone, nic nie blokuje.
-
-**Nie:** Lua jako warunek Stage2; mylić shell z Gentoo-stage2.
-
----
-
-## Komendy startowe (następna sesja)
+## Bramki
 
 ```powershell
-cd C:\Users\drwis\holonOs
-python agent_boot.py --project Karmazyn
-
 cd C:\Users\drwis\KarmazynOs
-.\native\stage2_verify.ps1
-.\toolchain\verify_kcc.ps1
-# opcjonalnie:
-.\native\bootstrap_from_scratch.ps1
-.\native\install_prefix.ps1
+.\toolchain\verify_kcc.ps1      # KCC_VERIFY_OK
+.\native\stage1_verify.ps1     # STAGE1_VERIFY_OK (+ ksub_client)
+.\native\stage2_verify.ps1     # STAGE2_VERIFY_OK
 ```
 
 ---
 
-## Untracked (NIE w gicie — artefakty / WIP)
+## Next (opcjonalne)
 
-- `dist/` (prefix install output)
-- `out/*.ksub`, `out/kcc/`, …
-- `lua_bin/bubble_probe.lua`, `software/bubble_force_entry.py` — osobny WIP, nie tor A/B tej sesji
+1. TB.4 Phase 1 — lexer buffer w K0  
+2. Shell: więcej komend / polish Stage2  
+3. Tor A product (Starlink / SDL) — poza gate’ami  
+4. **Stop** — bramki zielone
+
+**Nie:** pełny self-host w jednej sesji; mylić shell z Gentoo-stage2.
 
 ---
 
-*Zapis pod kontynuację SE / Grok CLI. Kod na origin/main.*
+## Untracked (artefakty)
+
+- `dist/`, `out/*`, bubble WIP — nie tor A/B tej sesji
+
+---
+
+*Kod na origin po pushu tej sesji.*

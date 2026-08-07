@@ -60,10 +60,11 @@ pub enum Stmt {
         index: Expr,
         value: Expr,
     },
-    /// `name.field = value` (base is local ident for MVP)
+    /// `name.field` or `name.a.b = value` (root is local ident)
     FieldAssign {
         name: String,
-        field: String,
+        /// field chain, len >= 1 (supports nested: `outer.inner.x`)
+        fields: Vec<String>,
         value: Expr,
     },
     Return(Option<Expr>),

@@ -259,25 +259,37 @@ impl<'a> Parser<'a> {
             }
             Tok::Ident(_) => {
                 let name = self.expect_ident()?;
-                // name.field = value
+                // name.field[.field…] = value  |  name.field… expr
                 if self.cur == Tok::Dot {
-                    self.bump()?;
-                    let field = self.expect_ident()?;
+                    let mut fields = Vec::new();
+                    while self.cur == Tok::Dot {
+                        self.bump()?;
+                        fields.push(self.expect_ident()?);
+                    }
+                    if fields.is_empty() {
+                        return Err(format!(
+                            "line {}: expected field name after `.`",
+                            self.lx.line
+                        ));
+                    }
                     if self.cur == Tok::Assign {
                         self.bump()?;
                         let value = self.parse_expr()?;
                         self.eat(&Tok::Semi)?;
                         return Ok(Stmt::FieldAssign {
                             name,
-                            field,
+                            fields,
                             value,
                         });
                     }
-                    // name.field as expr stmt
-                    let mut expr = Expr::Field {
-                        base: Box::new(Expr::Ident(name)),
-                        field,
-                    };
+                    // name.field… as expr stmt
+                    let mut expr = Expr::Ident(name);
+                    for field in fields {
+                        expr = Expr::Field {
+                            base: Box::new(expr),
+                            field,
+                        };
+                    }
                     expr = self.parse_postfix(expr)?;
                     let expr = self.finish_expr(expr)?;
                     self.eat(&Tok::Semi)?;

@@ -1,0 +1,89 @@
+// TB.4 Phase 0 — token kind codes + byte classifier (self-host seed)
+// Compiles with host kcc. Exit 0 on pass.
+//
+// Kind codes (stable for Phase 1 lexer):
+//   0 = EOF / none
+//   1 = IDENT
+//   2 = INT digit
+//   3 = WS
+//   4 = punct (other printable)
+//   10+ = keyword slots (reserved)
+
+fn is_ws(c: i32) -> i32 {
+    if c == 32 { return 1; }
+    if c == 9 { return 1; }
+    if c == 10 { return 1; }
+    if c == 13 { return 1; }
+    return 0;
+}
+
+fn is_digit(c: i32) -> i32 {
+    if c >= 48 {
+        if c <= 57 {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+fn is_alpha(c: i32) -> i32 {
+    if c >= 65 {
+        if c <= 90 {
+            return 1;
+        }
+    }
+    if c >= 97 {
+        if c <= 122 {
+            return 1;
+        }
+    }
+    if c == 95 {
+        return 1;
+    }
+    return 0;
+}
+
+/// Classify one ASCII code unit → kind (0..4).
+fn classify_byte(c: i32) -> i32 {
+    if is_ws(c) != 0 {
+        return 3;
+    }
+    if is_digit(c) != 0 {
+        return 2;
+    }
+    if is_alpha(c) != 0 {
+        return 1;
+    }
+    if c == 0 {
+        return 0;
+    }
+    return 4;
+}
+
+fn main() -> i32 {
+    // 'A' = 65 → IDENT
+    if classify_byte(65) != 1 {
+        return 1;
+    }
+    // '7' = 55 → INT
+    if classify_byte(55) != 2 {
+        return 2;
+    }
+    // ' ' = 32 → WS
+    if classify_byte(32) != 3 {
+        return 3;
+    }
+    // '+' = 43 → punct
+    if classify_byte(43) != 4 {
+        return 4;
+    }
+    // NUL → EOF kind
+    if classify_byte(0) != 0 {
+        return 5;
+    }
+    // '_' → ident
+    if classify_byte(95) != 1 {
+        return 6;
+    }
+    return 0;
+}

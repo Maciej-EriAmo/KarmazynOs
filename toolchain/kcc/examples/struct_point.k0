@@ -1,9 +1,22 @@
-// TB.3d / kcc 0.6 — struct define + field access/assign + whole-struct copy
-// exit: 32  ((10+2)+20 after copy)
+// TB.3d+ / kcc 0.6.1 — struct, nested fields, return-struct, by-value
+// exit: 50  (make_point(10,20) → x+=5 → sum 35 + w5 + h10)
 
 struct Point {
     x: i64
     y: i64
+}
+
+struct Rect {
+    origin: Point
+    w: i64
+    h: i64
+}
+
+fn make_point(x: i64, y: i64) -> Point {
+    let p: Point;
+    p.x = x;
+    p.y = y;
+    return p;
 }
 
 fn sum_xy(p: Point) -> i64 {
@@ -11,11 +24,12 @@ fn sum_xy(p: Point) -> i64 {
 }
 
 fn main() -> i32 {
-    let a: Point;
-    a.x = 10;
-    a.y = 20;
-    let b: Point;
-    b = a;
-    b.x = b.x + 2;
-    return sum_xy(b);
+    let r: Rect;
+    r.origin = make_point(10, 20);
+    r.w = 5;
+    r.h = 10;
+    // nested field write
+    r.origin.x = r.origin.x + 5;
+    // nested field read + return-struct copy into sum
+    return sum_xy(r.origin) + r.w + r.h;
 }

@@ -63,7 +63,8 @@ cd C:\Users\drwis\KarmazynOs
 | **TB.3b** | Golden store_mini reach A–D ↔ `SlabStore` (decay 0.92, settle 80/4) | ✅ |
 | **TB.3c** | kcc 0.5: for + break/continue | ✅ |
 | **TB.3d** | kcc 0.6: struct + field access/assign + by-value params | ✅ |
-| **TB.4** | Self-host: `kcc` w K0 (kcc kompiluje siebie) | ❌ daleko |
+| **TB.3d+** | kcc 0.6.1: nested fields + return-struct | ✅ |
+| **TB.4** | Self-host: `kcc` w K0 | 🚧 **Phase 0** (`toolchain/kcc_selfhost/`) |
 | **TB.5** | Własny backend (bez gcc) — opcjonalnie | ❌ |
 
 ## LFS analogia (aktualna)

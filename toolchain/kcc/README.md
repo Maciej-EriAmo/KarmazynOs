@@ -41,19 +41,20 @@ Gate (TB.1–TB.3d + 0.4 type-unify / return-paths):
 # → KCC_VERIFY_OK  (builds with --safe)
 ```
 
-## K0 language (0.6)
+## K0 language (0.6.1)
 
 - `fn name(a: ty, …) -> ty { … }`
 - types: `i32` `i64` `f64` `bool` · fixed arrays `[f64; 8]` · **`struct Name { … }`**
-- `let x: ty = expr;` · `let a: [T; N];` / `let p: Point;` (zero-init) · `x = expr;` · `a[i] = expr;` · `p.f = expr;`
+- `let x: ty = expr;` · `let a: [T; N];` / `let p: Point;` (zero-init) · `x = expr;` · `a[i] = expr;` · `p.f = expr;` · `p.a.b = expr;`
+- **return struct** by value · nested field read/write
 - `if cond { } else { }` · `while cond { }` · `for (init; cond; step) { }` · `break` / `continue`
 - ops: `+ - * / %` comparisons `&& || !`
-- calls: `foo(1, 2.0)` · index: `a[i]` · field: `p.x`
+- calls: `foo(1, 2.0)` · index: `a[i]` · field: `p.x` / `r.origin.x`
 - `#include "other.k0"` (relative, circular-safe)
-- array **params** → C pointers; **struct params** → C by-value
-- example: `examples/struct_point.k0` (exit 32)
+- array **params** → C pointers; **struct params/returns** → C by-value
+- example: `examples/struct_point.k0` (exit 50)
 
-### Semantics (0.3 → 0.6)
+### Semantics (0.3 → 0.6.1)
 
 | Check | Notes |
 |-------|--------|
@@ -62,17 +63,17 @@ Gate (TB.1–TB.3d + 0.4 type-unify / return-paths):
 | `--safe` array bounds → abort | 0.3 |
 | **type-unify** let/assign/index/call/return | 0.4 — i32↔i64, int→f64; bool/array exact |
 | **return-path** | 0.4 — every path must `return` (if/else both arms count) |
-| **structs** define / field / assign / param (no return struct yet) | 0.6 / TB.3d |
+| **structs** define / field / nested / assign / param / return | 0.6.1 / TB.3d+ |
 
-Not yet: nested arrays, true modules/packages, strings, return-struct, self-host of kcc in K0.
+Not yet: nested arrays, true modules/packages, strings, full self-host of kcc in K0.
 
 ## Next
 
 1. ~~TB.2 / TB.2e / type-unify return-paths (0.4)~~ done.  
 2. ~~TB.3b golden reach store_mini ↔ slab~~ done (`golden_k0` store_mini_*).  
 3. ~~TB.3c for/break/continue (0.5)~~ done.  
-4. ~~TB.3d structs (0.6)~~ done.  
-5. Self-host: rewrite `kcc` in K0 (TB.4, long).  
+4. ~~TB.3d / 3d+ structs + nested + return (0.6.1)~~ done.  
+5. **TB.4 self-host** Phase 0: `toolchain/kcc_selfhost/` (in progress).  
 6. Optional: own backend without gcc (TB.5).
 
 See `Documents/TOR_B_TOOLCHAIN.pl.md`.

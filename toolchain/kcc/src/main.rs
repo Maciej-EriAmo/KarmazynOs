@@ -144,7 +144,7 @@ fn compile_c(c_path: &Path, bin: &Path) -> Result<(), String> {
 
 fn print_help() {
     println!(
-        "kcc 0.6 — Karmazyn own compiler (K0 → C99)
+        "kcc 0.6.1 — Karmazyn own compiler (K0 → C99)
 
 USAGE:
   kcc <file.k0> [-o out.c]
@@ -161,7 +161,7 @@ LANGUAGE:
   #include \"other.k0\"
   fixed arrays [T; N], a[i], array params
   for (init; cond; step) {{ }}  break;  continue;   (TB.3c / 0.5)
-  struct Name {{ field: ty … }}  p.f  p.f = e  (TB.3d / 0.6)
+  struct Name {{ field: ty … }}  p.f  p.a.b = e  return struct  (TB.3d+ / 0.6.1)
   sem: undeclared, arity, no f64 %, type-unify, return-paths, break-in-loop, fields
 
 POLICY:
@@ -310,6 +310,33 @@ fn main() -> i32 {
         assert!(c.contains("typedef struct Point"), "missing typedef: {c}");
         assert!(c.contains("p.x"), "missing field: {c}");
         assert!(c.contains("memset"), "struct zero-init: {c}");
+    }
+
+    #[test]
+    fn struct_return_and_nested() {
+        let src = r#"
+struct Point { x: i64 y: i64 }
+struct Box { p: Point }
+fn mk(x: i64) -> Point {
+    let p: Point;
+    p.x = x;
+    p.y = x;
+    return p;
+}
+fn main() -> i32 {
+    let b: Box;
+    b.p = mk(3);
+    b.p.x = b.p.x + 1;
+    return b.p.x + b.p.y;
+}
+"#;
+        let p = parse(src).expect("parse nested");
+        sem::check(&p).expect("sem nested");
+        let c = emit_c(&p, false).expect("emit nested");
+        assert!(c.contains("typedef struct Point"), "{c}");
+        assert!(c.contains("typedef struct Box"), "{c}");
+        assert!(c.contains("b.p.x"), "nested assign: {c}");
+        assert!(c.contains("Point k0_mk"), "return struct proto: {c}");
     }
 
     #[test]

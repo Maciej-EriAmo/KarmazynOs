@@ -32,8 +32,8 @@ pub fn emit_c(prog: &Program, safe: bool) -> Result<String, String> {
 
     for item in &prog.items {
         if let Item::Fn(f) = item {
-            if matches!(f.ret, Type::Array { .. } | Type::Named(_)) {
-                return Err(format!("fn {} cannot return array/struct yet", f.name));
+            if matches!(f.ret, Type::Array { .. }) {
+                return Err(format!("fn {} cannot return array yet", f.name));
             }
             writeln!(out, "{};", fn_proto(f)?).unwrap();
         }
@@ -248,15 +248,17 @@ fn emit_block(
                 }
                 writeln!(out, "{pad}{arr}[{idx}] = {val};").unwrap();
             }
-            Stmt::FieldAssign { name, field, value } => {
-                writeln!(
-                    out,
-                    "{pad}{}.{} = {};",
-                    mangle_local(name),
-                    field,
-                    emit_expr(value, ctx)?
-                )
-                .unwrap();
+            Stmt::FieldAssign {
+                name,
+                fields,
+                value,
+            } => {
+                let mut lhs = mangle_local(name);
+                for f in fields {
+                    lhs.push('.');
+                    lhs.push_str(f);
+                }
+                writeln!(out, "{pad}{lhs} = {};", emit_expr(value, ctx)?).unwrap();
             }
             Stmt::Return(None) => {
                 writeln!(out, "{pad}return;").unwrap();

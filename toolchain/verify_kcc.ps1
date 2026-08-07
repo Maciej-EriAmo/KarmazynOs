@@ -64,17 +64,29 @@ try {
     Invoke-K0 "atom_table.k0" "atom_table"
     Invoke-K0 "store_mini.k0" "store_mini"
 
-    # TB.3d structs — exit 32 ((10+2)+20 after whole-struct copy)
-    Write-Host "  kcc struct_point.k0 (--safe) expect exit 32"
+    # TB.3d+ structs — nested + return-struct; exit 50 (15+20+5+10)
+    Write-Host "  kcc struct_point.k0 (--safe) expect exit 50"
     $spSrc = Join-Path $Kcc "examples\struct_point.k0"
     $spBin = Join-Path $Out "struct_point"
     & $exe $spSrc --safe --cc -o $spBin
     if ($LASTEXITCODE -ne 0) { throw "kcc struct_point failed" }
     $spRun = if (Test-Path "$spBin.exe") { "$spBin.exe" } else { $spBin }
     & $spRun
-    if ($LASTEXITCODE -ne 32) { throw "struct_point expected exit 32, got $LASTEXITCODE" }
+    if ($LASTEXITCODE -ne 50) { throw "struct_point expected exit 50, got $LASTEXITCODE" }
     $spC = Get-Content (Join-Path $Out "struct_point.c") -Raw
     if ($spC -notmatch "typedef struct Point") { throw "struct_point.c missing typedef" }
+    if ($spC -notmatch "typedef struct Rect") { throw "struct_point.c missing nested Rect" }
+    if ($spC -notmatch "Point k0_make_point") { throw "struct_point.c missing return-struct" }
+
+    # TB.4 Phase 0 — self-host seed (host kcc builds tok_kind.k0)
+    Write-Host "  kcc tok_kind.k0 (TB.4 Phase 0) expect exit 0"
+    $tkSrc = Join-Path $Root "toolchain\kcc_selfhost\tok_kind.k0"
+    $tkBin = Join-Path $Out "tok_kind"
+    & $exe $tkSrc --safe --cc -o $tkBin
+    if ($LASTEXITCODE -ne 0) { throw "kcc tok_kind failed" }
+    $tkRun = if (Test-Path "$tkBin.exe") { "$tkBin.exe" } else { $tkBin }
+    & $tkRun
+    if ($LASTEXITCODE -ne 0) { throw "tok_kind expected exit 0, got $LASTEXITCODE" }
 
     $cText = Get-Content (Join-Path $Out "thermal_smoke.c") -Raw
     if ($cText -notmatch "k0_state_code") { throw "C missing k0_state_code" }

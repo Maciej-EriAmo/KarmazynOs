@@ -37,21 +37,34 @@ try {
 if (-not $SkipC) {
     $gcc = Get-Command gcc -ErrorAction SilentlyContinue
     if (-not $gcc) {
-        Write-Host "`n[4/4] C smoke SKIPPED (gcc not in PATH)" -ForegroundColor Yellow
+        Write-Host "`n[4/4] C clients SKIPPED (gcc not in PATH)" -ForegroundColor Yellow
     } else {
-        Write-Host "`n[4/4] C ABI smoke (gcc)"
+        Write-Host "`n[4/4] C ABI clients (gcc)"
         $inc = Join-Path $Sub "include"
         $lib = Join-Path $Sub "target\release"
-        $src = Join-Path $Root "c_smoke\stage1_c_smoke.c"
-        $exe = Join-Path $lib "stage1_c_smoke.exe"
-        & gcc $src "-I$inc" "-L$lib" -lkarmazyn_substrate -o $exe
-        if ($LASTEXITCODE -ne 0) { throw "gcc link failed" }
+        $dll = Join-Path $lib "karmazyn_substrate.dll"
+        if (-not (Test-Path $dll)) { throw "missing $dll" }
         $env:PATH = "$lib;$env:PATH"
-        & $exe
+        # Link the DLL directly — avoids stale MinGW import lib (lib*.dll.a)
+        # that can lag behind cargo-exported symbols (e.g. ksub_atom_set_t).
+
+        $src1 = Join-Path $Root "c_smoke\stage1_c_smoke.c"
+        $exe1 = Join-Path $lib "stage1_c_smoke.exe"
+        & gcc $src1 "-I$inc" $dll -o $exe1
+        if ($LASTEXITCODE -ne 0) { throw "gcc link stage1_c_smoke failed" }
+        & $exe1
         if ($LASTEXITCODE -ne 0) { throw "stage1_c_smoke failed" }
+
+        $src2 = Join-Path $Root "c_smoke\ksub_client.c"
+        $exe2 = Join-Path $lib "ksub_client.exe"
+        Write-Host "  ksub_client (Tor A thin C)"
+        & gcc $src2 "-I$inc" $dll -o $exe2
+        if ($LASTEXITCODE -ne 0) { throw "gcc link ksub_client failed" }
+        & $exe2
+        if ($LASTEXITCODE -ne 0) { throw "ksub_client failed" }
     }
 } else {
-    Write-Host "`n[4/4] C smoke skipped (-SkipC)" -ForegroundColor Yellow
+    Write-Host "`n[4/4] C clients skipped (-SkipC)" -ForegroundColor Yellow
 }
 
 Write-Host "`n=== STAGE1_VERIFY_OK ===" -ForegroundColor Green

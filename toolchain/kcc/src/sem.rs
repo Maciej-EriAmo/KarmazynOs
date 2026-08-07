@@ -45,12 +45,14 @@ pub fn check(prog: &Program) -> Result<(), String> {
                 if structs.contains_key(&f.name) {
                     return Err(format!("`{}` already defined as struct", f.name));
                 }
-                if matches!(f.ret, Type::Array { .. } | Type::Named(_)) {
+                if matches!(f.ret, Type::Array { .. }) {
                     return Err(format!(
-                        "function `{}` cannot return array/struct yet",
+                        "function `{}` cannot return array yet",
                         f.name
                     ));
                 }
+                type_is_known(&f.ret, &structs)
+                    .map_err(|e| format!("fn `{}` return: {e}", f.name))?;
                 for (pn, pt) in &f.params {
                     type_is_known(pt, &structs)
                         .map_err(|e| format!("fn `{}` param `{pn}`: {e}", f.name))?;
@@ -277,32 +279,55 @@ fn check_block(
                     &format!("index-assign `{name}[…]`"),
                 )?;
             }
-            Stmt::FieldAssign { name, field, value } => {
+            Stmt::FieldAssign {
+                name,
+                fields: chain,
+                value,
+            } => {
                 let Some(t) = locals.get(name).cloned() else {
                     return Err(format!(
                         "fn `{fn_name}`: field-assign undeclared `{name}`"
                     ));
                 };
-                let Type::Named(sn) = t else {
+                if chain.is_empty() {
                     return Err(format!(
-                        "fn `{fn_name}`: `{name}` is not a struct"
+                        "fn `{fn_name}`: field-assign needs at least one field"
                     ));
-                };
-                let fields = structs.get(&sn).ok_or_else(|| {
-                    format!("fn `{fn_name}`: unknown struct `{sn}`")
-                })?;
-                let Some((_, fty)) = fields.iter().find(|(n, _)| n == field) else {
-                    return Err(format!(
-                        "fn `{fn_name}`: struct `{sn}` has no field `{field}`"
-                    ));
+                }
+                let mut cur = t;
+                let mut path = name.clone();
+                let fty = {
+                    let mut last_ty = None;
+                    for (i, field) in chain.iter().enumerate() {
+                        let Type::Named(sn) = &cur else {
+                            return Err(format!(
+                                "fn `{fn_name}`: `{path}` is not a struct"
+                            ));
+                        };
+                        let sfields = structs.get(sn).ok_or_else(|| {
+                            format!("fn `{fn_name}`: unknown struct `{sn}`")
+                        })?;
+                        let Some((_, ft)) = sfields.iter().find(|(n, _)| n == field) else {
+                            return Err(format!(
+                                "fn `{fn_name}`: struct `{sn}` has no field `{field}`"
+                            ));
+                        };
+                        path = format!("{path}.{field}");
+                        if i + 1 == chain.len() {
+                            last_ty = Some(ft.clone());
+                        } else {
+                            cur = ft.clone();
+                        }
+                    }
+                    last_ty.unwrap()
                 };
                 check_expr(value, locals, fns, structs, fn_name)?;
                 let got = expr_type(value, locals, fns, structs)?;
                 expect_type(
-                    fty,
+                    &fty,
                     &got,
                     fn_name,
-                    &format!("field-assign `{name}.{field}`"),
+                    &format!("field-assign `{path}`"),
                 )?;
             }
             Stmt::Return(e) => match e {
