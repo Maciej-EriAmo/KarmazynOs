@@ -2,7 +2,8 @@
 
 **Data:** 2026-08-07  
 **Repo:** `main` @ **`5571dcc`** (kcc **0.6.1**, TB.4 Phase **0–3**, Tor A `ksub_client`)  
-**Holon:** `C:\Users\drwis\Karmin_Ae` → `python agent_boot.py --project Karmazyn`
+**Holon:** `C:\Users\drwis\Karmin_Ae` → `python agent_boot.py --project Karmazyn`  
+**Kanon (filozofia ↔ kod):** [`Documents/KANON.md`](KANON.md)
 
 ---
 

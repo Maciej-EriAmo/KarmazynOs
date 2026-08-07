@@ -2,7 +2,8 @@
 
 **Data startu fali:** 2026-07-31  
 **Status L1:** domykane — `scripts/gate_product.ps1` + `scripts/dry_run_l1.ps1`  
-**Zasada nadrzędna:** **Z0** — Rust pisze od razu pod substrat (`native/karmazyn_substrate`)
+**Zasada nadrzędna:** **Z0** — Rust pisze od razu pod substrat (`native/karmazyn_substrate`)  
+**Kanon (co wolno twierdzić):** [`Documents/KANON.md`](Documents/KANON.md)
 
 ### Język (obietnice vs nośnik)
 
