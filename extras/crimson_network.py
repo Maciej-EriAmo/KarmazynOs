@@ -42,7 +42,15 @@ class NodeRegistry:
     Przechowuje Φ-ID, phi2_bytes_hex i ostatni adres każdego węzła.
     """
 
-    def __init__(self, path="./karmazyn_data/known_nodes.json"):
+    def __init__(self, path=""):
+        if not path:
+            try:
+                from karmazyn_paths import relocate_legacy, runtime_data_dir
+
+                relocate_legacy()
+                path = str(runtime_data_dir() / "known_nodes.json")
+            except Exception:
+                path = "./karmazyn_data/known_nodes.json"
         self._path = path
         self._nodes: Dict[str, dict] = {}
         self._load()
@@ -156,7 +164,7 @@ class KeyExchange:
 
 class CrimsonNetwork:
     def __init__(self, karmazyn: KarmazynOS, my_port: int,
-                 registry_path="./karmazyn_data/known_nodes.json"):
+                 registry_path=""):
         self.karmazyn = karmazyn
         self.my_port = my_port
         self.peer_socket: Optional[socket.socket] = None

@@ -22,12 +22,16 @@ native/karmazyn_substrate_rs/target/
 native/karmazyn_substrate_rs/wheels/
 *.egg-info/
 
+# runtime data lives in %LOCALAPPDATA%\KarmazynOs
+karmazyn_data/
+dist/
+out/
+!out/.gitkeep
+
 # local bench dumps
 bench_results.json
 
 # Starlink demo outputs (regenerate: python software/starlink_atoms.py --html)
-out/starlink_*
-!out/.gitkeep
 
 
 # kentry freestanding build

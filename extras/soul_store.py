@@ -53,7 +53,17 @@ def _read_records(path: str) -> list:
 
 # ─── SAVE ─────────────────────────────────────────────────────────────────────
 
-def save_soul(karmazyn_os, path: str = "./karmazyn_data") -> bool:
+def _default_data_dir() -> str:
+    try:
+        from karmazyn_paths import relocate_legacy, runtime_data_dir
+
+        relocate_legacy()
+        return str(runtime_data_dir())
+    except Exception:
+        return "./karmazyn_data"
+
+
+def save_soul(karmazyn_os, path: str = "") -> bool:
     """
     Zapisuje stan KarmazynOS do formatu .soul.
 
@@ -61,6 +71,7 @@ def save_soul(karmazyn_os, path: str = "./karmazyn_data") -> bool:
         <path>/session.soul  — JSONL z metadanymi, bąblami, hologramami
         <path>/vectors.npz   — wektory numpy (sem + structural + temperatures)
     """
+    path = path or _default_data_dir()
     os.makedirs(path, exist_ok=True)
     soul_path = os.path.join(path, "session.soul")
     npz_path  = os.path.join(path, "vectors.npz")
@@ -162,11 +173,12 @@ def save_soul(karmazyn_os, path: str = "./karmazyn_data") -> bool:
 
 # ─── LOAD ─────────────────────────────────────────────────────────────────────
 
-def load_soul(karmazyn_os, path: str = "./karmazyn_data") -> bool:
+def load_soul(karmazyn_os, path: str = "") -> bool:
     """
     Wczytuje stan KarmazynOS z formatu .soul.
     Odporny na uszkodzone rekordy — pomija je i wczytuje resztę.
     """
+    path = path or _default_data_dir()
     soul_path = os.path.join(path, "session.soul")
     npz_path  = os.path.join(path, "vectors.npz")
 

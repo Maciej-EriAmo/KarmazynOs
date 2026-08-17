@@ -890,7 +890,13 @@ def _setup_history():
     if not _HAS_READLINE:
         return
     import atexit
-    histfile = os.path.expanduser("~/.karmazyn_history")
+    try:
+        from karmazyn_paths import history_path, relocate_legacy
+
+        relocate_legacy()
+        histfile = str(history_path())
+    except Exception:
+        histfile = os.path.expanduser("~/.karmazyn_history")
     try:
         if os.path.exists(histfile):
             readline.read_history_file(histfile)
