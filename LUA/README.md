@@ -9,7 +9,7 @@ Interpreter Lua **5.5 (podzbiór)** na substracie KarmazynOS — **produkcyjny d
 | **Host API** | `karmazyn._VERSION` **1.1.0** (seria 1.x) |
 | **Źródło** | monorepo `KarmazynOs/LUA/` |
 | **Regresja** | `python release_1_1.py` · `software/test_lua_release.py` |
-| **Tools** | 26 pass / 2 skip (`top`, `nano` — ręcznie) |
+| **Tools** | pass + skip (`top`, `nano`, `idea` — 16D wycofane) |
 | **Kontrakt** | [CONTRACT_1.1.md](CONTRACT_1.1.md) · [RELEASE_1.1.0.md](RELEASE_1.1.0.md) |
 
 ## Co znaczy 1.1
@@ -56,7 +56,7 @@ karmazyn> return karmazyn._VERSION
 
 1. Podzbiór Lua 5.5.
 2. Brak ambient FS (cel).
-3. `generate_from_idea` — placeholder wektor.
+3. `generate_from_idea` — **wycofane** (stary 16D EriAmo). Zwraca nil.
 4. Agenci/hologramy — rejestr sesji hosta.
 5. `top` / `nano` — nie w automatyce (pętla / edytor).
 6. Linie runtime nie zawsze w każdym `error()` (parse mocny).

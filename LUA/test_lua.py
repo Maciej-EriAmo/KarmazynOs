@@ -401,9 +401,13 @@ class II_Architecture(unittest.TestCase):
 
     def test_G_and_VERSION(self):
         self.ev = mount(Store(thermal=True))
-        self.assertEqual(self.ev.eval_line("return _VERSION"), "Lua 5.5")
+        self.assertEqual(
+            self.ev.eval_line("return _VERSION"), "Lua 5.5 (Karmazyn subset)"
+        )
         self.assertEqual(self.ev.eval_line("return type(_G)"), "table")
-        self.assertEqual(self.ev.eval_line("return _G._VERSION"), "Lua 5.5")
+        self.assertEqual(
+            self.ev.eval_line("return _G._VERSION"), "Lua 5.5 (Karmazyn subset)"
+        )
         self.assertEqual(self.ev.eval_line("return type(_G.print)"), "function")
 
 

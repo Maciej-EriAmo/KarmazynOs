@@ -7,7 +7,7 @@ for i = 1, #holos do
 end
 
 if #lines == 0 then
-    print("Brak dostępnych hologramów (idei).")
+    print("Brak etykiet hologramu w SESJI (nie są w Store).")
 else
-    print(karmazyn.ui.draw_frame("HOLOGRAMS (lsh)", lines, "phi_stable"))
+    print(karmazyn.ui.draw_frame("SESSION HOLOGRAMS (lsh) — nie Store", lines, "phi_stable"))
 end

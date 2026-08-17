@@ -99,7 +99,7 @@ class HostToolsSmoke(unittest.TestCase):
         self.assertIn("1", out)
         t = self.ev.format_run_result(ret=run_lua_tool(self.ev, "ps", lua_bin=LUA_BIN))
         self.assertIn("scout", t)
-        self.assertIn("ACTIVE AGENTS", t)
+        self.assertIn("SESSION AGENTS", t)
         self.ev._io_input = ["1"]
         t2 = self.ev.format_run_result(ret=run_lua_tool(self.ev, "kill", lua_bin=LUA_BIN))
         self.assertTrue("usunięty" in t2 or "✓" in t2 or "Agent" in t2, t2)
@@ -113,10 +113,9 @@ class HostToolsSmoke(unittest.TestCase):
         t = self.ev.format_run_result(ret=run_lua_tool(self.ev, "lsh", lua_bin=LUA_BIN))
         self.assertIn("HOLOGRAMS", t)
         self.assertIn("idea_demo", t)
-        self.ev._io_input = ["idea_demo", "co to jest pamiec"]
         t2 = self.ev.format_run_result(ret=run_lua_tool(self.ev, "idea", lua_bin=LUA_BIN))
-        self.assertIn("Wygenerowano", t2)
-        self.assertIn("Wymiar", t2)
+        self.assertIn("wycofane", t2.lower())
+        self.assertNotIn("Wygenerowano", t2)
 
     def test_tool_kedit(self):
         self.store.create_atom("k1", "S", "stare", 0.8)

@@ -14,7 +14,7 @@ Dla autorów narzędzi `lua_bin`, projektów gościa i agentów.
 | Montaż | `mount` / sesja / project searchers (preload → memory → project host) |
 | Host | Global `karmazyn.*` (atomy, step, recall, ui, …) gdy boot wstrzyknie hosta |
 | GC | `collectgarbage` → settle + weak/`__gc` **na** fizyce T×reach |
-| Wersja | `karmazyn_lua.__version__` = **1.1.0**; gość: `_VERSION` = `"Lua 5.5"` |
+| Wersja | `karmazyn_lua.__version__` = **1.1.2**; gość: `_VERSION` = `"Lua 5.5 (Karmazyn subset)"` |
 
 ## debug.* (1.1)
 

@@ -48,9 +48,9 @@ karmazyn> :tool hello_tool
 | `recall(query, k)` | resonance HRR + fallback tekstowy |
 | `get_similarity(id1, id2)` | podobieństwo |
 | `list_bubbles()` | bąble z etykietą + `content` |
-| `list_agents()` / `spawn_agent(name, task, prisms)` / `delete_agent(pid)` | agenci sesji |
-| `list_holograms()` / `create_hologram(id, topic, atom_ids)` | idee w sesji |
-| `generate_from_idea(id, prompt, temp)` | wektor syntetyczny (placeholder) |
+| `list_agents()` / `spawn_agent` / `delete_agent` | rejestr **sesji** (nie Store, nie procesy OS) |
+| `list_holograms()` / `create_hologram` | etykiety **sesji** (nie HRR) |
+| `generate_from_idea` | **wycofane** — zawsze nil (stary 16D EriAmo) |
 | `clear_screen()` / `sleep(sec)` | UI terminala |
 | `ui.progress_bar(v, max, width)` | pasek tekstowy |
 | `ui.draw_frame(title, lines)` | ramka tekstowa |
@@ -87,7 +87,7 @@ python test_host_tools.py -v
 
 | Wynik | Narzędzia |
 |-------|-----------|
-| **pass (26)** | ls, cat, touch, rm, cp, mv, df, free, du, find, grep, stat, step, whoami, uptime, clear, man, ps, kill, lsh, lsb, idea, kedit, consolidate, ping, recall |
-| **skip / DEPRECATED w automatyce (2)** | `top`, `nano` — tylko ręcznie (`:tool top` w pętli; `nano` edytor) |
+| **pass** | ls, cat, touch, rm, cp, mv, df, free, du, find, grep, stat, step, whoami, uptime, clear, man, ps, kill, lsh, lsb, kedit, consolidate, ping, recall |
+| **skip** | `top`, `nano` (pętla/edytor); `idea` (wycofane 16D); starlink* (osobny seed) |
 
-`generate_from_idea` = wektor placeholder (nie pełny PCA).
+`generate_from_idea` = wycofane. `ps`/`lsh` = sesja, nie jądro.

@@ -172,6 +172,9 @@ Generuje nowy wektor semantyczny z hologramu przez projekcję.
 Idea to nie rekord — to **wyłonienie się stanu z pola**.
 
 ```
+> **Wycofane (2026-08):** `generate_from_idea` / 16D EriAmo. Blok `idea`/`gen`
+> nie jest zaimplementowany w product Os. Zostaje jako zapis historyczny DSL.
+
 idea "<prompt>" from <hologram_expr> {
     gen "<prompt generacji>"
     temp <liczba>
@@ -183,7 +186,7 @@ idea "<prompt>" from <hologram_expr> {
 
 | Pole | Typ | Domyślnie | Opis |
 |------|-----|-----------|------|
-| `gen` | string | prompt | Zapytanie do `generate_from_idea()` |
+| `gen` | string | prompt | ~~`generate_from_idea()`~~ — **wycofane** |
 | `temp` | liczba | `0.5` | Temperatura generacji (wyższa = więcej szumu) |
 | `consolidate` | flaga | nie | Zapisz wynik do BubbleStore |
 

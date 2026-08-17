@@ -122,9 +122,9 @@ check_eq("meta.add", (setmetatable({}, mt) + 1), 100)
 ------------------------------------------------------------
 -- 8. _ENV / _G / _VERSION
 ------------------------------------------------------------
-check_eq("ver", _VERSION, "Lua 5.5")
+check_eq("ver", _VERSION, "Lua 5.5 (Karmazyn subset)")
 check_eq("G.type", type(_G), "table")
-check_eq("G.ver", _G._VERSION, "Lua 5.5")
+check_eq("G.ver", _G._VERSION, "Lua 5.5 (Karmazyn subset)")
 check_eq("ENV", type(_ENV), "table")
 _ENV.kombajn_mark = 7
 check_eq("ENV.write", kombajn_mark, 7)

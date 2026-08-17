@@ -13,5 +13,5 @@ end
 if #lines == 0 then
     print("Brak aktywnych agentów.")
 else
-    print(karmazyn.ui.draw_frame("ACTIVE AGENTS (ps)", lines, "phi_signal"))
+    print(karmazyn.ui.draw_frame("SESSION AGENTS (ps) — nie Store", lines, "phi_signal"))
 end

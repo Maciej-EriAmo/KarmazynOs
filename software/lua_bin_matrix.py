@@ -44,8 +44,8 @@ TOOL_SPEC = {
     "uptime": ("pass", lambda s, h: None, "epoch"),
     "clear": ("pass", lambda s, h: None, "clear_screen"),
     "du": ("pass", lambda s, h: None, "emanation usage"),
-    "ps": ("pass", lambda s, h: None, "agents list"),
-    "lsh": ("pass", lambda s, h: None, "holograms list"),
+    "ps": ("pass", lambda s, h: None, "session agent dict (not Store)"),
+    "lsh": ("pass", lambda s, h: None, "session hologram dict (not Store)"),
     "lsb": ("pass", lambda s, h: None, "bubbles list"),
     # with canned input
     "step": ("pass", lambda s, h: ["2"], "settle n"),
@@ -66,7 +66,7 @@ TOOL_SPEC = {
     "recall": ("pass", lambda s, h: (s.create_atom("m_rec", "q", "pamiec semantyczna", 0.9) or True) and ["pamiec"], "resonance"),
     "consolidate": ("pass", lambda s, h: (s.create_atom("m_con", "S", "keep", 0.9) or True) and ["m_con"], "to bubble"),
     "kill": ("pass", lambda s, h: (h.spawn_agent("tmp", "t", ["phi"]), ["1"])[-1] if h else ["1"], "delete agent"),
-    "idea": ("pass", lambda s, h: (h.create_hologram("h1", "tema"), ["h1", "prompt"])[-1], "STUB vector placeholder (generate_from_idea)"),
+    "idea": ("skip", None, "abandoned EriAmo 16D placeholder; generate_from_idea=None"),
     "kedit": ("pass", lambda s, h: (s.create_atom("m_ke", "S", "old", 0.8) or True) and ["m_ke", "4"], "exit only path"),
     # skip
     "top": ("skip", None, "DEPRECATED in automation — infinite loop; manual only"),

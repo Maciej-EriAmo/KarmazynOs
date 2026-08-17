@@ -81,9 +81,10 @@ class KarmazynHost:
         self.io = io
         self.thermal = thermal
         self._epoch = 0
-        self._agents = {}          # pid -> dict (stub)
-        self._holograms = {}       # id -> dict (stub)
-        self._fs = {}              # (bubble, file_id) -> content
+        # Rejestry SESJI — nie Store. Giną z procesem. Nie są jądrem.
+        self._agents = {}          # pid -> dict (sesja)
+        self._holograms = {}       # id -> dict (sesja; nie HRR)
+        self._fs = {}              # (bubble, file_id) -> content (RAM)
         self._cache = {}           # name -> {E, S, ...}
         self._screen = []          # clear_screen marker for tests
         # surface Φ: logiczne id (string) z create_atom/clone — nie heap Lua aN
@@ -640,7 +641,7 @@ class KarmazynHost:
         return self._arr(rows)
 
     def create_hologram(self, hid=None, topic=None, atom_ids=None, *_):
-        """Utwórz hologram (ideę) w sesji hosta — bez pełnego PCA/HRR engine."""
+        """Etykieta w rejestrze sesji. Nie atom, nie HRR, nie przetrwa rebootu."""
         if not isinstance(hid, str) or not hid:
             hid = f"idea_{len(self._holograms) + 1}"
         topic = topic if isinstance(topic, str) else (topic or hid)
@@ -682,7 +683,7 @@ class KarmazynHost:
         return self._arr(rows)
 
     def spawn_agent(self, name=None, task=None, prisms=None, *_):
-        """Utwórz agenta w rejestrze sesji (pid auto)."""
+        """Wpis w rejestrze sesji (pid auto). Nie proces OS, nie atom Store."""
         pid = 1
         while pid in self._agents:
             pid += 1
@@ -721,26 +722,8 @@ class KarmazynHost:
         return False
 
     def generate_from_idea(self, hid=None, prompt=None, temp=0.3, *_):
-        """Syntetyczny wektor z hologramu (deterministyczny placeholder + szum z promptu)."""
-        if not isinstance(hid, str) or hid not in self._holograms:
-            return None
-        h = self._holograms[hid]
-        try:
-            t = float(temp) if temp is not None else 0.3
-        except (TypeError, ValueError):
-            t = 0.3
-        prompt = "" if prompt is None else str(prompt)
-        seed = abs(hash((hid, h.get("topic", ""), prompt))) % (10 ** 9)
-        dim = 16
-        vec = []
-        x = float(seed % 997) / 997.0
-        for i in range(dim):
-            x = (x * 1.6180339887 + 0.1 * t + 0.01 * i) % 1.0
-            # mieszaj z literami promptu
-            if prompt:
-                x = (x + ord(prompt[i % len(prompt)]) / 255.0 * t) % 1.0
-            vec.append(round(x * 2.0 - 1.0, 6))
-        return self._arr(vec)
+        """Wycofane (EriAmo 16D). Zawsze None — nie udawaj wektora."""
+        return None
 
     # ── fs / cache (minimalne, w pamięci sesji) ────────────────────────
     def _fs_read(self, bubble=None, file_id=None, *_):

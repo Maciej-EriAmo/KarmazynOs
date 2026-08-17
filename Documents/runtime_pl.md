@@ -244,12 +244,12 @@ Wersje: [../VERSION.txt](../VERSION.txt).
 | `strict-project` (run tylko pod rootem) | ✅ |
 | Błędy `@plik:linia:kolumna:` (parse) | ✅ |
 | Pełne `dofile` / ambient FS | ❌ celowo (sandbox = bąbel) |
-| Host API `karmazyn.*` + `:tool` + smoke `lua_bin` | ✅ **1.0.0** (`karmazyn._VERSION`) |
-| Macierz `lua_bin` | ✅ 26 pass / 2 skip (top, nano) |
+| Host API `karmazyn.*` + `:tool` + smoke `lua_bin` | ✅ **1.1.0** (`karmazyn._VERSION`) |
+| Macierz `lua_bin` | ✅ pass + skip (`top`, `nano`, `idea` wycofane 16D) |
 | Reach hooks `register_*` name=guest | ✅ |
 | Numery linii parse (+ częściowo runtime) | ✅ |
 
-**Release:** **1.0.0** · tag `lua-v1.0.0` · [../LUA/README.md](../LUA/README.md) · [tools_lua.md](tools_lua.md) · [lua_bin_status.md](lua_bin_status.md).
+**Release gościa:** **1.1.2** · `_VERSION` = `Lua 5.5 (Karmazyn subset)` · [../LUA/README.md](../LUA/README.md) · [tools_lua.md](tools_lua.md) · [lua_bin_status.md](lua_bin_status.md).
 
 **Bliżej PUC-Rio (bez zmiany fizyki):** [lua_puc_gap_plan.md](lua_puc_gap_plan.md) · [lua_arch_for_programmers.md](lua_arch_for_programmers.md).
 

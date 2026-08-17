@@ -4,7 +4,7 @@ karmazyn_boot.py — punkt startowy samodzielnego runtime KarmazynOS (v0.5)
 =========================================================================
 Maciej Mazur, Warsaw 2026
 
-Po boocie: PROMPT WYKONAWCZY. Domyslny jezyk narzedzi: karmazyn_lua (Lua 5.5).
+Po boocie: PROMPT WYKONAWCZY. Domyslny jezyk narzedzi: karmazyn_lua (Lua 5.5 subset).
   - linia kodu              -> warstwa wykonawcza (Lua / fallback mini-Lisp)
   - linia ':...'            -> komenda systemu (OS meta)
 

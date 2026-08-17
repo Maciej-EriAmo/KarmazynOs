@@ -1,19 +1,23 @@
 KarmazynOS Kernel - jedna wersja kanoniczna
 ==========================================
-Zsynchronizowane: 2026-07-31
+Zsynchronizowane: 2026-08-17
 Wersja jadra (karmazyn_kernel.__version__): 1.1.0  (FIX v1.1 + v1.2 + S15 dual-emit/snapshot)
 L1 Product host: gate_product + dry_run_l1 + Stage1 I/O + Studio SDL (host, NIE bare-metal OS)
 Boot: karmazyn_boot v0.5+ (gość Lua; :project / :run / :reload / :check / :tool; --project; I/O matryca T)
 Native substrate (Rust): 0.1.0-karmazyn-substrate — DEFAULT produkcyjny (PyO3 → ctypes)
   ABI string: ksub_version / CoreStore.version = "0.1.0-karmazyn-substrate"
   crate + wheel: native/karmazyn_substrate 0.1.0 · native/karmazyn_substrate_rs 0.1.0
-Lua guest: karmazyn_lua **1.0.0** stable (LUA/__version__; tag lua-v1.0.0)
+Lua guest: karmazyn_lua **1.1.2** (LUA/__version__; podzbiór 5.5, nie PUC-Rio)
   - project host (searchers preload|memory|project), CLI run_lua.py
-  - Host API 1.0.0 frozen on 1.x: software/karmazyn_host.py → karmazyn.*; :tool
+  - Host API 1.1.0: software/karmazyn_host.py → karmazyn.*; :tool
+  - generate_from_idea / idea.lua: WYCOFANE (16D EriAmo, nie jądro)
+  - ps/lsh/fs: rejestr SESJI hosta, nie Store
   - Reach hooks: register_env_of / register_extra_reach (name=guest)
   - Kernel discovery: _paths.py (monorepo kernel first)
   - lua_bin: attach preload only when no project (no project hijack)
-  - Smoke: test_host_tools + lua_bin_matrix (26 pass / 2 skip)
+  - Smoke: test_host_tools + lua_bin_matrix (idea = skip)
+  - Lustro: root karmazyn_backend.py == kernel/ (STRICT + bid)
+  - SE: holon_memory.json nie jest kanonem Os (Karmin_Ae)
   - Release gate: software/test_lua_release.py
   - Canonical tree: monorepo LUA/
 

@@ -141,13 +141,14 @@ class Bubble:
 
     FIX v1.1: bind/unbind/lookup biorą store.lock — bezpieczne przy
     schedulerze tick() w wątku tła (RLock: reentrancja w tym samym wątku)."""
-    __slots__ = ("store", "label", "parent", "bindings")
+    __slots__ = ("store", "label", "parent", "bindings", "bid")
 
     def __init__(self, store, label="", parent=None):
         self.store = store
         self.label = label
         self.parent = parent
         self.bindings = {}              # name -> atom id
+        self.bid = ""                   # Luneta: stabilny id bąbla (np. b3)
 
     def bind(self, name, atom):
         """Wiąże nazwę z atomem. Atom musi należeć do tego samego Store."""

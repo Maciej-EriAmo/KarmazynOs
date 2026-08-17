@@ -1,15 +1,5 @@
-local hid = karmazyn.read_line("ID Hologramu: ")
-if hid == "" then return end
-
-local prompt = karmazyn.read_line("Prompt do generowania: ")
-if prompt == "" then return end
-
-local vec = karmazyn.generate_from_idea(hid, prompt, 0.3)
-
-if type(vec) == "table" then
-    print("✓ Wygenerowano syntetyczny wektor z idei: " .. hid)
-    print("Wymiar: " .. #vec)
-    -- Tutaj moglibyśmy dodać manifestację wektora jako nowego atomu
-else
-    print("✗ Błąd generowania (hologram może być wygasły lub nie istnieć).")
-end
+-- idea.lua — wycofane. 16D generate_from_idea było placeholderem EriAmo,
+-- nie jądrem (nie atom, nie HRR 2048, nie Store).
+print("idea: wycofane.")
+print("16D generate_from_idea bylo zaleznoscia EriAmo — nie generujemy wektora.")
+print("lsh/create_hologram to rejestr SESJI hosta, nie Store.")

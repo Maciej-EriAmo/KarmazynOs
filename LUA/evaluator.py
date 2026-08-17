@@ -592,10 +592,12 @@ class Evaluator:
         # coroutine table
         ca = self.store.atom_new("lib", "coroutine", value=co_tbl)
         self.G.bind("coroutine", ca)
-        # _G = tabela globali (G); _VERSION — etykieta zgodności (podzbiór 5.5)
+        # _G = tabela globali (G); _VERSION — podzbiór 5.5, nie pełne PUC-Rio
         g_atom = self.store.atom_new("lib", "_G", value=self.G)
         self.G.bind("_G", g_atom)
-        ver_atom = self.store.atom_new("lib", "_VERSION", value="Lua 5.5")
+        ver_atom = self.store.atom_new(
+            "lib", "_VERSION", value="Lua 5.5 (Karmazyn subset)"
+        )
         self.G.bind("_VERSION", ver_atom)
         # _ENV = G (chunk default); local _ENV = t zmienia wolne nazwy w zakresie
         env_atom = self.store.atom_new("lib", "_ENV", value=self.G)
