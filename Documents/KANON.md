@@ -76,7 +76,8 @@ Product userspace powinien iść **wyżej** (zadania, widoki, gość), a nie kop
 - **Karmin_DB** = minister skarbu (trwałość, KarminQL, sieć) — **nie** król.  
 - **Holon** = minister pamięci SE (handoff) — **nie** baza-król.  
 - **Studio / boot / języki** = ministrowie dworu i posłowie — cienkie warstwy.  
-- **Shell / `ksub_*`** = minister spraw wewnętrznych / adjutant (sys) — bliżej tronu, nadal **nie** król.
+- **Shell / `ksub_*`** = minister spraw wewnętrznych / adjutant (sys) — bliżej tronu, nadal **nie** król.  
+- **`karmazyn_qubit`** = minister amplitud (do 8 kubitów, CPU) — **nie** przestrzeń Hilberta Store. T nie jest dekoherencją. Bind/HRR nie jest splątaniem. Docs: [`QUBIT.md`](QUBIT.md).
 
 **Reszta ma działać tak samo jak DB:** łączy się **szwami** z jądrem, co najwyżej jako minister — nigdy jako drugi król.
 

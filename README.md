@@ -19,6 +19,20 @@ python software/starlink_atoms.py --limit 0 --prop sgp4 --hot-only --html --open
 
 ---
 
+## Qubits (minister, not the Store)
+
+Small Hilbert register on the CPU (`n ≤ 8`): H/X/Y/Z/CNOT, measure, subsystem entropy.  
+The substrate does **not** speed this up and is **not** a fusion space. See [Documents/QUBIT.md](Documents/QUBIT.md) and [Documents/KANON.md](Documents/KANON.md).
+
+```powershell
+python karmazyn_qubit.py --demo
+python -m unittest test_qubit test_phi_composition -q
+```
+
+φ / composition tests (doc v2.2 §§8.1 and 8.4): `test_phi_composition.py`.
+
+---
+
 ## What is KarmazynOS
 
 KarmazynOS is not an operating system. It is not a file system.
