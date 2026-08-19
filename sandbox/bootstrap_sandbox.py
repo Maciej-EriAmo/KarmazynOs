@@ -38,7 +38,7 @@ Nie commituj tego katalogu (gitignore). Notatki sesji trzymaj tutaj.
     write(
         WORK / "run_repl.ps1",
         f"""$Root = "{ROOT}"
-$env:PYTHONPATH = "$Root;$Root\\software;$Root\\kernel;$Root\\native"
+$env:PYTHONPATH = "$Root;$Root\\archiwum\\kernel_python;$Root\\software;$Root\\native"
 $env:KARMAZYN_SUBSTRATE = if ($env:KARMAZYN_SUBSTRATE) {{ $env:KARMAZYN_SUBSTRATE }} else {{ "native" }}
 $env:KARMAZYN_LUA = "$Root\\LUA"
 Set-Location $Root
@@ -49,7 +49,7 @@ python software\\karmazyn_boot.py @args
     write(
         WORK / "run_studio.ps1",
         f"""$Root = "{ROOT}"
-$env:PYTHONPATH = "$Root;$Root\\software;$Root\\kernel;$Root\\native"
+$env:PYTHONPATH = "$Root;$Root\\archiwum\\kernel_python;$Root\\software;$Root\\native"
 $env:KARMAZYN_SUBSTRATE = if ($env:KARMAZYN_SUBSTRATE) {{ $env:KARMAZYN_SUBSTRATE }} else {{ "native" }}
 Set-Location $Root
 python software\\karmazyn_studio.py @args
@@ -68,7 +68,7 @@ Set-Location $Root
         WORK / "run_repl.sh",
         f"""#!/usr/bin/env bash
 export ROOT="{ROOT}"
-export PYTHONPATH="$ROOT:$ROOT/software:$ROOT/kernel:$ROOT/native"
+export PYTHONPATH="$ROOT:$ROOT/archiwum/kernel_python:$ROOT/software:$ROOT/native"
 export KARMAZYN_SUBSTRATE="${{KARMAZYN_SUBSTRATE:-native}}"
 export KARMAZYN_LUA="$ROOT/LUA"
 cd "$ROOT"
@@ -82,8 +82,8 @@ exec python software/karmazyn_boot.py "$@"
 """Mini lab matrycy T — uruchom z sandbox/work/experiments."""
 import os, sys
 ROOT = r"{ROOT}"
-sys.path[:0] = [ROOT, os.path.join(ROOT, "software"), os.path.join(ROOT, "kernel"),
-                os.path.join(ROOT, "native")]
+sys.path[:0] = [ROOT, os.path.join(ROOT, "archiwum", "kernel_python"),
+                os.path.join(ROOT, "software"), os.path.join(ROOT, "native")]
 os.environ.setdefault("KARMAZYN_SUBSTRATE", "python")
 from karmazyn_kernel import open_store
 from karmazyn_io import attach_thermal, QueueIo

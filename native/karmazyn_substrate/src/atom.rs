@@ -13,9 +13,12 @@ pub struct Atom {
     pub s: String,
     pub e: String,
     pub t: f64,
-    /// Opaque language payload handle (Python object id, or 0 = none).
-    /// Native core never inspects it — only passes to env_of callback.
+    /// Opaque language payload handle (tag / env id). Core never interprets it
+    /// except passing it to `env_of`.
     pub value_token: u64,
+    /// Guest blob owned by the atom (Python: `metadata["v"]` for objects).
+    /// Vacuum / snapshot travel with the atom. Core does not parse it.
+    pub payload: Option<Vec<u8>>,
     pub reads: u64,
     pub writes: u64,
 }
@@ -28,6 +31,7 @@ impl Atom {
             e: e.into(),
             t: clamp_t(t),
             value_token: 0,
+            payload: None,
             reads: 0,
             writes: 0,
         }

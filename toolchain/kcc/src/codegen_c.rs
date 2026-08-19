@@ -20,6 +20,14 @@ pub fn emit_c(prog: &Program, safe: bool) -> Result<String, String> {
     if safe {
         writeln!(out, "#include <stdlib.h>").unwrap();
     }
+    let user_putchar = prog
+        .items
+        .iter()
+        .any(|i| matches!(i, Item::Fn(f) if f.name == "putchar"));
+    let putchar_builtin = !user_putchar && prog_calls_putchar(prog);
+    if putchar_builtin {
+        writeln!(out, "#include <stdio.h>").unwrap();
+    }
     writeln!(out).unwrap();
 
     // struct typedefs first (TB.3d)
@@ -42,7 +50,7 @@ pub fn emit_c(prog: &Program, safe: bool) -> Result<String, String> {
 
     for item in &prog.items {
         if let Item::Fn(f) = item {
-            emit_fn(&mut out, f, safe)?;
+            emit_fn(&mut out, f, safe, putchar_builtin)?;
             writeln!(out).unwrap();
         }
     }
@@ -55,6 +63,61 @@ pub fn emit_c(prog: &Program, safe: bool) -> Result<String, String> {
         writeln!(out, "int main(void) {{ return (int)k0_main(); }}").unwrap();
     }
     Ok(out)
+}
+
+fn prog_calls_putchar(prog: &Program) -> bool {
+    prog.items.iter().any(|item| match item {
+        Item::Fn(f) => block_calls_putchar(&f.body),
+        Item::Struct(_) => false,
+    })
+}
+
+fn block_calls_putchar(b: &Block) -> bool {
+    b.stmts.iter().any(stmt_calls_putchar)
+}
+
+fn stmt_calls_putchar(st: &Stmt) -> bool {
+    match st {
+        Stmt::Let { init, .. } => init.as_ref().is_some_and(expr_calls_putchar),
+        Stmt::Assign { value, .. }
+        | Stmt::IndexAssign { value, .. }
+        | Stmt::FieldAssign { value, .. } => expr_calls_putchar(value),
+        Stmt::Return(e) => e.as_ref().is_some_and(expr_calls_putchar),
+        Stmt::Expr(e) => expr_calls_putchar(e),
+        Stmt::If {
+            cond,
+            then_b,
+            else_b,
+        } => {
+            expr_calls_putchar(cond)
+                || block_calls_putchar(then_b)
+                || else_b.as_ref().is_some_and(block_calls_putchar)
+        }
+        Stmt::While { cond, body } => expr_calls_putchar(cond) || block_calls_putchar(body),
+        Stmt::For {
+            init,
+            cond,
+            step,
+            body,
+        } => {
+            init.as_deref().is_some_and(stmt_calls_putchar)
+                || cond.as_ref().is_some_and(expr_calls_putchar)
+                || step.as_deref().is_some_and(stmt_calls_putchar)
+                || block_calls_putchar(body)
+        }
+        Stmt::Break | Stmt::Continue => false,
+    }
+}
+
+fn expr_calls_putchar(e: &Expr) -> bool {
+    match e {
+        Expr::Call { name, args } => name == "putchar" || args.iter().any(expr_calls_putchar),
+        Expr::Unary { expr, .. } => expr_calls_putchar(expr),
+        Expr::Binary { left, right, .. } => expr_calls_putchar(left) || expr_calls_putchar(right),
+        Expr::Index { base, index } => expr_calls_putchar(base) || expr_calls_putchar(index),
+        Expr::Field { base, .. } => expr_calls_putchar(base),
+        _ => false,
+    }
 }
 
 fn emit_struct_typedef(out: &mut String, s: &StructDef) -> Result<(), String> {
@@ -139,14 +202,19 @@ fn mangle_local(n: &str) -> String {
 struct Ctx {
     safe: bool,
     types: HashMap<String, Type>,
+    putchar_builtin: bool,
 }
 
-fn emit_fn(out: &mut String, f: &FnDef, safe: bool) -> Result<(), String> {
+fn emit_fn(out: &mut String, f: &FnDef, safe: bool, putchar_builtin: bool) -> Result<(), String> {
     let mut types = HashMap::new();
     for (n, t) in &f.params {
         types.insert(n.clone(), t.clone());
     }
-    let mut ctx = Ctx { safe, types };
+    let mut ctx = Ctx {
+        safe,
+        types,
+        putchar_builtin,
+    };
     writeln!(out, "{} {{", fn_proto(f)?).unwrap();
     emit_block(out, &f.body, 1, &mut ctx)?;
     writeln!(out, "}}").unwrap();
@@ -508,15 +576,19 @@ fn emit_expr(e: &Expr, ctx: &Ctx) -> Result<String, String> {
             format!("(({l}) {o} ({r}))")
         }
         Expr::Call { name, args } => {
-            let mut s = format!("k0_{name}(");
-            for (i, a) in args.iter().enumerate() {
-                if i > 0 {
-                    s.push_str(", ");
+            if name == "putchar" && ctx.putchar_builtin && args.len() == 1 {
+                format!("putchar((int)({}))", emit_expr(&args[0], ctx)?)
+            } else {
+                let mut s = format!("k0_{name}(");
+                for (i, a) in args.iter().enumerate() {
+                    if i > 0 {
+                        s.push_str(", ");
+                    }
+                    s.push_str(&emit_expr(a, ctx)?);
                 }
-                s.push_str(&emit_expr(a, ctx)?);
+                s.push(')');
+                s
             }
-            s.push(')');
-            s
         }
     })
 }

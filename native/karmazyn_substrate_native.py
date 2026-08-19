@@ -34,8 +34,10 @@ from ctypes import (
 from typing import Any, Callable, Dict, List, Optional, Protocol, Tuple
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if _ROOT not in sys.path:
-    sys.path.insert(0, _ROOT)
+_KPY = os.path.join(_ROOT, "archiwum", "kernel_python")
+for _p in (_KPY, _ROOT):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 from karmazyn_substrate import Bubble, EventBus  # noqa: E402
 

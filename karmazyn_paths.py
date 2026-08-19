@@ -1,11 +1,39 @@
 # -*- coding: utf-8 -*-
-"""Dane KarmazynOs — poza drzewem kodu (LOCALAPPDATA\\KarmazynOs)."""
+"""Dane KarmazynOs — poza drzewem kodu (LOCALAPPDATA\\KarmazynOs).
+
+Jądro Python (golden) żyje w archiwum/kernel_python — nie jest królem.
+"""
 from __future__ import annotations
 
 import os
 import shutil
+import sys
 from pathlib import Path
 from typing import Any, Dict, List
+
+
+def repo_root() -> Path:
+    return Path(__file__).resolve().parent
+
+
+def kernel_python_dir(repo: Path | None = None) -> Path:
+    """Golden CPython kernel (archived). Not the Rust king."""
+    return (repo or repo_root()) / "archiwum" / "kernel_python"
+
+
+def ensure_import_paths(repo: Path | None = None) -> Path:
+    """sys.path: golden kernel_python + software + native + repo root."""
+    root = repo or repo_root()
+    kpy = kernel_python_dir(root)
+    for p in (kpy, root / "software", root / "native", root):
+        s = str(p)
+        if p.is_dir() and s not in sys.path:
+            sys.path.insert(0, s)
+    return kpy
+
+
+# Import-time: so `import karmazyn_paths` is enough for golden kernel.
+ensure_import_paths()
 
 
 def data_home() -> Path:

@@ -3,10 +3,9 @@
 test_substrate_compat.py — zgodność prawa reach-GC: Python Store ↔ Rust native
 ==============================================================================
 
-Uruchomienie:
-    python -m unittest test_substrate_compat -v
-    python test_substrate_compat.py
-    python test_substrate_compat.py --substrate both   # jawnie
+Uruchomienie (z roota repo):
+    python testy/test_substrate_compat.py -v
+    python testy/test_substrate_compat.py --substrate both
 
 Wymaga: cargo build --release w native/karmazyn_substrate (dla native).
 Gdy DLL brak: testy native → skip, python i tak biegną.
@@ -21,6 +20,8 @@ from __future__ import annotations
 import os
 import sys
 import unittest
+
+import _path  # noqa: F401
 
 # CLI flags before imports that read env
 from karmazyn_backend import (

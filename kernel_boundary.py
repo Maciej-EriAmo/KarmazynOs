@@ -16,7 +16,7 @@ WNETRZA jadra zamiast do fasady 'karmazyn_kernel'.
 
 Uzycie:
     python3 kernel_boundary.py .                  # plaski katalog
-    python3 kernel_boundary.py kernel/ software/  # po rozdzieleniu
+    python3 kernel_boundary.py archiwum/kernel_python software/
     # exit 0 = granica czysta, exit 1 = twarde naruszenie (do CI)
 
 FIX v1.1 (audyt 2026-07):

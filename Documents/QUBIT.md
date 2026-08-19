@@ -1,8 +1,8 @@
 # Kubity w KarmazynOS
 
 **Status:** minister amplitud · **nie** król · **nie** hardware  
-**Kod:** `karmazyn_qubit.py` · testy: `test_qubit.py`  
-**Algebra φ (dokument v2.2):** `test_phi_composition.py`
+**Kod:** `karmazyn_qubit.py` · testy: `testy/test_qubit.py`  
+**Algebra φ (dokument v2.2):** `testy/test_phi_composition.py`
 
 ## Co to jest
 
@@ -19,7 +19,7 @@ r.measure_all()            # tylko 00 albo 11
 
 ```powershell
 python karmazyn_qubit.py --demo
-python -m unittest test_qubit -v
+python -m unittest discover -s testy -p "test_qubit.py" -v
 ```
 
 ## Czego to nie jest
@@ -49,5 +49,5 @@ Podsumowanie dopisane do
 `Documents/Phi_Holografia_Kompozycja_Splatanie_KarmazynOS_v2.2 (1).docx` §11.
 
 ```powershell
-python -m unittest test_phi_composition -v
+python -m unittest discover -s testy -p "test_phi_composition.py" -v
 ```

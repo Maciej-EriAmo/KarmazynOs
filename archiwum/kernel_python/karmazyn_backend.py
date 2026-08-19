@@ -61,10 +61,12 @@ def _refuse_python(reason: str) -> None:
 
 
 def _candidate_roots():
-    """Repo root candidates (flat layout + kernel/ mirror)."""
+    """Repo root + archived kernel_python dir."""
     here = os.path.dirname(os.path.abspath(__file__))
     yield here
     parent = os.path.dirname(here)
+    if os.path.basename(here) == "kernel_python" and os.path.basename(parent) == "archiwum":
+        yield os.path.dirname(parent)
     if parent and parent != here:
         yield parent
 

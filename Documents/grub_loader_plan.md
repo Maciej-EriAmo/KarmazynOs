@@ -418,7 +418,7 @@ Bez tego ISO z GRUB i tak nie da kontrolowanego Product bootu.
 
 - [ ] Przenieść / podlinkować prawo substratu (atoms, bubbles, roots, tick) do freestanding lub `no_std`+allocator
 - [ ] Early heap / bump allocator (MVP)
-- [ ] Testy golden: subset `test_substrate` przeniesiony na host-unit + QEMU smoke
+- [ ] Testy golden: subset `testy/test_substrate` przeniesiony na host-unit + QEMU smoke
 - [ ] Brak gościa Lua w tej fazie (albo minimalny `eval` stub)
 - [ ] Log analogiczny do BootLog na serial
 

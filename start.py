@@ -31,7 +31,12 @@ def _prep_env(substrate: str) -> dict:
         env["Path"] = str(cargo) + os.pathsep + env.get("Path", env.get("PATH", ""))
         env["PATH"] = env["Path"]
     # PYTHONPATH
-    parts = [str(ROOT), str(ROOT / "kernel"), str(ROOT / "software"), str(ROOT / "native")]
+    parts = [
+        str(ROOT),
+        str(ROOT / "archiwum" / "kernel_python"),
+        str(ROOT / "software"),
+        str(ROOT / "native"),
+    ]
     prev = env.get("PYTHONPATH", "")
     env["PYTHONPATH"] = os.pathsep.join(parts + ([prev] if prev else []))
     return env

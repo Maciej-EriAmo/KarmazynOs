@@ -16,15 +16,15 @@ jobs:
       - name: Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - name: cargo test (slab no_std + substrate)
+      - name: cargo test (LFS package set: slab → substrate → shell → kcc)
         run: |
           cargo test --manifest-path native/karmazyn_slab/Cargo.toml
           cargo test --manifest-path native/karmazyn_substrate/Cargo.toml
+          cargo test --manifest-path native/karmazyn_lisp/Cargo.toml
+          cargo test --manifest-path native/karmazyn_shell/Cargo.toml
+          cargo test --manifest-path toolchain/kcc/Cargo.toml
 
-      - name: cargo test (kcc Tor B — unit/sem/codegen)
-        run: cargo test --manifest-path toolchain/kcc/Cargo.toml
-
-      - name: cargo build release
+      - name: cargo build release (substrate)
         run: cargo build --release --manifest-path native/karmazyn_substrate/Cargo.toml
 
       - name: Python 3.12
@@ -44,7 +44,7 @@ jobs:
 
       - name: unittest (io + host + studio + bootcfg + kentry)
         env:
-          PYTHONPATH: ${{ github.workspace }}:${{ github.workspace }}/software:${{ github.workspace }}/kernel:${{ github.workspace }}/native
+          PYTHONPATH: ${{ github.workspace }}:${{ github.workspace }}/archiwum/kernel_python:${{ github.workspace }}/software:${{ github.workspace }}/native
           KARMAZYN_SUBSTRATE: python
           KARMAZYN_LUA: ${{ github.workspace }}/LUA
         run: |

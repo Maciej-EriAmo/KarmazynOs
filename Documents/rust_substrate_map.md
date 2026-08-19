@@ -279,7 +279,7 @@ Dziś crate jest **`std`** — freestanding = osobna faza, ta sama ontologia.
 | Test | Co weryfikuje względem Rust |
 |------|-----------------------------|
 | `cargo test` w `karmazyn_substrate` | prawo GC w czystym Rust |
-| `test_substrate_compat.py` | Python ↔ Rust golden |
+| `testy/test_substrate_compat.py` | Python ↔ Rust golden |
 | `test_io_thermal.IoThermalNative` | matryca I/O na int ids |
 | `software/test_host_tools` | host na **python** (string ids tools) |
 | `native/run_native.ps1` | smoke end-to-end |

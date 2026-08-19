@@ -26,10 +26,10 @@ The substrate does **not** speed this up and is **not** a fusion space. See [Doc
 
 ```powershell
 python karmazyn_qubit.py --demo
-python -m unittest test_qubit test_phi_composition -q
+python -m unittest discover -s testy -p "test_*.py" -q
 ```
 
-φ / composition tests (doc v2.2 §§8.1 and 8.4): `test_phi_composition.py`.
+φ / composition tests (doc v2.2 §§8.1 and 8.4): `testy/test_phi_composition.py`.
 
 ---
 
@@ -130,25 +130,25 @@ kernel/          Python facade + API (atoms, HRR, reference substrate)
 software/        boot, mini-Lisp guest, phi
 LUA/             Lua guest (tools language)
 native/          Rust substrate — DEFAULT production Store (reach-GC + C ABI + PyO3)
+testy/           Python tests (law / golden / qubits)
 holo/            Linux HSS LSM (C) — security bridge, optional
-archiwum/        legacy monolit (old shell/studio)
+archiwum/        legacy + golden CPython kernel
 ```
 
 | Path | Role |
 |---|---|
-| `karmazyn_boot.py` | Live REPL — default **Lua** on Store (thermal tick) |
-| `karmazyn_kernel.py` | Public kernel facade (only entry for software) |
-| `karmazyn_backend.py` | Substrate switch: **`native` (default)** \| `python` (reference) |
-| `LUA/` | `karmazyn_lua` guest **1.0.0** |
+| `software/karmazyn_boot.py` | Live REPL — default **Lua** on Store (thermal tick) |
+| `archiwum/kernel_python/karmazyn_kernel.py` | Public kernel facade (golden CPython) |
+| `archiwum/kernel_python/karmazyn_backend.py` | Substrate switch: **`native` (default)** \| `python` (reference) |
+| `LUA/` | `karmazyn_lua` guest **1.1.2** |
 | `native/karmazyn_substrate/` | Rust Store + `ksub_*` C ABI |
 | `native/karmazyn_substrate_rs/` | PyO3 extension (`CoreStore`) |
 | `native/run_native.ps1` | Build / smoke path (Windows) |
-| `test_substrate.py` | Python reference law tests |
-| `test_substrate_compat.py` | Python ↔ Rust golden law |
+| `testy/` | Python reference + golden + qubit tests |
 | `Documents/runtime_en.md` | Runtime guide (EN) |
 | `Documents/runtime_pl.md` | Runtime guide (PL) |
 | `holo/` | HSS LSM sources |
-| `archiwum/` | Historical shell/studio and older modules |
+| `archiwum/` | Historical shell/studio; `kernel_python` golden |
 
 **Kernel law:** temperature says *when*, reachability says *whether* (vacuum GC vs retained TOMB).
 
@@ -161,10 +161,14 @@ git clone https://github.com/Maciej-EriAmo/KarmazynOs
 cd KarmazynOs
 pip install numpy          # optional; HRR degrades without it
 
-# Live interpreter (Lua guest on substrate)
-python karmazyn_boot.py
-python karmazyn_boot.py --demo
-python karmazyn_boot.py --lisp --demo   # mini-Lisp guest
+# Native shell — no Python (canonical start)
+karmazyn.cmd
+Karmazyn.bat
+# or: native\karmazyn_shell\target\release\karmazyn_shell.exe
+
+# Optional Python skin (Lua guest on substrate)
+karmazyn.cmd --python
+python software/karmazyn_boot.py --demo
 
 # Guest switch in REPL:  :guest lua | :guest exec
 # Env: KARMAZYN_GUEST=lua|exec
@@ -179,9 +183,9 @@ karmazyn> return x * 2
 ### Tests
 
 ```bash
-python -m unittest test_substrate -q
-python test_substrate_compat.py -v          # needs: cargo build --release
-python kernel_boundary.py kernel/ software/
+python -m unittest discover -s testy -p "test_*.py" -q
+python testy/test_substrate_compat.py -v    # needs: cargo build --release
+python kernel_boundary.py archiwum/kernel_python software/
 ```
 
 ### Native substrate (Rust) — production default

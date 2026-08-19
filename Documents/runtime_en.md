@@ -104,9 +104,9 @@ Build: `native/build_native.ps1` (Windows) or `native/build_native.sh` · smoke:
 ## Tests
 
 ```bash
-python -m unittest test_substrate -v
-python test_substrate_compat.py -v
-python kernel_boundary.py kernel/ software/
+python -m unittest discover -s testy -p "test_*.py" -v
+python testy/test_substrate_compat.py -v
+python kernel_boundary.py archiwum/kernel_python software/
 cd LUA && python _run_tests.py
 python software/test_lua_release.py
 .\native\run_native.ps1            # Windows smoke (GC + Lua + atom-DB)

@@ -174,15 +174,13 @@ Budowa: `native/build_native.ps1` lub `native/build_native.sh`.
 ## 5. Testy
 
 ```bash
-# Prawo substratu (Python)
-python -m unittest test_substrate -v
-
-# Zgodność Python ↔ Rust (+ przełącznik)
-python test_substrate_compat.py -v
-python test_substrate_compat.py --native -v
+# Prawo substratu (Python) + golden
+python -m unittest discover -s testy -p "test_*.py" -v
+python testy/test_substrate_compat.py -v
+python testy/test_substrate_compat.py --native -v
 
 # Granica jadro ↛ software
-python kernel_boundary.py kernel/ software/
+python kernel_boundary.py archiwum/kernel_python software/
 
 # Rust (wymaga toolchain)
 cd native/karmazyn_substrate
@@ -260,7 +258,7 @@ Wersje: [../VERSION.txt](../VERSION.txt).
 | Faza | Stan |
 |------|------|
 | 0. Atom/Bubble/tick/reach-GC + C ABI | ✅ |
-| 1. Testy zgodności z Python Store | ✅ (`test_substrate_compat`) |
+| 1. Testy zgodności z Python Store | ✅ (`testy/test_substrate_compat.py`) |
 | 2. Drop-in Store (metadata, bindings, events, get_atom) | ✅ |
 | 3. Boot na native (Lua / mini-Lisp) | ✅ (domyślnie gdy most zbudowany) |
 | 4. PyO3 (`karmazyn_substrate_rs`) + HRR na native | ✅ (fallback: ctypes) |

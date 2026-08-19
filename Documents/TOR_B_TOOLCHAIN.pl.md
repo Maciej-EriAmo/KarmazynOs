@@ -1,21 +1,49 @@
-# Tor B — łańcuch narzędzi (Gentoo / LFS pattern)
+# Tor B — wzorzec LFS / Gentoo stage1
 
-**Status:** living · **Data:** 2026-08-06  
-**Nie mylić z:** Torem A (`BOOTSTRAP_STAGES.pl.md` — runtime bez Pythona na **host** `rustc`).
+**Status:** living · **Data:** 2026-08-19  
+**Nie mylić z:** Torem A (`BOOTSTRAP_STAGES.pl.md` — runtime/product na hoście).
 
-## Decyzja (2026-08-06) — TB.0
+To jest **wzorzec przebudowy**, nie wybór języka C.  
+Język systemu = **Rust**. Slot `gcc` = **`rustc`**. Pakiety = crate’y.
+
+## Mapa (jedyna, która trzyma wzorzec)
+
+| LFS / Gentoo stage1 | Karmazyn |
+|---------------------|----------|
+| język worlda | **Rust** (nie C, nie C#, nie K0) |
+| `gcc` | **`rustc`** |
+| host stage0 | `rustc` + `cargo` na maszynie dev |
+| ważne pakiety | `karmazyn_slab` → `karmazyn_substrate` → `karmazyn_shell` → `kcc` (narzędzie) |
+| przebudowa seed | `.\native\verify_rebuild.ps1` → `REBUILD_OK` |
+
+C ABI (`c_smoke`) = **szew FFI**, nie język systemu. Wzorzec **nie woła gcc**.
+
+`kcc` / K0 = **minister cienia prawa** (golden T×reach w `.k0`), nie zamiennik `rustc`.  
+K0→C99 to lowering frontendu, nie Gentoo.
+
+## Decyzja
 
 | | |
 |--|--|
-| **Kompilator** | **musi być własny** (`kcc` — język K0 → C) |
-| **Edytor / IDE / OS** | mogą być obce |
-| **stage0** | host `rustc`/`cargo` **tylko** żeby zbudować `kcc` raz |
-| **Linker / `gcc`** | obce **środowisko** (asemblacja/link IL w C); frontend+codegen = nasz |
+| **Wzorzec** | własne crate’y składa **rustc**, w kolejności, bez Pythona i bez gcc |
+| **Edytor / OS / host rustc** | obce OK (jak host gcc w wczesnym LFS) |
+| **Własny rustc** | PLAN (odpowiednik „przebuduj gcc”) — nie z inercji |
+| **kcc** | narzędzie w Rust + opcjonalny cień K0; nie slot kompilatora systemu |
 
-> Wzorzec LFS/Gentoo: **własne narzędzia** kompilują **ważne biblioteki**.  
-> Nie wymagamy własnego edytora ani własnego OS na start — wymagamy **własnego kompilatora**.
+## Bramka wzorca
 
-## Własny kompilator: `toolchain/kcc`
+```powershell
+cd C:\Users\drwis\KarmazynOs
+.\native\verify_rebuild.ps1
+# rustc: slab → substrate → shell → kcc (cargo test)
+# → REBUILD_OK
+```
+
+Nie wymaga gcc, Pythona, ani `verify_kcc.ps1`.
+
+---
+
+## Minister: `toolchain/kcc` (cień prawa, nie slot gcc)
 
 | Element | Ścieżka |
 |---------|--------|
@@ -64,30 +92,33 @@ cd C:\Users\drwis\KarmazynOs
 | **TB.3c** | kcc 0.5: for + break/continue | ✅ |
 | **TB.3d** | kcc 0.6: struct + field access/assign + by-value params | ✅ |
 | **TB.3d+** | kcc 0.6.1: nested fields + return-struct | ✅ |
-| **TB.4** | Self-host: `kcc` w K0 | 🚧 **Phase 3** (`emit_mini` IR/sem/emit/eval) |
+| **TB.4** | Self-host: `kcc` w K0 | ✅ **Phase 4** pętla podzbioru (`KCC_SELFHOST_OK`); nie pełny rewrite |
 | **TB.5** | Własny backend (bez gcc) — opcjonalnie | ❌ |
 
 ## LFS analogia (aktualna)
 
-| LFS | Karmazyn Tor B |
-|-----|----------------|
-| stage0 host tools | rustc buduje `kcc` |
-| toolchain | **kcc** (własny) |
-| rebuild critical packages | `thermal.k0` (+ kolejne lib) |
-| „editor can be anything” | tak — decyzja użytkownika |
+| LFS | Karmazyn |
+|-----|----------|
+| stage0 host gcc | host **rustc** |
+| toolchain | **rustc** (nie kcc, nie gcc) |
+| rebuild critical packages | slab → substrate → shell → kcc-as-crate |
+| „editor can be anything” | tak |
+| przebudowa gcc sobą | własny rustc — PLAN, nie teraz |
 
-## Czego nie robimy w TB.1
+## Czego nie robimy w TB.1 (minister kcc)
 
-- Nie forujemy full `rustc` / mrustc (ogrom; nie „własny” w sensie kodu Karmazyn).  
-- Nie przenosimy całego `karmazyn_substrate` do K0 od razu.  
-- Nie udajemy, że shell/Stage2 = własny kompilator.
+- Nie forujemy full `rustc` / mrustc z inercji.  
+- Nie przenosimy całego `karmazyn_substrate` do K0.  
+- Nie udajemy, że K0→C albo shell = Gentoo-stage2.  
+- Nie wstawiamy C jako języka systemu.
 
 ## Powiązania
 
+- `TOR_B_WDROZENIE.md` (plan wdrożenia W1–W5)  
 - `toolchain/kcc/README.md`  
 - `BOOTSTRAP_STAGES.pl.md`  
 - `rust_roadmap_tech.md`  
 
 ---
 
-*2026-08-07: TB.0–TB.3d+ (kcc **0.6.1**) + TB.4 **Phase 3** (`emit_mini` IR+sem+emit C+eval; Phase 0–2 lex/parse); golden TB.3/3b intact.*
+*2026-08-19: wzorzec = Rust/rustc (`verify_rebuild` → REBUILD_OK). kcc 0.6.2 + TB.4 P4 = minister K0, nie Gentoo-gcc. Nie pełny rewrite kcc; nie własny rustc.*

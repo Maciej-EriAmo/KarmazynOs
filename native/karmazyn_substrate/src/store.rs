@@ -72,9 +72,7 @@ impl Inner {
     fn dispatch_env_of(&self, token: u64) -> Option<BubbleId> {
         for (_name, f) in &self.env_of_hooks {
             if let Some(b) = f(token) {
-                if b != 0 {
-                    return Some(b);
-                }
+                return Some(b);
             }
         }
         None
@@ -179,11 +177,17 @@ impl Store {
     }
 
     pub fn atom_set_value_token(&self, aid: AtomId, token: u64) -> bool {
+        self.atom_set_guest(aid, token, None)
+    }
+
+    /// Set token + optional guest blob (Python: `atom.metadata["v"] = obj`).
+    /// Blob is owned by the atom: vacuum and snapshot take it along.
+    pub fn atom_set_guest(&self, aid: AtomId, token: u64, payload: Option<Vec<u8>>) -> bool {
         let mut g = self.lock();
         let thermal = g.thermal;
         if let Some(a) = g.atoms.get_mut(&aid) {
             a.value_token = token;
-            // Write heats less than read (HEAT_WRITE) — same law as karmazyn_atom.py
+            a.payload = payload;
             if thermal {
                 a.mark_write();
             }
@@ -191,6 +195,10 @@ impl Store {
         } else {
             false
         }
+    }
+
+    pub fn atom_payload(&self, aid: AtomId) -> Option<Vec<u8>> {
+        self.lock().atoms.get(&aid).and_then(|a| a.payload.clone())
     }
 
     pub fn atom_value_token(&self, aid: AtomId) -> Option<u64> {
@@ -589,6 +597,17 @@ mod tests {
         s.settle(100);
         assert!(s.has_atom(n));
         assert_eq!(s.lookup(inner, "n"), Some(n));
+    }
+
+    #[test]
+    fn guest_payload_dies_with_atom() {
+        let s = Store::new(true);
+        let a = s.atom_new("var", "clo", f64::NAN);
+        s.atom_set_guest(a, 2, Some(vec![1, 2, 3]));
+        assert_eq!(s.atom_payload(a).as_deref(), Some(&[1, 2, 3][..]));
+        s.settle(COOL);
+        assert!(!s.has_atom(a));
+        assert!(s.atom_payload(a).is_none());
     }
 
     #[test]

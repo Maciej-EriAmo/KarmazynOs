@@ -80,7 +80,7 @@ $env:KARMAZYN_SUBSTRATE = "native"   # Product
 ```
 
 ```bash
-export PYTHONPATH="$PWD:$PWD/software:$PWD/kernel:$PWD/native"
+export PYTHONPATH="$PWD:$PWD/archiwum/kernel_python:$PWD/software:$PWD/native"
 export KARMAZYN_SUBSTRATE=native
 ```
 

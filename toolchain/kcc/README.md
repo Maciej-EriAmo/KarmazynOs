@@ -43,7 +43,7 @@ Gate (TB.1–TB.3d+ + TB.4 Phase 0 seed; local full gate):
 
 CI `gate-product` also runs `cargo test` on `toolchain/kcc` (no gcc link of .k0 on Linux yet).
 
-## K0 language (0.6.1)
+## K0 language (0.6.2)
 
 - `fn name(a: ty, …) -> ty { … }`
 - types: `i32` `i64` `f64` `bool` · fixed arrays `[f64; 8]` · **`struct Name { … }`**
@@ -67,7 +67,8 @@ CI `gate-product` also runs `cargo test` on `toolchain/kcc` (no gcc link of .k0 
 | **return-path** | 0.4 — every path must `return` (if/else both arms count) |
 | **structs** define / field / nested / assign / param / return | 0.6.1 / TB.3d+ |
 
-Not yet: nested arrays, true modules/packages, strings, full self-host of kcc in K0.
+- builtin **`putchar(c: i32) -> i32`** (libc; TB.4 P4 dump) unless you define your own
+Not yet: nested arrays, true modules/packages, strings, full kcc rewrite in K0 (P4 is the subset loop).
 
 ## Next
 
@@ -75,7 +76,7 @@ Not yet: nested arrays, true modules/packages, strings, full self-host of kcc in
 2. ~~TB.3b golden reach store_mini ↔ slab~~ done (`golden_k0` store_mini_*).  
 3. ~~TB.3c for/break/continue (0.5)~~ done.  
 4. ~~TB.3d / 3d+ structs + nested + return (0.6.1)~~ done.  
-5. **TB.4 self-host** Phase 0: `toolchain/kcc_selfhost/` (in progress).  
+5. **TB.4 self-host** Phase 4: dump C → gcc → run (`verify_selfhost.ps1` → `KCC_SELFHOST_OK`). Subset only.  
 6. Optional: own backend without gcc (TB.5).
 
 See `Documents/TOR_B_TOOLCHAIN.pl.md`.

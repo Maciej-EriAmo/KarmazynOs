@@ -50,7 +50,7 @@ Eksperyment matrycy bez psucia bootu:
 # sandbox/work/experiments/heat_lab.py
 import sys, os
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
-sys.path[:0] = [ROOT, f"{ROOT}/software", f"{ROOT}/kernel", f"{ROOT}/native"]
+sys.path[:0] = [ROOT, f"{ROOT}/archiwum/kernel_python", f"{ROOT}/software", f"{ROOT}/native"]
 os.environ["KARMAZYN_SUBSTRATE"] = "python"
 from karmazyn_kernel import open_store
 from karmazyn_io import attach_thermal, QueueIo

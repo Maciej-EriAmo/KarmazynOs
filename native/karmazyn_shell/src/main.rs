@@ -5,10 +5,10 @@
 //!   cargo run --release -- -e "atom var x 50" -e stats -e quit
 //!   cargo run --release -- examples/smoke.ksh
 //!
-//! Commands: help | version | stats | atom | upsert | heat | tick | settle |
-//!           bubble | bubbles | roots | binds | info | root | unroot |
-//!           bind | unbind | lookup | has | t | set_t | dead | del |
-//!           val | setval | list | assert | echo | save | load | quit
+//! Commands: help | version | stats | atom | … | save | load | quit
+//! Lisp guest: line starting with `(` → karmazyn_lisp::Evaluator::eval_line.
+
+use karmazyn_lisp::Evaluator;
 
 use karmazyn_substrate::{state_for_t, Store, T_INIT};
 use std::env;
@@ -24,9 +24,16 @@ enum Outcome {
     Err,
 }
 
+struct App {
+    store: Store,
+    lisp: Evaluator,
+}
+
 fn main() {
     let thermal = true;
     let store = Store::new(thermal);
+    let lisp = Evaluator::new(&store);
+    let app = App { store, lisp };
     let args: Vec<String> = env::args().skip(1).collect();
 
     // batch: -e "cmd" ...  and/or trailing script file of commands
@@ -76,7 +83,7 @@ fn main() {
         let mut failed = false;
         for cmd in batch {
             println!("k$ {cmd}");
-            match dispatch(&store, &cmd) {
+            match dispatch(&app, &cmd) {
                 Outcome::Ok => {}
                 Outcome::Quit => break,
                 Outcome::Err => {
@@ -92,7 +99,7 @@ fn main() {
     }
 
     println!("karmazyn_shell {VERSION} — Stage 2 (native, no Python)");
-    println!("thermal={thermal}  type `help`");
+    println!("thermal={thermal}  lisp: lines starting with (   type `help`");
 
     let stdin = io::stdin();
     let mut stdout = io::stdout();
@@ -107,7 +114,7 @@ fn main() {
         if line.is_empty() {
             continue;
         }
-        match dispatch(&store, line) {
+        match dispatch(&app, line) {
             Outcome::Ok => {}
             Outcome::Quit => break,
             Outcome::Err => {
@@ -118,7 +125,50 @@ fn main() {
     println!("bye");
 }
 
-fn dispatch(s: &Store, line: &str) -> Outcome {
+fn dispatch(app: &App, line: &str) -> Outcome {
+    let t = line.trim();
+    if t.starts_with('(') {
+        return eval_lisp(app, t);
+    }
+    if let Some(rest) = t.strip_prefix("lisp ").or_else(|| t.strip_prefix("lisp\t")) {
+        return eval_lisp(app, rest.trim());
+    }
+    let parts: Vec<&str> = t.split_whitespace().collect();
+    if parts.first().copied() == Some("load") {
+        if parts.len() < 2 {
+            println!("usage: load <path>");
+            return Outcome::Err;
+        }
+        match app.store.load_snapshot_file(parts[1]) {
+            Ok(()) => {
+                app.lisp.remount_repl(&app.store);
+                let st = app.store.stats();
+                println!(
+                    "loaded {}  atoms={} bubbles={} reaped={}",
+                    parts[1], st.total, st.bubbles, st.reaped
+                );
+                Outcome::Ok
+            }
+            Err(e) => {
+                println!("load err: {e}");
+                Outcome::Err
+            }
+        }
+    } else {
+        dispatch_cmd(&app.store, line)
+    }
+}
+
+fn eval_lisp(app: &App, src: &str) -> Outcome {
+    // eval_line always returns a string (blad:… is language output, not a shell fail).
+    let s = app.lisp.eval_line(&app.store, src);
+    if !s.is_empty() {
+        println!("{s}");
+    }
+    Outcome::Ok
+}
+
+fn dispatch_cmd(s: &Store, line: &str) -> Outcome {
     let parts: Vec<&str> = line.split_whitespace().collect();
     if parts.is_empty() {
         return Outcome::Ok;
@@ -751,6 +801,7 @@ fn print_help() {
   assert has|nohas|dead|nodead|lookup|t|val|stats|root|noroot …
   echo <text>
   save <path> / load <path>     KSUB_SNAP v1 (no Python)
+  (define x 10) / lisp <expr>   mini-Lisp guest (atoms = vars)
   help | quit
 
 batch: non-zero exit if a command fails (assert/save/bind/…)"

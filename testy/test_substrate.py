@@ -8,9 +8,9 @@ Sondy behawioralne z audytów 2026-07 przełożone na trwały zestaw testów.
 Czysty stdlib (unittest) — zgodnie z filozofią zero-dep. Testy twarzy HRR
 (wektory) są warunkowe: bez numpy → skip, reszta działa w pełni.
 
-Uruchomienie:
-    python3 -m unittest test_substrate -v
-    python3 test_substrate.py
+Uruchomienie (z roota repo):
+    python -m unittest discover -s testy -p "test_substrate.py" -v
+    python testy/test_substrate.py
 
 Pokrycie (numeracja z rejestru ryzyk audytu):
   prawo T×reach  — sierota ginie, korzeń trzyma, resurekcja, cykle
@@ -28,6 +28,8 @@ Pokrycie (numeracja z rejestru ryzyk audytu):
 import threading
 import unittest
 import warnings
+
+import _path  # noqa: F401 — repo root + kernel_python
 
 from karmazyn_kernel import (
     # golden / reference pure-Python (Rust = default produkcyjny Store)

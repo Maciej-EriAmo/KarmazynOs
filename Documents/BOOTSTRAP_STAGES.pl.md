@@ -145,8 +145,11 @@ Wymaga najpierw własnych narzędzi (kompilator + enough of the world) — osobn
 Wyższe warstwy (Cynober / KarminQL / Lua / analityka) *na* fundamencie — nie warunek Stage 3 starter.
 
 ```powershell
+.\native\verify_rebuild.ps1
+# → REBUILD_OK  (wzorzec: rustc, bez gcc)
+
 .\native\bootstrap_from_scratch.ps1
-# → STAGE1_VERIFY_OK + STAGE2_VERIFY_OK + BOOTSTRAP_FROM_SCRATCH_OK
+# → REBUILD_OK + STAGE2_VERIFY_OK + BOOTSTRAP_FROM_SCRATCH_OK
 # Wymaga host rustc+cargo. Nie wymaga Pythona. Nie jest self-host rustc.
 
 # Unix:
@@ -173,7 +176,7 @@ Wyższe warstwy (Cynober / KarminQL / Lua / analityka) *na* fundamencie — nie 
 | Stage 1 | A | Runtime: jądro/prawo Store bez Pythona | ✅ DONE |
 | Stage 2 (shell+snap) | A | Runtime: używalność bez Pythona | ⚡ milestone + `stage2_verify` |
 | `bootstrap_from_scratch` | A | Build na **host** rustc, bez Pythona | ✅ starter (+ `.sh`, prefix) |
-| Gentoo stage1–3 / LFS toolchain→rebuild | B | **Własne narzędzia** → kompilacja **ważnych bibliotek** | 🚧 **kcc** 0.6.1 (TB.3d+); self-host TB.4 **Phase 0** |
+| Gentoo stage1–3 / LFS toolchain→rebuild | B | **rustc** składa crate’y (slab→substrate→shell→kcc) | ✅ `verify_rebuild` → `REBUILD_OK`; kcc/K0 = minister, nie slot gcc |
 
 **Dzisiaj (2026-08-06):**  
 Tor A: Stage1 + shell/`KSUB_SNAP`.  
@@ -186,11 +189,11 @@ Lua nie blokuje żadnego toru.
 
 1. **Python-nośny w runtime?** → poza Torem A (chyba że golden/test).  
 2. **Lua / goście?** → opcjonalne; nie warunek.  
-3. **„Czy to Gentoo stage N / faza LFS?”** → tylko jeśli **własne narzędzia** kompilują ważne biblioteki. Shell na host-rustc ≠ stage2 Gentoo ≠ LFS po chroot.  
+3. **„Czy to Gentoo stage N / faza LFS?”** → tylko jeśli **rustc** przebudowuje ważne **crate’y** (`verify_rebuild`). Shell sam ≠ stage2 Gentoo. kcc/K0 ≠ slot gcc.  
 4. **„Czy milestone Tor A?”** → osobne pytanie (używalność, bramki `stage1_verify`).
 
 ---
 
-*Dokument żywy. Aktualizacja 2026-08-07 — Tor A: stage2 + ksub_client; Tor B: kcc 0.6.1 + TB.4 Phase 0.*
+*Dokument żywy. Aktualizacja 2026-08-19 — Tor A: stage2; Tor B wzorzec: rustc/crates (`verify_rebuild`). kcc = minister.*
 
 

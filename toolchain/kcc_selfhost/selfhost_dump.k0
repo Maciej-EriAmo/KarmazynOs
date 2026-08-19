@@ -1,0 +1,232 @@
+// TB.4 Phase 4 — dump guest C from the K0 compiler (emit_engine).
+// Host kcc builds this; stdout is the C bundle; gcc compiles slices.
+// Markers: #K0A #K0B #K0C #K0E  (D = sem reject, no C)
+// Exit 0 on pass.
+
+#include "emit_engine.k0"
+
+fn dump_ch(c: i32) -> i32 {
+    putchar(c);
+    return 0;
+}
+
+fn dump_marker(tag: i32) -> i32 {
+    // #K0X\n
+    dump_ch(35);
+    dump_ch(75);
+    dump_ch(48);
+    dump_ch(tag);
+    dump_ch(10);
+    return 0;
+}
+
+fn dump_bytes(out: [i32; 256], n: i32) -> i32 {
+    let i: i32 = 0;
+    while i < n {
+        dump_ch(out[i]);
+        i = i + 1;
+    }
+    return 0;
+}
+
+fn main() -> i32 {
+    let src: [i32; 64];
+    let kinds: [i32; 32];
+    let starts: [i32; 32];
+    let ends: [i32; 32];
+    let ops: [i32; 64];
+    let oa: [i32; 64];
+    let ob: [i32; 64];
+    let irn: [i32; 1];
+    let stats: [i32; 8];
+    let out: [i32; 256];
+    let n: i32 = 0;
+    let r: i32 = 0;
+
+    // A: fn main(){return 42;}
+    src[0] = 102;
+    src[1] = 110;
+    src[2] = 32;
+    src[3] = 109;
+    src[4] = 97;
+    src[5] = 105;
+    src[6] = 110;
+    src[7] = 40;
+    src[8] = 41;
+    src[9] = 123;
+    src[10] = 114;
+    src[11] = 101;
+    src[12] = 116;
+    src[13] = 117;
+    src[14] = 114;
+    src[15] = 110;
+    src[16] = 32;
+    src[17] = 52;
+    src[18] = 50;
+    src[19] = 59;
+    src[20] = 125;
+    n = 21;
+    r = compile_pipeline(src, n, kinds, starts, ends, ops, oa, ob, irn, stats, out);
+    if r < 0 {
+        return 10;
+    }
+    if stats[5] != 42 {
+        return 11;
+    }
+    dump_marker(65);
+    dump_bytes(out, stats[6]);
+
+    // B: fn main(){let x=1;return x;}
+    src[0] = 102;
+    src[1] = 110;
+    src[2] = 32;
+    src[3] = 109;
+    src[4] = 97;
+    src[5] = 105;
+    src[6] = 110;
+    src[7] = 40;
+    src[8] = 41;
+    src[9] = 123;
+    src[10] = 108;
+    src[11] = 101;
+    src[12] = 116;
+    src[13] = 32;
+    src[14] = 120;
+    src[15] = 61;
+    src[16] = 49;
+    src[17] = 59;
+    src[18] = 114;
+    src[19] = 101;
+    src[20] = 116;
+    src[21] = 117;
+    src[22] = 114;
+    src[23] = 110;
+    src[24] = 32;
+    src[25] = 120;
+    src[26] = 59;
+    src[27] = 125;
+    n = 28;
+    r = compile_pipeline(src, n, kinds, starts, ends, ops, oa, ob, irn, stats, out);
+    if r < 0 {
+        return 20;
+    }
+    if stats[5] != 1 {
+        return 21;
+    }
+    dump_marker(66);
+    dump_bytes(out, stats[6]);
+
+    // C: fn main(){return 1+2;}
+    src[0] = 102;
+    src[1] = 110;
+    src[2] = 32;
+    src[3] = 109;
+    src[4] = 97;
+    src[5] = 105;
+    src[6] = 110;
+    src[7] = 40;
+    src[8] = 41;
+    src[9] = 123;
+    src[10] = 114;
+    src[11] = 101;
+    src[12] = 116;
+    src[13] = 117;
+    src[14] = 114;
+    src[15] = 110;
+    src[16] = 32;
+    src[17] = 49;
+    src[18] = 43;
+    src[19] = 50;
+    src[20] = 59;
+    src[21] = 125;
+    n = 22;
+    r = compile_pipeline(src, n, kinds, starts, ends, ops, oa, ob, irn, stats, out);
+    if r < 0 {
+        return 30;
+    }
+    if stats[5] != 3 {
+        return 31;
+    }
+    dump_marker(67);
+    dump_bytes(out, stats[6]);
+
+    // D: fn main(){return y;}  — must reject
+    src[0] = 102;
+    src[1] = 110;
+    src[2] = 32;
+    src[3] = 109;
+    src[4] = 97;
+    src[5] = 105;
+    src[6] = 110;
+    src[7] = 40;
+    src[8] = 41;
+    src[9] = 123;
+    src[10] = 114;
+    src[11] = 101;
+    src[12] = 116;
+    src[13] = 117;
+    src[14] = 114;
+    src[15] = 110;
+    src[16] = 32;
+    src[17] = 121;
+    src[18] = 59;
+    src[19] = 125;
+    n = 20;
+    r = compile_pipeline(src, n, kinds, starts, ends, ops, oa, ob, irn, stats, out);
+    if r >= 0 {
+        return 40;
+    }
+
+    // E: fn main(){let a=10;let b=a+5;return b;}
+    src[0] = 102;
+    src[1] = 110;
+    src[2] = 32;
+    src[3] = 109;
+    src[4] = 97;
+    src[5] = 105;
+    src[6] = 110;
+    src[7] = 40;
+    src[8] = 41;
+    src[9] = 123;
+    src[10] = 108;
+    src[11] = 101;
+    src[12] = 116;
+    src[13] = 32;
+    src[14] = 97;
+    src[15] = 61;
+    src[16] = 49;
+    src[17] = 48;
+    src[18] = 59;
+    src[19] = 108;
+    src[20] = 101;
+    src[21] = 116;
+    src[22] = 32;
+    src[23] = 98;
+    src[24] = 61;
+    src[25] = 97;
+    src[26] = 43;
+    src[27] = 53;
+    src[28] = 59;
+    src[29] = 114;
+    src[30] = 101;
+    src[31] = 116;
+    src[32] = 117;
+    src[33] = 114;
+    src[34] = 110;
+    src[35] = 32;
+    src[36] = 98;
+    src[37] = 59;
+    src[38] = 125;
+    n = 39;
+    r = compile_pipeline(src, n, kinds, starts, ends, ops, oa, ob, irn, stats, out);
+    if r < 0 {
+        return 50;
+    }
+    if stats[5] != 15 {
+        return 51;
+    }
+    dump_marker(69);
+    dump_bytes(out, stats[6]);
+
+    return 0;
+}

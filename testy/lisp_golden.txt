@@ -1,0 +1,162 @@
+# Portable mini-Lisp golden — not Rust, not Python.
+# Both kernels must print the same eval_line string.
+#
+# === name     new session (fresh store)
+# >>> expr     input
+# next line    exact expected output
+# ! needle     expected: line starts with "blad:" AND contains needle
+
+=== arith
+>>> (define x 10)
+10
+>>> (define y (+ x 5))
+15
+>>> (+ x y)
+25
+>>> (- 3)
+-3
+>>> (- 10 3 2)
+5
+>>> (* 2 3 4)
+24
+>>> (= 5 5)
+#t
+>>> (< 1 2)
+#t
+>>> (> 1 2)
+#f
+
+=== lambda-apply
+>>> ((lambda (a b) (* a b)) 6 7)
+42
+
+=== closure
+>>> (define add (lambda (a) (lambda (b) (+ a b))))
+<closure (a)>
+>>> (define add10 (add 10))
+<closure (b)>
+>>> (add10 5)
+15
+
+=== fact
+>>> (define fact (lambda (n) (if (< n 2) 1 (* n (fact (- n 1))))))
+<closure (n)>
+>>> (fact 5)
+120
+
+=== counter
+>>> (define mk (lambda () (begin (define n 0) (lambda () (begin (set! n (+ n 1)) n)))))
+<closure ()>
+>>> (define c (mk))
+<closure ()>
+>>> (c)
+1
+>>> (c)
+2
+>>> (c)
+3
+
+=== specials
+>>> (define x 1)
+1
+>>> (or 0 5)
+5
+>>> (and 1 2 3)
+3
+>>> (if #t 1 0)
+1
+>>> (if #f 1 0)
+0
+>>> (if #f 1)
+()
+>>> (begin 1 2 3)
+3
+>>> (+ 1 (set! x 7))
+8
+>>> (+ 2 3)
+5
+
+=== comment
+>>> (+ 2 3) ; inline
+5
+
+=== shadow-plus
+>>> (define + 5)
+5
+>>> +
+5
+>>> (+ 1 2)
+! nie da sie wywolac
+
+=== errors
+>>> no-such
+! nieznane
+>>> (set! missing 1)
+! nie istnieje
+>>> (/ 1 0)
+! zero
+
+=== lambda-eq
+# β: (λx.x) a = a
+>>> ((lambda (x) x) 7)
+7
+# K: (λx.λy.x) a b = a
+>>> (((lambda (x) (lambda (y) x)) 3) 9)
+3
+# K*: (λx.λy.y) a b = b
+>>> (((lambda (x) (lambda (y) y)) 3) 9)
+9
+# S-like: (λf.λg.λx.f (g x))
+>>> (define compose (lambda (f) (lambda (g) (lambda (x) (f (g x))))))
+<closure (f)>
+>>> (define inc (lambda (x) (+ x 1)))
+<closure (x)>
+>>> (define dbl (lambda (x) (* x 2)))
+<closure (x)>
+>>> (((compose inc) dbl) 10)
+21
+>>> (((compose dbl) inc) 10)
+22
+# η-shape: (λx.(f x)) ≡ f  on a point
+>>> (define f-eta (lambda (x) (inc x)))
+<closure (x)>
+>>> (= (f-eta 4) (inc 4))
+#t
+# currying vs n-ary
+>>> (= ((lambda (a b) (+ a b)) 2 3) (((lambda (a) (lambda (b) (+ a b))) 2) 3))
+#t
+# Church 2, 3; plus = λm.λn.λf.λx. m f (n f x)
+>>> (define ch-two (lambda (f) (lambda (x) (f (f x)))))
+<closure (f)>
+>>> (define ch-three (lambda (f) (lambda (x) (f (f (f x))))))
+<closure (f)>
+>>> (define ch-plus (lambda (m) (lambda (n) (lambda (f) (lambda (x) ((m f) ((n f) x)))))))
+<closure (m)>
+>>> (define ch-inc (lambda (n) (+ n 1)))
+<closure (n)>
+>>> ((ch-two ch-inc) 0)
+2
+>>> ((ch-three ch-inc) 0)
+3
+>>> ((((ch-plus ch-two) ch-three) ch-inc) 0)
+5
+>>> (= ((((ch-plus ch-two) ch-three) ch-inc) 0) (+ ((ch-two ch-inc) 0) ((ch-three ch-inc) 0)))
+#t
+# let-over-lambda: dwa liczniki niezależne
+>>> (define mk (lambda () (begin (define n 0) (lambda () (begin (set! n (+ n 1)) n)))))
+<closure ()>
+>>> (define a (mk))
+<closure ()>
+>>> (define b (mk))
+<closure ()>
+>>> (a)
+1
+>>> (a)
+2
+>>> (b)
+1
+>>> (= (a) 3)
+#t
+>>> (= (b) 2)
+#t
+

@@ -144,7 +144,7 @@ fn compile_c(c_path: &Path, bin: &Path) -> Result<(), String> {
 
 fn print_help() {
     println!(
-        "kcc 0.6.1 — Karmazyn own compiler (K0 → C99)
+        "kcc 0.6.2 — Karmazyn own compiler (K0 → C99)
 
 USAGE:
   kcc <file.k0> [-o out.c]
@@ -162,6 +162,7 @@ LANGUAGE:
   fixed arrays [T; N], a[i], array params
   for (init; cond; step) {{ }}  break;  continue;   (TB.3c / 0.5)
   struct Name {{ field: ty … }}  p.f  p.a.b = e  return struct  (TB.3d+ / 0.6.1)
+  builtin putchar(c) → libc (TB.4 P4) unless you define putchar
   sem: undeclared, arity, no f64 %, type-unify, return-paths, break-in-loop, fields
 
 POLICY:
@@ -391,5 +392,21 @@ fn main() -> i32 {
         let p = parse(src).unwrap();
         let err = sem::check(&p).unwrap_err();
         assert!(err.contains("break"), "{err}");
+    }
+
+    #[test]
+    fn putchar_builtin_uses_stdio() {
+        let src = r#"
+fn main() -> i32 {
+    putchar(65);
+    return 0;
+}
+"#;
+        let p = parse(src).expect("parse putchar");
+        sem::check(&p).expect("sem putchar builtin");
+        let c = emit_c(&p, false).expect("emit putchar");
+        assert!(c.contains("#include <stdio.h>"), "{c}");
+        assert!(c.contains("putchar((int)"), "{c}");
+        assert!(!c.contains("k0_putchar"), "{c}");
     }
 }

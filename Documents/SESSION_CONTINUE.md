@@ -27,7 +27,8 @@
 
 | Obszar | Stan |
 |--------|------|
-| kcc 0.6.1 + TB.4 P0–3 | pause (P4 nie gonić) |
+| Tor B wzorzec | rustc + crate’y: `verify_rebuild` + G0/CI (slab→shell→kcc); plan `TOR_B_WDROZENIE.md` |
+| kcc 0.6.2 + TB.4 P0–4 | minister K0; nie slot gcc |
 | shell 0.3.2 + lifecycle T×reach | STAGE2 green |
 | heat WRITE / strdup / dead code | fix |
 | KANON król/minister/userspace | docs |
@@ -58,10 +59,11 @@ cd C:\Users\drwis\KarmazynOs
 
 ## Next (gdy wrócisz)
 
-1. **Opc.** product: STRICT default gdy native; CI grep `import Store` bokiem  
+1. **H0+H2a** start = native shell + mini-Lisp `(` ; klient Python = `native/ksub_client.py`
+2. **Opc.** product: STRICT default gdy native; CI grep `import Store` bokiem  
 2. **Opc.** View / export JSON (projekcja user zone)  
 3. **Opc.** dopisać do KANON § sygnatura S + zamrożenie vs TOMB (ustalone słownie)  
-4. **Nie** TB.4 Phase 4 z inercji  
+4. **Nie** własny rustc / TB.5 z inercji — wzorzec jedzie na host `rustc`  
 5. **Stop** — bramki zielone wystarczą  
 
 ---

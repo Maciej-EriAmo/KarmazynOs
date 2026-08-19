@@ -2,8 +2,8 @@
 
 Kolejność kandydatów na sys.path (katalogi z karmazyn_kernel):
   1) KARMAZYN_KERNEL / KARMAZYN_KERNEL_HOME
-  2) monorepo: LUA/../kernel  (KarmazynOs/kernel)
-  3) monorepo: LUA/..         (lustra karmazyn_kernel w root)
+  2) monorepo: LUA/../archiwum/kernel_python
+  3) monorepo: LUA/..         (root)
   4) sibling:  LUA/../Kernel Karmazyn  (opcjonalny layout dev)
 """
 from __future__ import annotations
@@ -25,10 +25,12 @@ def kernel_candidates(root: str | None = None) -> list[str]:
         out.append(os.path.abspath(env))
     out.extend(
         [
-            os.path.join(parent, "kernel"),       # monorepo kernel/
-            parent,                               # monorepo root (lustra)
+            os.path.join(parent, "archiwum", "kernel_python"),
+            os.path.join(parent, "kernel"),  # legacy
+            parent,
             os.path.join(parent, "Kernel Karmazyn"),
-            os.path.join(parent, "KarmazynOs"),    # gdy LUA jest siblingiem monorepo
+            os.path.join(parent, "KarmazynOs"),
+            os.path.join(parent, "KarmazynOs", "archiwum", "kernel_python"),
             os.path.join(parent, "KarmazynOs", "kernel"),
         ]
     )
@@ -69,7 +71,12 @@ def ensure_kernel_on_path(root: str | None = None) -> str | None:
                 sys.path.remove(cand)
             sys.path.insert(0, cand)
             # root monorepo + native (backend → NativeStore)
-            parent = os.path.dirname(cand) if os.path.basename(cand) == "kernel" else cand
+            base = os.path.basename(cand)
+            parent = os.path.dirname(cand)
+            if base == "kernel_python" and os.path.basename(parent) == "archiwum":
+                parent = os.path.dirname(parent)
+            elif base != "kernel":
+                parent = cand
             for extra in (parent, os.path.join(parent, "native")):
                 if os.path.isdir(extra):
                     if extra in sys.path:

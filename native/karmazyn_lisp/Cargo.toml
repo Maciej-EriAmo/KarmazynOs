@@ -1,0 +1,15 @@
+[package]
+name = "karmazyn_lisp"
+version = "0.1.0"
+edition = "2021"
+authors = ["Maciej Mazur"]
+description = "KarmazynOS mini-Lisp guest — thin on Store (eval_line / env bubble / env_of)"
+license = "MIT"
+repository = "https://github.com/Maciej-EriAmo/KarmazynOs"
+
+[dependencies]
+karmazyn_substrate = { path = "../karmazyn_substrate" }
+
+[lib]
+name = "karmazyn_lisp"
+path = "src/lib.rs"

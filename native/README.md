@@ -50,13 +50,15 @@ Kanoniczny plan: [../Documents/BOOTSTRAP_STAGES.pl.md](../Documents/BOOTSTRAP_ST
 | **2** Native shell + snapshot | ⚡ milestone + gate | `.\native\stage2_verify.ps1` (KSUB_SNAP; nie Gentoo-stage2) |
 | **3** From-scratch na host rustc | ✅ starter | `bootstrap_from_scratch.ps1` / `.sh` + `install_prefix.ps1` |
 
-**Gentoo stage 1–2–3** i **Linux From Scratch** = ten sam wzorzec (Tor B):  
-*własne narzędzia → kompilacja ważnych bibliotek* (u LFS: toolchain na hoście, potem rebuild „od środka”).  
-Stage 1/2/shell w repo = **Tor A** (runtime bez Pythona na host `rustc`) — nie Gentoo/LFS-final.  
-Lua nie jest warunkiem. Własny kompilator = osobna decyzja.
+**Gentoo / LFS (Tor B)** = wzorzec, język = **Rust**, slot gcc = **rustc**:  
+`.\native\verify_rebuild.ps1` → `REBUILD_OK` (slab → substrate → shell → kcc-as-crate; bez gcc, bez Pythona).  
+Stage 1/2 w tym pliku = **Tor A** (runtime). C ABI smoke = szew FFI, nie world. `kcc`/K0 = minister, nie kompilator systemu.
 
 ```powershell
-# Stage 3 starter — jedna komenda (rustc+cargo only, ZERO Pythona)
+# Tor B pattern (rustc, no gcc): slab → substrate → shell → kcc
+.\native\verify_rebuild.ps1
+
+# Stage 3 starter — wzorzec + smoke (rustc+cargo; C ABI opcjonalne)
 .\native\bootstrap_from_scratch.ps1
 
 # Stage 1 / 2 gates
@@ -166,9 +168,9 @@ python native/karmazyn_substrate_native.py
 ## Compatibility tests + substrate switch
 
 ```bash
-python test_substrate_compat.py -v          # both backends
-python test_substrate_compat.py --native -v
-python test_substrate_compat.py --python -v
+python testy/test_substrate_compat.py -v          # both backends
+python testy/test_substrate_compat.py --native -v
+python testy/test_substrate_compat.py --python -v
 ```
 
 API (also re-exported from `karmazyn_kernel`):
@@ -241,7 +243,7 @@ Full drop-in (`metadata`, `EventBus`, HRR, `Bubble` subclass) is
 | Phase | Status |
 |-------|--------|
 | 0. Rust core + C ABI + unit tests (law) | **done** |
-| 1. Golden tests vs Python (`test_substrate_compat`) | **done** |
+| 1. Golden tests vs Python (`testy/test_substrate_compat.py`) | **done** |
 | 2. Full `Store` drop-in (metadata, bindings, events) | **done** |
 | 3. Boot `KARMAZYN_SUBSTRATE=native` end-to-end | **done** |
 | 4. PyO3 bindings + HRR on native path | **done** |

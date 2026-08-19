@@ -5,13 +5,16 @@
 Zasada dokumentu: *nie wstawiać φ*. Kryterium to równanie λ² − λ − 1 = 0
 na widmie operatora zbudowanego wyłącznie z kanałów 0/1.
 
-    python -m unittest test_phi_composition -v
+    python -m unittest discover -s testy -p "test_phi_composition.py" -v
+    python testy/test_phi_composition.py
 """
 from __future__ import annotations
 
 import math
 import random
 import unittest
+
+import _path  # noqa: F401
 
 I, TAU = "1", "τ"
 FIB_OBJ = (I, TAU)

@@ -3,9 +3,17 @@
 version = 4
 
 [[package]]
-name = "karmazyn_shell"
-version = "0.3.2"
+name = "karmazyn_lisp"
+version = "0.1.0"
 dependencies = [
+ "karmazyn_substrate",
+]
+
+[[package]]
+name = "karmazyn_shell"
+version = "0.3.3"
+dependencies = [
+ "karmazyn_lisp",
  "karmazyn_substrate",
 ]
 

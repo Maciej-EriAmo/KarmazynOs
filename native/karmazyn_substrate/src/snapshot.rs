@@ -5,6 +5,7 @@
 //! KSUB_SNAP 1
 //! META thermal=1 decay=0.92 reaped=0 next_atom=2 next_bubble=1
 //! ATOM id s e t token
+//! PAYLOAD id hex            # optional guest blob (v2)
 //! BUBBLE id label parent   # parent=-1 if none
 //! BIND bid name aid
 //! ROOT bid
@@ -19,7 +20,7 @@ use std::fmt::Write as _;
 use std::fs;
 use std::path::Path;
 
-pub const SNAP_VERSION: u32 = 1;
+pub const SNAP_VERSION: u32 = 2;
 
 #[derive(Debug, Clone)]
 pub struct AtomSnap {
@@ -28,6 +29,7 @@ pub struct AtomSnap {
     pub e: String,
     pub t: f64,
     pub value_token: u64,
+    pub payload: Option<Vec<u8>>,
 }
 
 #[derive(Debug, Clone)]
@@ -70,6 +72,7 @@ impl Store {
                 e: a.e.clone(),
                 t: a.t,
                 value_token: a.value_token,
+                payload: a.payload.clone(),
             })
             .collect();
         atoms.sort_by_key(|a| a.id);
@@ -132,6 +135,7 @@ impl Store {
             let tt = clamp_t(if a.t.is_nan() { T_INIT } else { a.t });
             let mut atom = Atom::new(a.id, a.s.clone(), a.e.clone(), tt);
             atom.value_token = a.value_token;
+            atom.payload = a.payload.clone();
             g.atoms.insert(a.id, atom);
             if a.id >= g.next_atom {
                 g.next_atom = a.id.saturating_add(1);
@@ -207,6 +211,11 @@ impl StoreSnapshot {
                 a.t,
                 a.value_token
             );
+            if let Some(p) = &a.payload {
+                if !p.is_empty() {
+                    let _ = writeln!(out, "PAYLOAD {} {}", a.id, hex_encode(p));
+                }
+            }
         }
         for b in &self.bubbles {
             let parent = b.parent.map(|p| p as i64).unwrap_or(-1);
@@ -264,7 +273,7 @@ impl StoreSnapshot {
                         .ok_or_else(|| format!("line {}: missing version", lineno + 1))?
                         .parse()
                         .map_err(|_| format!("line {}: bad version", lineno + 1))?;
-                    if ver != SNAP_VERSION {
+                    if ver != 1 && ver != SNAP_VERSION {
                         return Err(format!("unsupported snapshot version {ver}"));
                     }
                     saw_header = true;
@@ -315,7 +324,23 @@ impl StoreSnapshot {
                         value_token: parts[4]
                             .parse()
                             .map_err(|_| format!("line {}: bad token", lineno + 1))?,
+                        payload: None,
                     });
+                }
+                "PAYLOAD" => {
+                    if parts.len() < 2 {
+                        return Err(format!("line {}: PAYLOAD needs id hex", lineno + 1));
+                    }
+                    let id: AtomId = parts[0]
+                        .parse()
+                        .map_err(|_| format!("line {}: bad payload id", lineno + 1))?;
+                    let blob = hex_decode(&parts[1])
+                        .map_err(|e| format!("line {}: payload hex: {e}", lineno + 1))?;
+                    if let Some(a) = atoms.iter_mut().rev().find(|a| a.id == id) {
+                        a.payload = Some(blob);
+                    } else {
+                        return Err(format!("line {}: PAYLOAD for unknown atom {id}", lineno + 1));
+                    }
                 }
                 "BUBBLE" => {
                     if parts.len() < 3 {
@@ -389,6 +414,40 @@ impl StoreSnapshot {
     }
 }
 
+fn hex_encode(b: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(b.len() * 2);
+    for &x in b {
+        out.push(HEX[(x >> 4) as usize] as char);
+        out.push(HEX[(x & 0xf) as usize] as char);
+    }
+    out
+}
+
+fn hex_decode(s: &str) -> Result<Vec<u8>, String> {
+    if s.len() % 2 != 0 {
+        return Err("odd length".into());
+    }
+    let mut out = Vec::with_capacity(s.len() / 2);
+    let bytes = s.as_bytes();
+    let nibble = |c: u8| -> Result<u8, String> {
+        match c {
+            b'0'..=b'9' => Ok(c - b'0'),
+            b'a'..=b'f' => Ok(c - b'a' + 10),
+            b'A'..=b'F' => Ok(c - b'A' + 10),
+            _ => Err("bad hex".into()),
+        }
+    };
+    let mut i = 0;
+    while i < bytes.len() {
+        let hi = nibble(bytes[i])?;
+        let lo = nibble(bytes[i + 1])?;
+        out.push((hi << 4) | lo);
+        i += 2;
+    }
+    Ok(out)
+}
+
 fn escape_field(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
@@ -457,7 +516,7 @@ mod tests {
         s.settle(5);
 
         let text = s.export_snapshot().to_text();
-        assert!(text.contains("KSUB_SNAP 1"));
+        assert!(text.contains("KSUB_SNAP 2"));
         assert!(text.contains("ATOM"));
         assert!(text.contains("ROOT"));
 
@@ -471,6 +530,31 @@ mod tests {
         assert_eq!(s2.lookup(root, "x y"), Some(a));
         assert_eq!(s2.stats().bubbles, 1);
         assert_eq!(s2.stats().total, 1);
+    }
+
+    #[test]
+    fn snapshot_payload_travels_with_atom() {
+        let s = Store::new(false);
+        let a = s.atom_new("var", "clo", 50.0);
+        s.atom_set_guest(a, 7, Some(b"lambda".to_vec()));
+        let text = s.export_snapshot().to_text();
+        assert!(text.contains("PAYLOAD"));
+        let s2 = Store::new(false);
+        s2.import_snapshot(&StoreSnapshot::from_text(&text).unwrap());
+        assert_eq!(s2.atom_payload(a).as_deref(), Some(&b"lambda"[..]));
+        assert_eq!(s2.atom_value_token(a), Some(7));
+        s2.delete_atom(a);
+        assert!(s2.atom_payload(a).is_none());
+    }
+
+    #[test]
+    fn snapshot_v1_still_loads() {
+        let text = "KSUB_SNAP 1\nMETA thermal=0 decay=0.92 reaped=0 next_atom=1 next_bubble=0\nATOM 0 var x 50 99\nEND\n";
+        let snap = StoreSnapshot::from_text(text).expect("v1");
+        let s = Store::new(true);
+        s.import_snapshot(&snap);
+        assert_eq!(s.atom_value_token(0), Some(99));
+        assert!(s.atom_payload(0).is_none());
     }
 
     #[test]

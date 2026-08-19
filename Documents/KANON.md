@@ -156,43 +156,48 @@ Shell / Lisp / Lua / Python = klienci substratu.
 
 ---
 
-## 4. KANON — własny kompilator (Tor B)
+## 4. KANON — Tor B (wzorzec LFS, język = Rust)
 
-**Cel:** ważne prawo / lib w **K0** kompiluje **kcc** (nasz frontend), nie „cały świat w rustc”.
+**Cel wzorca:** własne narzędzia / ważne biblioteki składa **ten sam łańcuch co system**.  
+System jest w **Rust**, więc slot `gcc` = **`rustc`**. Nie wstawiamy C jako worlda.
 
 | Zasada | |
 |--------|--|
-| **Własne** | lex/parse/sem/codegen kcc, źródła `.k0` |
-| **Obce OK** | stage0 `rustc` (tylko buduje kcc), `gcc`/`cc` jako link, edytor, OS |
-| **Nie udajemy** | pełnego self-host kcc, dopóki TB.4 Phase 4 nie ma bramki |
+| **Wzorzec** | `rustc` przebudowuje crate’y: slab → substrate → shell → kcc (narzędzie) |
+| **Obce OK** | host rustc, edytor, OS |
+| **Nie udajemy** | że kcc albo gcc jest kompilatorem systemu; że K0 jest językiem króla |
 
 | Artefakt | Rola |
 |----------|------|
-| `toolchain/kcc` (0.6.1+) | K0 → C99 |
-| `examples/*.k0` | thermal, store_mini, struct_point, … |
-| `toolchain/kcc_selfhost/` | TB.4 Phase **0–3** (lex → parse → IR/sem/emit/eval) |
-| `toolchain/verify_kcc.ps1` | bramka Tor B |
+| `native/verify_rebuild.ps1` | bramka wzorca → `REBUILD_OK` |
+| `native/karmazyn_slab` | prawo T×reach (crate) |
+| `native/karmazyn_substrate` | jądro host |
+| `native/karmazyn_shell` | narzędzie na substracie |
+| `toolchain/kcc` | minister: crate Rust + cień K0 (golden), nie slot gcc |
 
-**Bramka:** `.\toolchain\verify_kcc.ps1` → `KCC_VERIFY_OK`.
+**Bramka wzorca:** `.\native\verify_rebuild.ps1` → `REBUILD_OK` (bez gcc, bez Pythona).
 
-**TB.4 Phase 4** (dump C → pętla self-host) = **PLAN**, nie kanon, dopóki nie ma `verify_selfhost` zielonego.
+Minister kcc (osobno): `.\toolchain\verify_kcc.ps1` → `KCC_VERIFY_OK`; P4 `verify_selfhost` = pętla podzbioru K0, nie Gentoo.
 
 ---
 
 ## 5. HOST — cienkie warstwy product (L1)
 
-To **nie silnik**. To skóra na hoście: boot, Studio, skrypty.  
-**Musi** wołać substrat (`KARMAZYN_SUBSTRATE=native` = właściwa droga).
+To **nie silnik**.  
+**Start kanoniczny (bez CPythona):** `karmazyn.cmd` / `Karmazyn.bat` → `karmazyn_shell.exe`.  
+Skóra Python (`software/karmazyn_boot.py`, Studio, Lua-w-CPython) = **opcjonalny** minister (`--python`). Docs: [`HOST_NO_PYTHON.md`](HOST_NO_PYTHON.md).
 
-| Obszar | Path (orientacyjnie) |
-|--------|----------------------|
-| Boot / REPL host | `software/karmazyn_boot.py`, root mirror |
-| Studio SDL | `karmazyn_studio.py` |
-| Lua / mini-Lisp / … | goście — cienkie języki na Store |
-| Holon (pamięć SE) | **Karmin_Ae** — osobny produkt; nie silnik Karmazyn |
+| Obszar | Path | Python? |
+|--------|------|---------|
+| Start / REPL sys | `karmazyn_native.cmd` → `karmazyn_shell` | nie |
+| Boot Lua (skóra) | `software/karmazyn_boot.py` | tak, `--python` |
+| Studio SDL | `software/karmazyn_studio.py` | tak, minister |
+| Lua | gość na Store | dziś CPython (`--python`); native = H2 |
+| mini-Lisp | gość na Store | crate `karmazyn_lisp` — szwy `eval_line` / env / `env_of` |
+| Holon (pamięć SE) | **Karmin_Ae** | inny produkt |
 
 **Uczciwe sformułowania:**  
-„cienka warstwa / Studio / gość na substracie”.  
+„shell native bez Pythona”; „Lua/Studio = skóra hosta”.  
 **Nie:** „jądro w Pythonie”, „CPython rządzi Karmazynem”, „samodzielny OS”.
 
 ---
@@ -203,8 +208,8 @@ To **nie silnik**. To skóra na hoście: boot, Studio, skrypty.
 |-------|-----------------|
 | GRUB → Linux → Karmazyn (ISO/VM) | plan Tor A boot |
 | Multiboot `kentry` pełny Store | marker / szkielet ≠ pełne jądro bare-metal |
-| Self-host kcc (TB.4 P4+) | Phase 0–3 seed; P4 odłożone |
-| Own backend bez gcc (TB.5) | daleko |
+| Self-host kcc (pełny) | P4 = pętla podzbioru K0; nie wzorzec LFS |
+| Własny rustc | PLAN (prawdziwy odpowiednik „przebuduj gcc”) |
 | Pełne HRR / pryzmaty w native | wizja; nie Stage 1–2 |
 | Starlink / product demos | poza gate A/B substratu |
 
@@ -228,10 +233,10 @@ Shell ma pełny wgląd w Store, bo to **operator jądra**, nie agent z pryzmatem
 
 | Własne (budować / strzec) | Obce (wolno używać) |
 |---------------------------|---------------------|
-| Prawo T×reach w slab/substrate | `rustc` / Cargo jako **stage0** |
-| kcc frontend + `.k0` krytyczne | `gcc`/`clang` **link** |
-| shell Stage 2, C ABI | edytor, OS, IDE |
-| bramki `stage1` / `stage2` / `verify_kcc` | GitHub Actions runner |
+| Prawo T×reach w slab/substrate | host `rustc` / Cargo (**slot gcc**) |
+| crate’y worlda (workspace) | edytor, OS, IDE |
+| kcc frontend + `.k0` (minister) | `gcc` tylko FFI / lowering K0 |
+| bramki `verify_rebuild` / `stage1` / `stage2` | GitHub Actions runner |
 
 ---
 
@@ -242,10 +247,16 @@ cd C:\Users\drwis\KarmazynOs
 
 .\native\stage1_verify.ps1      # STAGE1_VERIFY_OK  — prawo + C ABI
 .\native\stage2_verify.ps1      # STAGE2_VERIFY_OK  — shell + lifecycle
-.\toolchain\verify_kcc.ps1      # KCC_VERIFY_OK     — Tor B + TB.4 P0–3
+.\native\verify_rebuild.ps1     # REBUILD_OK        — Tor B wzorzec (rustc, bez gcc)
+.\toolchain\verify_kcc.ps1      # KCC_VERIFY_OK     — minister kcc + TB.4
+.\toolchain\verify_selfhost.ps1 # KCC_SELFHOST_OK   — P4 dump/gcc/run (K0)
 
-# CI (gate-product): slab + substrate + kcc unit + Python unittest + kentry
-# Nie zastępuje pełnego verify_kcc / stage2 na Windows.
+# testy Python (prawo / golden / kubity / lisp oba jądra):
+python -m unittest discover -s testy -p "test_*.py" -q
+# Lisp przenośny: testy/lisp_golden.txt → Python Store + karmazyn_shell
+
+# CI (gate-product): slab→substrate→shell→kcc + software unittest + kentry
+# Nie zastępuje pełnego verify_rebuild / stage2 na Windows.
 ```
 
 ---
@@ -255,7 +266,7 @@ cd C:\Users\drwis\KarmazynOs
 1. **Konsolidacja** — bramki zielone, nie drift  
 2. **Tor A używalność** — shell (domknięty 0.3.2 + lifecycle)  
 3. **CI** — tarcza, bez rozdmuchiwania na siłę  
-4. **TB.4 Phase 4** — odłożone (świadomie)  
+4. **Własny rustc** / pełny kcc-w-K0 — odłożone; wzorzec = `verify_rebuild`  
 5. **Product** (Starlink/SDL/…) — poza gate substratu  
 
 ---
@@ -265,7 +276,7 @@ cd C:\Users\drwis\KarmazynOs
 1. Mówić, że **język** (Python, Lua, Lisp, Julia…) **rządzi** — rządzi tylko **substrat**.  
 2. Mówić „jądro w CPython” / „przejście na Rust” tak, jakby silnika jeszcze nie było — **silnik już jest (substrat w Rust)**.  
 3. Nazywać shell **Gentoo-stage2** albo „OS”.  
-4. Twierdzić „self-host kcc” bez Phase 4 + bramki.  
+4. Twierdzić, że kcc/K0/gcc to Gentoo-stage1 — wzorzec to **rustc + crate’y**.  
 5. Traktować Python Store jako konkurencyjny silnik (to cienka / golden warstwa).  
 6. Mieszać **Karmin_Ae** z substratem KarmazynOs.
 
@@ -277,9 +288,11 @@ cd C:\Users\drwis\KarmazynOs
 |-------|--------|
 | Filozofia długa | `philosophy.pl.md`, `README.md` (root) |
 | Bootstrap / tory | `BOOTSTRAP_STAGES.pl.md` |
-| Tor B kcc | `TOR_B_TOOLCHAIN.pl.md`, `toolchain/kcc/README.md` |
+| Tor B wzorzec | `TOR_B_TOOLCHAIN.pl.md`, `TOR_B_WDROZENIE.md`, `native/verify_rebuild.ps1` |
+| Minister kcc | `toolchain/kcc/README.md` |
 | Arch runtime monorepo | `ARCHITECTURE.md` §5, `runtime_pl.md` |
 | Kontynuacja sesji | `SESSION_CONTINUE.md` |
+| Testy Python | `testy/` (`testy/README.md`) |
 | **Ten filtr** | **`KANON.md`** (tu) |
 
 ---

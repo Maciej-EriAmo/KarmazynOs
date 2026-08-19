@@ -63,6 +63,11 @@ pub fn check(prog: &Program) -> Result<(), String> {
         }
     }
 
+    // TB.4 P4: putchar is a host libc builtin unless the program defines it.
+    if !fns.contains_key("putchar") {
+        fns.insert("putchar".into(), (vec![Type::I32], Type::I32));
+    }
+
     for item in &prog.items {
         if let Item::Fn(f) = item {
             check_fn(f, &fns, &structs)?;
@@ -684,6 +689,12 @@ fn expr_type(
 mod tests {
     use super::*;
     use crate::parse::parse;
+
+    #[test]
+    fn putchar_builtin_ok() {
+        let p = parse("fn main() -> i32 { putchar(10); return 0; }").unwrap();
+        check(&p).expect("putchar builtin");
+    }
 
     #[test]
     fn rejects_undeclared() {

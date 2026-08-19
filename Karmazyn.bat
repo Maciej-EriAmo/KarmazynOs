@@ -1,12 +1,18 @@
 @echo off
-REM Karmazyn.bat — menu startowe KarmazynOs (Rust / Python)
+REM Karmazyn.bat — start KarmazynOs (native shell = default, no Python)
 setlocal EnableExtensions
 cd /d "%~dp0"
 
-REM cargo w PATH (gdy jest)
 if exist "%USERPROFILE%\.cargo\bin" set "PATH=%USERPROFILE%\.cargo\bin;%PATH%"
 
 if "%~1"=="" goto menu
+
+echo.%*| findstr /i "\-\-python" >nul
+if not errorlevel 1 goto python_args
+call "%~dp0karmazyn_native.cmd" %*
+exit /b %ERRORLEVEL%
+
+:python_args
 python "%~dp0start.py" %*
 exit /b %ERRORLEVEL%
 
@@ -15,48 +21,50 @@ echo.
 echo ========================================================
 echo   KarmazynOs
 echo ========================================================
-echo   1  Boot Rust   (native)     [domyslny]
-echo   2  Boot Python (reference)
-echo   3  Demo Rust
+echo   1  Native shell          [domyslny, BEZ Pythona]
+echo   2  Demo native (smoke.ksh)
+echo   3  Boot Python           (opcjonalna skora hosta)
 echo   4  Demo Python
-echo   5  Sprawdz native
-echo   6  Rust-only (cargo test)
+echo   5  Zbuduj native shell   (cargo, bez Pythona)
 echo   0  Wyjscie
 echo ========================================================
 set /p CHOICE=  wybor: 
 
+if "%CHOICE%"=="" set CHOICE=1
 if "%CHOICE%"=="0" exit /b 0
-if "%CHOICE%"=="1" goto rust
-if "%CHOICE%"=="2" goto python
-if "%CHOICE%"=="3" goto demo_rust
+if "%CHOICE%"=="1" goto native
+if "%CHOICE%"=="2" goto demo_native
+if "%CHOICE%"=="3" goto python
 if "%CHOICE%"=="4" goto demo_python
-if "%CHOICE%"=="5" goto check
-if "%CHOICE%"=="6" goto rustonly
+if "%CHOICE%"=="5" goto build
 echo Nieznany wybor.
 goto menu
 
-:rust
-python "%~dp0start.py" --rust
+:native
+call "%~dp0karmazyn_native.cmd"
+exit /b %ERRORLEVEL%
+
+:demo_native
+call "%~dp0karmazyn_native.cmd" "%~dp0native\karmazyn_shell\examples\smoke.ksh"
 exit /b %ERRORLEVEL%
 
 :python
-python "%~dp0start.py" --python
-exit /b %ERRORLEVEL%
-
-:demo_rust
-python "%~dp0start.py" --rust --demo
+python "%~dp0start.py" --rust
 exit /b %ERRORLEVEL%
 
 :demo_python
-python "%~dp0start.py" --python --demo
+python "%~dp0start.py" --rust --demo
 exit /b %ERRORLEVEL%
 
-:check
-python "%~dp0start.py" --native-check
+:build
+cd /d "%~dp0native\karmazyn_shell"
+cargo build --release
+if errorlevel 1 (
+  echo Brak cargo? https://rustup.rs/
+  pause
+  exit /b 1
+)
+cd /d "%~dp0"
+echo OK: native\karmazyn_shell\target\release\karmazyn_shell.exe
 pause
-exit /b %ERRORLEVEL%
-
-:rustonly
-python "%~dp0start.py" --rust-only
-pause
-exit /b %ERRORLEVEL%
+exit /b 0

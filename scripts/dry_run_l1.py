@@ -25,7 +25,7 @@ def main() -> int:
     os.chdir(ROOT)
     env = os.environ.copy()
     env["PYTHONPATH"] = os.pathsep.join(
-        [str(ROOT), str(ROOT / "software"), str(ROOT / "kernel"), str(ROOT / "native")]
+        [str(ROOT), str(ROOT / "archiwum" / "kernel_python"), str(ROOT / "software"), str(ROOT / "native")]
         + ([env["PYTHONPATH"]] if env.get("PYTHONPATH") else [])
     )
     env.setdefault("KARMAZYN_LUA", str(ROOT / "LUA"))

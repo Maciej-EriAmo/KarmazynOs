@@ -7,12 +7,14 @@ Maciej Mazur, Warsaw 2026
 Czysta matematyka z karmazyn_hrr.py — bez Store/Atom.
 Wymaga numpy (jak twarz HRR w kernelu). Bez numpy → skip całego modułu.
 
-Uruchomienie:
-    python3 -m unittest test_hrr -v
-    python3 test_hrr.py
+Uruchomienie (z roota repo):
+    python -m unittest discover -s testy -p "test_hrr.py" -v
+    python testy/test_hrr.py
 """
 
 import unittest
+
+import _path  # noqa: F401
 
 try:
     import numpy as np

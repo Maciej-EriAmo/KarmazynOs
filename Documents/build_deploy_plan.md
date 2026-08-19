@@ -101,10 +101,10 @@ Python, PyO3, ctypes, Studio, Lua — to **szwy i goście**, nie miejsce definic
 # G0 — baseline
 cd KarmazynOs
 cargo test --manifest-path native/karmazyn_substrate/Cargo.toml
-python test_substrate_compat.py -q          # gdy native zbudowany
+python testy/test_substrate_compat.py -q    # gdy native zbudowany
 python -m unittest software.test_io_thermal software.test_host_tools software.test_studio_sdl -q
 python software/test_lua_release.py         # release gate Lua
-python kernel_boundary.py kernel/ software/
+python kernel_boundary.py archiwum/kernel_python software/
 ```
 
 | ID | Punkt sukcesu baseline |

@@ -7,6 +7,8 @@ import math
 import random
 import unittest
 
+import _path  # noqa: F401
+
 from karmazyn_qubit import Reg, bell, ket0, ket1, plus
 
 

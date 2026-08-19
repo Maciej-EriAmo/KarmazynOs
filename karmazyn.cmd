@@ -1,24 +1,25 @@
 @echo off
-REM karmazyn.cmd — szybki start KarmazynOs (bez menu)
-REM Menu z wyborem: Karmazyn.bat  /  python start.py
-REM Substrat DOMYSLNIE: native Rust. Python: set KARMAZYN_SUBSTRATE=python
-setlocal
+REM karmazyn.cmd — start KarmazynOs
+REM Domyślnie: native shell (bez Pythona).
+REM Skóra CPython: karmazyn.cmd --python
+setlocal EnableExtensions
 set "ROOT=%~dp0"
 if "%ROOT:~-1%"=="\" set "ROOT=%ROOT:~0,-1%"
 
+echo.%*| findstr /i "\-\-python" >nul
+if not errorlevel 1 goto python_boot
+
+call "%ROOT%\karmazyn_native.cmd" %*
+exit /b %ERRORLEVEL%
+
+:python_boot
 if exist "%USERPROFILE%\.cargo\bin" set "PATH=%USERPROFILE%\.cargo\bin;%PATH%"
-
-REM flaga --python / --rust z linii komend
-set "ARGS=%*"
-echo.%ARGS% | findstr /i "\-\-python" >nul && set "KARMAZYN_SUBSTRATE=python"
-echo.%ARGS% | findstr /i "\-\-rust \-\-native" >nul && set "KARMAZYN_SUBSTRATE=native"
-if not defined KARMAZYN_SUBSTRATE set "KARMAZYN_SUBSTRATE=native"
-
-set "PYTHONPATH=%ROOT%;%ROOT%\kernel;%ROOT%\software;%ROOT%\native;%PYTHONPATH%"
-
+set "KARMAZYN_SUBSTRATE=native"
+set "PYTHONPATH=%ROOT%;%ROOT%\archiwum\kernel_python;%ROOT%\software;%ROOT%\native;%PYTHONPATH%"
 if exist "%ROOT%\software\karmazyn_boot.py" (
   python "%ROOT%\software\karmazyn_boot.py" %*
 ) else (
-  python "%ROOT%\karmazyn_boot.py" %*
+  echo brak software\karmazyn_boot.py
+  exit /b 1
 )
 exit /b %ERRORLEVEL%

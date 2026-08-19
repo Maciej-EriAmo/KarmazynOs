@@ -14,8 +14,8 @@ Set-Location $Root
 
 $env:PYTHONPATH = @(
     $Root,
+    (Join-Path $Root "archiwum\kernel_python"),
     (Join-Path $Root "software"),
-    (Join-Path $Root "kernel"),
     (Join-Path $Root "native")
 ) -join [IO.Path]::PathSeparator
 $env:KARMAZYN_SUBSTRATE = $Substrate
@@ -35,17 +35,26 @@ function Step($name, $scriptBlock) {
 Write-Host "KarmazynOs gate_product  root=$Root  substrate=$Substrate"
 
 if (-not $SkipCargo) {
-    Step "cargo test (karmazyn_slab)" {
+    Step "cargo test slab" {
         cargo test --manifest-path (Join-Path $Root "native\karmazyn_slab\Cargo.toml") -q
     }
-    Step "cargo test (substrate crate)" {
+    Step "cargo test substrate" {
         cargo test --manifest-path (Join-Path $Root "native\karmazyn_substrate\Cargo.toml") -q
+    }
+    Step "cargo test lisp" {
+        cargo test --manifest-path (Join-Path $Root "native\karmazyn_lisp\Cargo.toml") -q
+    }
+    Step "cargo test shell" {
+        cargo test --manifest-path (Join-Path $Root "native\karmazyn_shell\Cargo.toml") -q
+    }
+    Step "cargo test kcc (Rust tool)" {
+        cargo test --manifest-path (Join-Path $Root "toolchain\kcc\Cargo.toml") -q
     }
 }
 
 Step "kernel_boundary" {
     python (Join-Path $Root "kernel_boundary.py") `
-        (Join-Path $Root "kernel") `
+        (Join-Path $Root "archiwum\kernel_python") `
         (Join-Path $Root "software")
 }
 

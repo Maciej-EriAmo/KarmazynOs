@@ -16,19 +16,20 @@ Lua guest: karmazyn_lua **1.1.2** (LUA/__version__; podzbiór 5.5, nie PUC-Rio)
   - Kernel discovery: _paths.py (monorepo kernel first)
   - lua_bin: attach preload only when no project (no project hijack)
   - Smoke: test_host_tools + lua_bin_matrix (idea = skip)
-  - Lustro: root karmazyn_backend.py == kernel/ (STRICT + bid)
+  - Lustro: archiwum/kernel_python (golden CPython); native Rust = król
   - SE: holon_memory.json nie jest kanonem Os (Karmin_Ae)
   - Release gate: software/test_lua_release.py
   - Canonical tree: monorepo LUA/
 
-Jadro (kernel/) - ZRODLO PRAWDY (API) + native Rust jako DEFAULT Store:
+Jadro RUNTIME - native Rust (DEFAULT Store).
+Jadro CPython (golden, NIE krol) - archiwum/kernel_python/:
   karmazyn_atom.py
   karmazyn_atomstore.py
   karmazyn_hrr.py
   karmazyn_substrate.py          # REFERENCJA pure-Python (PythonStore)
   karmazyn_kernel.py             # Store = NativeStore gdy most jest
   karmazyn_backend.py            # open_store / store_class / KARMAZYN_SUBSTRATE
-  kernel_boundary.py
+CI: kernel_boundary.py (root) skanuje archiwum/kernel_python + software/
 
 Native substrate (Rust) - DEFAULT produkcyjny (prawo reach-GC + C ABI + PyO3):
   native/karmazyn_substrate/     cargo test && cargo build --release
@@ -36,7 +37,7 @@ Native substrate (Rust) - DEFAULT produkcyjny (prawo reach-GC + C ABI + PyO3):
   native/karmazyn_substrate_native.py
   native/run_native.ps1          prosta sciezka uruchomienia
   native/README.md
-  test_substrate_compat.py       zgodność Python ↔ Rust
+  testy/test_substrate_compat.py  zgodność Python ↔ Rust
   Boot / kernel.Store / open_store → native (fallback: KARMAZYN_SUBSTRATE=python)
 
 Oprogramowanie minimalne (software/) - ZRODLO PRAWDY:
@@ -57,16 +58,24 @@ Dokumentacja runtime:
   Documents/START.MD
   README.md / RADME_PL.MD
 
+Start (BEZ Pythona):
+  Karmazyn.bat / karmazyn.cmd / karmazyn_native.cmd  → karmazyn_shell.exe
+  opcjonalnie: karmazyn.cmd --python  → software/karmazyn_boot.py
+
 Narzedzia (root):
   kernel_boundary.py
   bin/karmazyn
-  karmazyn / karmazyn.cmd
+  karmazyn / karmazyn.cmd / karmazyn_native.cmd
+
+Testy Python (testy/):
   test_substrate.py
   test_substrate_compat.py
   test_hrr.py
+  test_qubit.py
+  test_phi_composition.py
 
-Pliki w katalogu glownym (karmazyn_*.py) to LUSTRO kernel/ + software/
-dla wygodnego importu bez PYTHONPATH.
+Root: start.py, karmazyn_paths.py, karmazyn_qubit.py, kernel_boundary.py.
+Software: software/. Jądro CPython: archiwum/kernel_python/.
 
 API silnika (S15, zgodne z Cynober/DBase):
   tick_event_mode: batch | per_atom | both (domyslnie both)

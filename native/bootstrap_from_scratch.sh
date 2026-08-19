@@ -35,28 +35,21 @@ command -v cargo >/dev/null || { echo "need cargo"; exit 1; }
 echo "rustc: $(rustc --version)"
 echo "cargo: $(cargo --version)"
 
-# Stage 1 (inline subset — Windows uses stage1_verify.ps1)
 echo ""
-echo "[stage1] karmazyn_slab tests"
-( cd "$NATIVE/karmazyn_slab" && cargo test --release )
-
-echo "[stage1] karmazyn_substrate tests + stage1_bootstrap"
-( cd "$SUB" && cargo test --release && cargo run --example stage1_bootstrap --release && cargo build --release )
+echo "[pattern] verify_rebuild.sh (slab → substrate → shell → kcc)"
+"$NATIVE/verify_rebuild.sh"
 
 if [[ "$SKIP_C" -eq 0 ]] && command -v gcc >/dev/null 2>&1; then
-  echo "[stage1] C ABI smoke"
+  echo "[ffi] C ABI smoke (optional, not pattern)"
+  ( cd "$SUB" && cargo build --release )
   gcc "$NATIVE/c_smoke/stage1_c_smoke.c" \
     -I"$SUB/include" -L"$SUB/target/release" -lkarmazyn_substrate \
     -o "$SUB/target/release/stage1_c_smoke"
   export LD_LIBRARY_PATH="$SUB/target/release${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
   "$SUB/target/release/stage1_c_smoke"
 else
-  echo "[stage1] C smoke skipped"
+  echo "[ffi] C smoke skipped"
 fi
-
-echo ""
-echo "[shell] cargo build --release"
-( cd "$SHELL_DIR" && cargo build --release )
 
 SHELL_BIN="$SHELL_DIR/target/release/karmazyn_shell"
 if [[ ! -x "$SHELL_BIN" ]]; then
@@ -85,5 +78,6 @@ echo ""
 echo "=== BOOTSTRAP_FROM_SCRATCH_OK ==="
 echo "Kernel:  $SUB/target/release/"
 echo "Shell:   $SHELL_BIN"
-echo "Docs:    Documents/BOOTSTRAP_STAGES.pl.md"
+echo "Gates:   verify_rebuild + shell smoke"
+echo "Docs:    Documents/BOOTSTRAP_STAGES.pl.md · Documents/TOR_B_WDROZENIE.md"
 exit 0

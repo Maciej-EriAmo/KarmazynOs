@@ -47,7 +47,7 @@ python software/karmazyn_studio.py
 
 ## Backlog (kolejność) — zgodnie z planem Rust
 
-1. Utrzymać G0 + dry_run_l1 zielone  
+1. Utrzymać G0 + dry_run_l1 zielone (`verify_rebuild` + gate: slab→substrate→shell→kcc)  
 2. **Rust roadmap** — `Documents/rust_roadmap_tech.md` ✅  
 3. **kentry F** — `boot/kentry` marker ELF ✅; QEMU serial ⏳  
 4. **BootConfig** — `karmazyn_bootcfg.py` ✅ (faza B parser + :info)  
