@@ -816,6 +816,24 @@ def boot(verbose_events=False, log=None, project=None, boot_config=None):
             pass
     log.ok("substrat (Store, reach-GC)", sub_detail, _ms(t))
 
+    # 2a. Most Lorentza + Kryształ Mazura (domyślnie ON; KARMAZYN_MAZUR=0 wyłącza)
+    t = time.perf_counter()
+    try:
+        from mazur_crystal import attach_lorentz_bridge, mazur_enabled
+
+        if mazur_enabled():
+            store = attach_lorentz_bridge(store, mrc=True)
+            mrc_on = getattr(store, "mrc", None) is not None
+            log.ok(
+                "most Lorentza",
+                f"R+retencja" + ("+MRC" if mrc_on else "") + " (KARMAZYN_MAZUR=1)",
+                _ms(t),
+            )
+        else:
+            log.warn("most Lorentza", "wylaczony (KARMAZYN_MAZUR=0)", _ms(t))
+    except Exception as e:
+        log.warn("most Lorentza", f"{type(e).__name__}: {e} — boot bez mostu", _ms(t))
+
     # 2b. I/O × matryca termiczna — Stage 1 (Gentoo): twarde FAIL, bez cichej degradacji
     #    KARMAZYN_IO_OPTIONAL=1 → WARN + shell bez matrycy (rescue only)
     t = time.perf_counter()

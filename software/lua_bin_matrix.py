@@ -50,7 +50,7 @@ TOOL_SPEC = {
     # with canned input
     "step": ("pass", lambda s, h: ["2"], "settle n"),
     "man": ("pass", lambda s, h: [""], "empty = list tools"),
-    "touch": ("pass", lambda s, h: ["m_touch", "S", "E-touch"], "create atom"),
+    "touch": ("pass", lambda s, h: ["m_touch", "S", "E-touch", "1.0"], "create atom + tracer"),
     "cat": ("pass", lambda s, h: (s.create_atom("m_cat", "S", "body", 0.8) or True) and ["m_cat"], "show atom"),
     "stat": ("pass", lambda s, h: (s.create_atom("m_stat", "S", "body", 0.8) or True) and ["m_stat"], "metadata"),
     "rm": ("pass", lambda s, h: (s.create_atom("m_rm", "S", "x", 0.5) or True) and ["m_rm"], "delete atom"),

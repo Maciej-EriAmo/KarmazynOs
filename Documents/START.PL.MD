@@ -10,7 +10,7 @@
 | Host API | **`karmazyn._VERSION` 1.0.0** |
 | Boot | v0.5+ |
 
-[runtime_pl.md](runtime_pl.md) · [tools_lua.md](tools_lua.md) · [lua_bin_status.md](lua_bin_status.md) · [LUA/README.md](../LUA/README.md)
+[runtime_pl.md](runtime_pl.md) · [tools_lua.md](tools_lua.md) · [MAZUR_CRYSTAL.md](MAZUR_CRYSTAL.md) · [lua_bin_status.md](lua_bin_status.md) · [LUA/README.md](../LUA/README.md)
 
 ---
 

@@ -401,7 +401,9 @@ class KarmazynHost:
         st = self.store.stats()
         t = self._tbl()
         for k, v in st.items():
-            if isinstance(v, (int, float)):
+            if isinstance(v, bool):
+                self._set(t, str(k), v)
+            elif isinstance(v, (int, float)):
                 self._set(t, str(k), int(v) if isinstance(v, float) and v == int(v) else v)
         return t
 
@@ -416,14 +418,28 @@ class KarmazynHost:
                 atoms = list(self.store.atoms())
             except Exception:
                 atoms = []
-            return self._arr([p for a in atoms if (p := self._atom_proxy(a)) is not None])
+            rows = []
+            for a in atoms:
+                rid = getattr(a, "id", None)
+                logical = self._public_id(rid)
+                p = self._atom_proxy(
+                    a, logical_id=logical if isinstance(logical, str) else None
+                )
+                if p is not None:
+                    rows.append(p)
+            return self._arr(rows)
 
         want = st.upper() if isinstance(st, str) else None
         out = []
         for a in self._reconcile_phi_ids():
             if want and str(getattr(a, "state", "")).upper() != want:
                 continue
-            p = self._atom_proxy(a)
+            rid = getattr(a, "id", None)
+            logical = self._public_id(rid)
+            # native: zawsze pokazuj logiczne id (A), nie u32 (210)
+            p = self._atom_proxy(
+                a, logical_id=logical if isinstance(logical, str) else None
+            )
             if p is not None:
                 out.append(p)
         return self._arr(out)
@@ -439,7 +455,7 @@ class KarmazynHost:
             self._track_phi(aid)
         return self._atom_proxy(atom, logical_id=aid)
 
-    def create_atom(self, aid=None, s=None, e=None, t=None, *_):
+    def create_atom(self, aid=None, s=None, e=None, t=None, tracer=None, *_):
         if not isinstance(aid, str) or not aid:
             return "brak id"
         if _is_engine_sid(aid):
@@ -447,19 +463,104 @@ class KarmazynHost:
         S = "" if s is None else str(s)
         E = "" if e is None else str(e)
         T = _abs_T(t)
+        # tracer: liczba (energy) albo tabela Lua {energy=…} / dict
+        tr = self._coerce_tracer(tracer)
         try:
             if self._store_has(aid):
                 return f"atom o id {aid!r} już istnieje"
-            ret = self.store.create_atom(aid, S, E, T)
+            kw = {}
+            if tr is not None:
+                kw["tracer"] = tr
+            ret = self.store.create_atom(aid, S, E, T, **kw)
             # native: ret = u32; python: ret = string id
             real = ret if ret is not None else aid
             self._register_alias(aid, real)
             atom = self._store_get(aid)
             if atom is None:
                 return "błąd create"
+            # gdy Store bez mostu — dopisz tracer ręcznie
+            if tr is not None:
+                try:
+                    from mazur_crystal import set_tracer
+
+                    set_tracer(atom, tr)
+                except Exception:
+                    pass
             return self._atom_proxy(atom, logical_id=aid)
         except Exception as ex:
             return str(ex)
+
+    def _coerce_tracer(self, tracer):
+        """Lua/host → energy float | dict | None."""
+        if tracer is None:
+            return None
+        if isinstance(tracer, (int, float)):
+            return float(tracer)
+        if isinstance(tracer, dict):
+            return tracer
+        # tabela Lua (AtomsWrapper-like / proxy z get)
+        try:
+            if hasattr(tracer, "get") and not isinstance(tracer, (str, bytes)):
+                energy = tracer.get("energy")
+                if energy is not None:
+                    return {"energy": float(energy)}
+        except Exception:
+            pass
+        try:
+            return float(tracer)
+        except (TypeError, ValueError):
+            return None
+
+    def set_context(self, aid=None, *_):
+        """Ustaw atom kontekstu mostu Lorentza (sonda systemu)."""
+        if not isinstance(aid, str) or not aid:
+            return False
+        if not hasattr(self.store, "set_context"):
+            return False
+        try:
+            # logiczne id — bridge.resolve: get_atom(u32) albo _requested_id
+            self.store.set_context(aid)
+            return True
+        except Exception:
+            try:
+                self.store.set_context(self._resolve_aid(aid))
+                return True
+            except Exception:
+                return False
+
+    def get_tracer(self, aid=None, *_):
+        if not isinstance(aid, str):
+            return None
+        atom = self._store_get(aid)
+        if atom is None:
+            return None
+        try:
+            from mazur_crystal import get_tracer
+
+            t = get_tracer(atom)
+            row = self._tbl()
+            self._set(row, "energy", float(t.energy))
+            self._set(row, "priority", float(t.priority))
+            self._set(row, "level", int(t.level))
+            self._set(row, "group", str(t.group))
+            self._set(row, "pid", int(t.pid))
+            return row
+        except Exception:
+            return None
+
+    def set_tracer(self, aid=None, energy=None, *_):
+        if not isinstance(aid, str):
+            return False
+        atom = self._store_get(aid)
+        if atom is None:
+            return False
+        try:
+            from mazur_crystal import set_tracer
+
+            set_tracer(atom, 0.0 if energy is None else energy)
+            return True
+        except Exception:
+            return False
 
     def delete_atom(self, aid=None, *_):
         if not isinstance(aid, str):
@@ -528,10 +629,36 @@ class KarmazynHost:
         except (TypeError, ValueError):
             kk = 5
         hits = []
+        layer = "phi"
+        # Most Lorentza: resonance_R / find_resonating (domyślny tor)
         try:
-            hits = self.store.resonance(q, k=kk) or []
+            if callable(getattr(self.store, "resonance_R", None)):
+                hits = self.store.resonance_R(q, k=kk) or []
+                layer = "lorentz"
+            elif callable(getattr(self.store, "find_resonating", None)):
+                atoms = self.store.find_resonating(q, limit=kk) or []
+                hits = []
+                for a in atoms:
+                    sc = (
+                        float(self.store.score(a))
+                        if callable(getattr(self.store, "score", None))
+                        else 0.5
+                    )
+                    hits.append((sc, a.id))
+                layer = "lorentz"
         except Exception:
             hits = []
+        # fallback HRR (resonance_hrr albo klasyczne resonance)
+        if not hits:
+            try:
+                if callable(getattr(self.store, "resonance_hrr", None)):
+                    hits = self.store.resonance_hrr(q, k=kk) or []
+                else:
+                    hits = self.store.resonance(q, k=kk) or []
+                if hits:
+                    layer = "hrr"
+            except Exception:
+                hits = []
         # fallback: substring na E/S
         if not hits:
             for a in self.store.atoms():
@@ -542,6 +669,8 @@ class KarmazynHost:
                     hits.append((0.5, sid))
                 if len(hits) >= kk:
                     break
+            if hits:
+                layer = "substr"
         rows = []
         for sim, aid in hits:
             row = self._tbl()
@@ -561,7 +690,7 @@ class KarmazynHost:
             self._set(row, "S", s)
             # pola pod lua_bin/recall.lua
             self._set(row, "label", pub if not e else (pub + ":" + str(e)[:24]))
-            self._set(row, "layer", "phi")
+            self._set(row, "layer", layer)
             rows.append(row)
         return self._arr(rows)
 
@@ -572,10 +701,18 @@ class KarmazynHost:
         b = self._store_get(id2)
         if a is None or b is None:
             return 0.0
+        # Most Lorentza: R(a,b) z treści + tracer
+        try:
+            from mazur_crystal import resonance_score
+
+            return float(resonance_score(a, b, store=self.store))
+        except Exception:
+            pass
         real2 = self._resolve_aid(id2)
         # HRR jeśli jest
         try:
-            hits = self.store.resonance(a.E or a.S or str(a.id), k=50)
+            res_fn = getattr(self.store, "resonance_hrr", None) or self.store.resonance
+            hits = res_fn(a.E or a.S or str(a.id), k=50)
             for sim, aid in hits or []:
                 if aid == real2 or aid == id2 or str(aid) == str(real2):
                     return float(sim)
@@ -824,6 +961,9 @@ def install_karmazyn_host(ev, store=None, boot_t0=None, io=None, thermal=None):
         ("consolidate", host.consolidate),
         ("recall", host.recall),
         ("get_similarity", host.get_similarity),
+        ("set_context", host.set_context),
+        ("get_tracer", host.get_tracer),
+        ("set_tracer", host.set_tracer),
         ("list_bubbles", host.list_bubbles),
         ("list_holograms", host.list_holograms),
         ("create_hologram", host.create_hologram),

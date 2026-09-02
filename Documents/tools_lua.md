@@ -38,15 +38,19 @@ karmazyn> :tool hello_tool
 | `read_line(prompt)` | wczytaj linię (REPL / kolejka testowa) |
 | `list_atoms([state])` | tablica proxy atomów (`HOT`/`WARM`/…) |
 | `get_atom(id)` | proxy lub nil |
-| `create_atom(id, S, E, T)` | tworzy atom |
+| `create_atom(id, S, E, T [, tracer])` | tworzy atom; `tracer` = energia sondy (Lorentz) |
 | `delete_atom(id)` | usuwa |
 | `clone_atom(src, dst)` | kopia |
 | `consolidate(id)` | bąbel trwały (root) |
 | `step(n)` / `get_epoch()` | ticki / epoki sesji |
 | `get_temperature()` | proxy „ciepła” systemu |
-| `get_resources()` | `store.stats()` |
-| `recall(query, k)` | resonance HRR + fallback tekstowy |
-| `get_similarity(id1, id2)` | podobieństwo |
+| `get_resources()` | `store.stats()` (+ flagi `lorentz_bridge` / `mrc` gdy most) |
+| `recall(query, k)` | rezonans **Lorentza \(R\)** (fallback HRR / substring) |
+| `get_similarity(id1, id2)` | \(R\) Lorentza (treść + tracer) |
+| `set_context(id)` | atom-sonda systemu (retencja GC / MRC) |
+| `get_tracer(id)` / `set_tracer(id, energy)` | odczyt / zapis sondy |
+
+Most Lorentza: [MAZUR_CRYSTAL.md](MAZUR_CRYSTAL.md) · `KARMAZYN_MAZUR=0` wyłącza.
 | `list_bubbles()` | bąble z etykietą + `content` |
 | `list_agents()` / `spawn_agent` / `delete_agent` | rejestr **sesji** (nie Store, nie procesy OS) |
 | `list_holograms()` / `create_hologram` | etykiety **sesji** (nie HRR) |

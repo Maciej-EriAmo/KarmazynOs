@@ -1,3 +1,4 @@
+-- Recall — rezonans Lorentza (R); pasek znormalizowany min(R,1)
 local query = karmazyn.read_line("Zapytanie asocjacyjne: ")
 if query == "" then return end
 
@@ -8,9 +9,17 @@ for i = 1, #results do
     local r = results[i]
     local icon = "⚛"
     if r.layer == "bubble" then icon = "🫧" end
+    if r.layer == "lorentz" then icon = "◈" end
 
-    local bar = karmazyn.ui.progress_bar(r.score * 100, 100, 10, "phi_bright")
-    table.insert(lines, string.format("%s %-12s | Sim: %.2f | Score: %s %.1f", icon, r.label, r.sim, bar, r.score * 100))
+    local score = tonumber(r.score) or tonumber(r.sim) or 0
+    -- R Lorentza bywa > 1; pasek 0..100% z ucięciem, obok surowe R
+    local bar_v = math.min(score, 1.0) * 100
+    local bar = karmazyn.ui.progress_bar(bar_v, 100, 10, "phi_bright")
+    local label = tostring(r.label or r.id or "?")
+    table.insert(lines, string.format(
+        "%s %-14s | R: %.4f | %s",
+        icon, label, score, bar
+    ))
 end
 
 if #lines == 0 then
