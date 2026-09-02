@@ -1,4 +1,4 @@
-# Enterprise G0 — PR / push gate
+# Enterprise G0 - PR / push gate
 name: gate-product
 
 on:
@@ -16,7 +16,8 @@ jobs:
       - name: Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - name: cargo test (LFS package set: slab → substrate → shell → kcc)
+      # ASCII-only step names: Unicode arrows broke Actions ("workflow file issue", 0 jobs)
+      - name: cargo test (slab, substrate, lisp, shell, kcc)
         run: |
           cargo test --manifest-path native/karmazyn_slab/Cargo.toml
           cargo test --manifest-path native/karmazyn_substrate/Cargo.toml
@@ -36,7 +37,7 @@ jobs:
         run: |
           python -m pip install -U pip
           pip install numpy
-          # Studio optional on CI — tests skip if no pygame
+          # Studio optional on CI - tests skip if no pygame
           pip install pygame || true
 
       - name: kernel_boundary
@@ -56,7 +57,7 @@ jobs:
           cargo build --release --manifest-path boot/kentry/Cargo.toml --target x86_64-unknown-none
           python -c "p='boot/kentry/target/x86_64-unknown-none/release/karmazyn_kentry'; d=open(p,'rb').read(); assert b'KARMAZYN_KENTRY_OK' in d, 'marker missing'; assert b'SLAB_OK' in d, 'SLAB_OK missing (R5)'"
 
-      # Full native wheel on Linux CI — best-effort (maturin)
+      # Full native wheel on Linux CI - best-effort (maturin)
       - name: maturin build (best-effort)
         continue-on-error: true
         run: |
