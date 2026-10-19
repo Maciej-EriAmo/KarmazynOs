@@ -3,20 +3,20 @@
 **Status:** living · **Data:** 2026-10-19  
 **Cel:** Karmazyn stoi na jądrze Linuksa jako niezależny system. HSS, HSL i protokół sesji Φ są modułem i procesem, nie drugim jądrem.
 
-Ten plik jest planem realizacji. Nie jest twierdzeniem, że obraz już wstaje.
+Ten plik jest planem realizacji. Zamknięta bramka fazy nie jest twierdzeniem, że działa cały system.
 
 ## Układ
 
 ```
 GRUB
   → jądro Linuksa (konsola ttyS0, dysk, sterowniki)
-       → moduł HSL  holo/holoPhiHss.c   (transport, GPL-2.0)
+       → moduł HSL  holo/holo_hsl.ko     (bramka fazy 2, GPL-2.0)
        → demon HSS                      (decyzja: sesja Φ, HMAC)
        → karmazyn_shell                 (Store + mini-Lisp, MIT, PID 1)
 ```
 
 - Linux daje proces, pamięć, konsolę, dysk i sterowniki.
-- HSL jest jednym modułem LSM. Jądro przenosi pytanie i nie interpretuje algebry HSS.
+- HSL na płycie fazy 2 jest jednym modułem GPL. Jądro przenosi pytanie o uprawnienie i nie liczy HMAC. `holoPhiHss.c` zostaje źródłem na jądro złożone z łatą LSM.
 - HSS jest protokołem demona: klucz agenta, epoka, identyfikator inode, `capability_hint`.
 - Silnik zostaje w przestrzeni użytkownika: `native/karmazyn_shell` linkuje `karmazyn_substrate` i `karmazyn_lisp`.
 - Pliki leżą na systemie plików jądra (tmpfs albo ext4). Store nie jest formatem dysku.
@@ -43,13 +43,19 @@ Z `native/karmazyn_shell` powstaje statyczny ELF `x86_64-unknown-linux-musl`. In
 
 **Bramka:** serial ma `k$`, a linia mini-Lispa wraca wynikiem. Moduł HSL jeszcze nie jest wymagany.
 
+**2026-10-19:** bramka zamknięta. `out/karmazyn-linux.iso`, Linux 6.18.52-virt, `/init` = statyczny `karmazyn_shell`. Serial: `k$`, `(+ 1 2)` → `3`, `quit` → `pid 1 stays`. Skrypt `boot/linux/qemu_serial.ps1` zakończył się kodem 0.
+
 ## Faza 2 — jeden moduł HSL
 
-W `holo/` są dwa źródła: `holo_lsm.c` i `holoPhiHss.c`. Do obrazu wchodzi tylko `holoPhiHss.c`.
+`holo/holo_lsm.c` nie wchodzi na płytę. `holo/holoPhiHss.c` zostaje źródłem na jądro z łatą: `security_add_hooks()` w 6.18 jest `__init`, więc moduł po starcie nie rejestruje LSM.
 
-Moduł czyta z keyringu PID sesję Φ i `capability_hint`, potem pyta demona. Buduje się przy nagłówkach tego samego jądra, które jest na płycie. Plik jest na GPL-2.0 i nie jest linkowany do shella.
+Na jądro virt z płyty wchodzi `holo/holo_hsl.c`. To osobny plik GPL-2.0, nieslinkowany z shellem. Buduje się nagłówkami `linux-virt-dev` tego samego wydania co `vmlinuz`. Vermagic: `6.18.57-0-virt`.
+
+Bez sesji Φ moduł odmawia `MAY_READ` i `MAY_WRITE` na inode z xattr `security.hss.lock`. Sesję w fazie 3 ustawi demon. Zapis `S` do `/dev/hss` jest tylko haczykiem tej bramki, nie HMAC.
 
 **Bramka:** moduł się ładuje. Brak sesji daje odmowę. Shell z fazy 1 wstaje także bez modułu.
+
+**2026-10-19:** bramka zamknięta. Osobna płyta `out/karmazyn-linux-hsl.iso`. Linux 6.18.57-0-virt. Serial: `HSL_LOADED`, `HSL_DENY`, `k$`, `(+ 1 2)` → `3`, `quit` → `pid 1 stays`. Skrypt `boot/linux/qemu_hsl.ps1` zakończył się kodem 0. Moduł nie ma podpisu Alpine i oznacza jądro jako tainted. To nie jest jeszcze upcall do demona. Płyta fazy 1 `out/karmazyn-linux.iso` zostaje bez tego modułu.
 
 ## Faza 3 — demon HSS
 

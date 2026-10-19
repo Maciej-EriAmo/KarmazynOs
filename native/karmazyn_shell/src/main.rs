@@ -14,6 +14,20 @@ use karmazyn_substrate::{state_for_t, Store, T_INIT};
 use std::env;
 use std::io::{self, BufRead, Write};
 use std::process;
+use std::thread;
+use std::time::Duration;
+
+/// PID 1 kończy jądro razem ze sobą. Na Linuksie zostaje w pętli.
+fn is_pid1() -> bool {
+    #[cfg(unix)]
+    {
+        process::id() == 1
+    }
+    #[cfg(not(unix))]
+    {
+        false
+    }
+}
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -107,8 +121,15 @@ fn main() {
         print!("k$ ");
         let _ = stdout.flush();
         let mut line = String::new();
-        if stdin.lock().read_line(&mut line).is_err() {
-            break;
+        match stdin.lock().read_line(&mut line) {
+            Ok(0) | Err(_) => {
+                if is_pid1() {
+                    thread::sleep(Duration::from_millis(200));
+                    continue;
+                }
+                break;
+            }
+            Ok(_) => {}
         }
         let line = line.trim();
         if line.is_empty() {
@@ -116,7 +137,13 @@ fn main() {
         }
         match dispatch(&app, line) {
             Outcome::Ok => {}
-            Outcome::Quit => break,
+            Outcome::Quit => {
+                if is_pid1() {
+                    println!("pid 1 stays");
+                    continue;
+                }
+                break;
+            }
             Outcome::Err => {
                 // interactive: print already done; stay in REPL
             }
