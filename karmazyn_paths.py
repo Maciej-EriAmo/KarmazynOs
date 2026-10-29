@@ -68,9 +68,10 @@ def relocate_legacy(*, repo: Path | None = None) -> Dict[str, Any]:
         if not src.is_file():
             return
         dst.parent.mkdir(parents=True, exist_ok=True)
-        if not dst.is_file():
-            shutil.copy2(src, dst)
-            moved.append(src.name)
+        if dst.is_file():
+            return
+        shutil.copy2(src, dst)
+        moved.append(src.name)
         try:
             src.unlink()
         except OSError:
@@ -79,16 +80,22 @@ def relocate_legacy(*, repo: Path | None = None) -> Dict[str, Any]:
     def move_dir(src: Path, dst: Path) -> None:
         if not src.is_dir():
             return
-        if not dst.exists():
-            shutil.copytree(src, dst)
-            moved.append(str(src))
-            shutil.rmtree(src, ignore_errors=True)
+        if dst.exists():
+            if dst.is_dir() and not any(dst.iterdir()):
+                dst.rmdir()
+            else:
+                return
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(src, dst)
+        moved.append(str(src))
+        shutil.rmtree(src, ignore_errors=True)
 
     move_file(home / ".karmazyn_history", history_path())
     move_dir(home / ".karmazyn", dest / "dot-karmazyn")
     if repo is None:
         repo = Path(__file__).resolve().parent
-    move_dir(repo / "karmazyn_data", runtime_data_dir())
+    # Nie twórz dest/data przed kopią — pusty katalog blokował przeniesienie.
+    move_dir(repo / "karmazyn_data", dest / "data")
     readme = dest / "README.txt"
     if not readme.is_file():
         readme.write_text(
