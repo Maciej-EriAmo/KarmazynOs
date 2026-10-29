@@ -194,14 +194,17 @@ class KarmazynStudio:
                         self.store.tick()
                     except Exception:
                         pass
-                    # widoczność surface raz na tick_every — NIE co klatkę (anti self-heat)
+                    # widoczność surface raz na tick — frame() grzeje io:display raz
                     try:
-                        self.thermal.note_visible(["io:display"])
+                        recs = self.disp.frame(min_T=0.0, limit=MAP_MAX)
                     except Exception:
-                        pass
-
-                # projekcja bez grzania skanu (Stage 1) — tło + hit-test
-                recs = self.thermal.project_hot(min_T=0.0, limit=MAP_MAX, mark_visible=False)
+                        recs = self.thermal.project_hot(
+                            min_T=0.0, limit=MAP_MAX, mark_visible=False
+                        )
+                else:
+                    recs = self.thermal.project_hot(
+                        min_T=0.0, limit=MAP_MAX, mark_visible=False
+                    )
 
                 self.w, self.h = screen.get_size()
                 self._draw(screen, pygame, font, font_sm, font_b, recs)

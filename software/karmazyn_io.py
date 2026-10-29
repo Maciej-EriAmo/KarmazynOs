@@ -428,10 +428,18 @@ class ThermalSurface:
         out = out[: max(1, int(limit))]
         if mark_visible and out:
             # Stage 1: grzej TYLKO surface display + jawne io:*, nie cały skan
-            only = [NAME_DISPLAY]
-            for r in out:
-                if r.get("name") in (NAME_CONSOLE, NAME_KEYBOARD, NAME_DISPLAY):
-                    only.append(r["name"])
+            only = []
+            seen = set()
+            names = [NAME_DISPLAY]
+            names.extend(
+                r.get("name")
+                for r in out
+                if r.get("name") in (NAME_CONSOLE, NAME_KEYBOARD, NAME_DISPLAY)
+            )
+            for name in names:
+                if name and name not in seen:
+                    seen.add(name)
+                    only.append(name)
             self.note_visible(only, amount=HEAT_VISIBLE)
         return out
 
