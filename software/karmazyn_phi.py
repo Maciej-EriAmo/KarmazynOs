@@ -18,6 +18,8 @@ Interfejs kompatybilny z istniejącym runtime.py oraz nowym AtomStore.
 """
 
 import hashlib
+import sys
+import threading
 import time
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -58,8 +60,11 @@ class EventBus:
         for h in list(self._handlers.get(event, [])):
             try:
                 h(*args, **kwargs)
-            except Exception:
-                pass
+            except Exception as exc:
+                print(
+                    f"EventBus {event}: {type(exc).__name__}: {exc}",
+                    file=sys.stderr,
+                )
 
     def has_listeners(self, event: str) -> bool:
         return bool(self._handlers.get(event))
@@ -102,23 +107,32 @@ class PhiBubble:
     def resonates_with(self, atom: Atom,
                        threshold: float = 0.5) -> bool:
         """
-        Sprawdza czy atom rezonuje z bąblem.
-        Heurystyka: atom jest w bąblu lub ma podobne S.
+        Czy atom rezonuje z bąblem przy danym progu.
+
+        Wynik heurystyki (bez wektora): członkostwo albo identyczne S = 1,
+        wspólny prefiks S (do dwukropka) = 0.75, brak związku = 0.
+        Próg 0.5 zostawia dawne trafienia prefiksu. Próg powyżej 0.75
+        wymaga członkostwa albo tego samego S.
         """
+        score = 0.0
         if atom.id in self._ids:
-            return True
-        # Rezonans przez S (semantyczne S)
-        for a in self.atoms():
-            if (a.S == atom.S
-                    or (a.S and atom.S and
-                        a.S.split(":")[0] == atom.S.split(":")[0])):
-                return True
-        return False
+            score = 1.0
+        else:
+            for a in self.atoms():
+                if a.S and atom.S and a.S == atom.S:
+                    score = 1.0
+                    break
+                if (a.S and atom.S
+                        and a.S.split(":")[0] == atom.S.split(":")[0]):
+                    score = max(score, 0.75)
+        return score > 0.0 and score >= float(threshold)
 
     def _update_T(self) -> None:
         atom_list = self.atoms()
         if atom_list:
             self._T = sum(a.T for a in atom_list) / len(atom_list)
+        else:
+            self._T = 0.0
 
     @property
     def T(self) -> float:
@@ -197,6 +211,10 @@ class PhiSpace:
         self._genome_hex = ""
         self._tick_n   = 0
         self._started  = time.monotonic()
+        self._running  = False
+        self._loop_thread = None
+        self._loop_stop = None           # threading.Event bieżącej pętli
+        self._loop_step_lock = threading.Lock()  # stary i nowy wątek nie robią step() naraz
 
     # ── Atomy ─────────────────────────────────────────────────────────────────
 
@@ -459,9 +477,50 @@ class PhiSpace:
         atoms.sort(key=lambda a: -a.T)
         return [(a.id, a.T, a.state) for a in atoms]
 
+    def start_loop(self, interval: float = 0.2) -> None:
+        """Tło: step() co interval sekund. Drugie wywołanie nic nie robi.
+
+        Każda pętla ma własne zdarzenie stopu, więc wątek, który nie zdążył
+        się zakończyć po stop_loop, nie wraca do pracy po kolejnym start_loop.
+        """
+        thread = self._loop_thread
+        if self._running and thread is not None and thread.is_alive():
+            return
+        stop = threading.Event()
+        self._loop_stop = stop
+        self._running = True
+        self._loop_thread = threading.Thread(
+            target=self._loop_worker, args=(float(interval), stop), daemon=True,
+        )
+        self._loop_thread.start()
+
+    def _loop_worker(self, interval: float, stop: threading.Event) -> None:
+        try:
+            while not stop.is_set():
+                with self._loop_step_lock:
+                    if stop.is_set():
+                        break
+                    for _atom, _event in self.step():
+                        if stop.is_set():
+                            break
+                stop.wait(interval)
+        except Exception as exc:
+            print(f"PhiSpace loop: {type(exc).__name__}: {exc}", file=sys.stderr)
+        finally:
+            # wątek po błędzie nie blokuje kolejnego start_loop
+            if self._loop_stop is stop:
+                self._running = False
+
     def stop_loop(self) -> None:
-        """Zatrzymaj phi-space — stub kompatybilności z SanctuaryRuntime."""
-        pass
+        """Zatrzymaj pętlę uruchomioną przez start_loop."""
+        self._running = False
+        stop = self._loop_stop
+        if stop is not None:
+            stop.set()
+        thread = self._loop_thread
+        if thread is not None and thread.is_alive() and thread is not threading.current_thread():
+            thread.join(timeout=1.0)
+        self._loop_thread = None
 
     def stabilize_atom(self, atom_id: str) -> bool:
         """Stabilizuj atom (ustaw T=T_WARM) — stub."""
@@ -470,14 +529,18 @@ class PhiSpace:
             return False
         if a.T < T_WARM:
             a.heat(T_WARM - a.T)
+        elif a.T > T_WARM:
+            a.cool(a.T - T_WARM)
         return True
 
     def corrupt_atom(self, atom_id: str, amount: float = 25) -> bool:
-        """Oznacz atom jako uszkodzony (T→1) — stub."""
+        """Obniż T o amount, nie schodź poniżej 1."""
         a = self.matrix.get(atom_id)
         if a is None:
             return False
-        a.cool(a.T - 1.0)
+        drop = min(float(amount), max(0.0, a.T - 1.0))
+        if drop > 0:
+            a.cool(drop)
         return True
 
     def status_summary(self) -> Dict[str, int]:
