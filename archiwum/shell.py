@@ -111,9 +111,9 @@ def _boot_ontology(runtime, data_dir: str = None) -> bool:
     tworzy nowego artefaktu trwałości.
 
     Pierwszy start (lub brak identity.bin): geneza tożsamości (os.urandom) i
-    zapis przez soul_store. identity.bin jest zaciemniony fingerprintem maszyny,
-    więc sam plik przeniesiony gdzie indziej zwróci złe p2s → genom nieodtwarzalny
-    poza pełnym klonem migawki na tej maszynie.
+    zapis przez soul_store. identity.bin chroni DPAPI (Windows) albo hasło
+    KARMAZYN_IDENTITY_PASSPHRASE (karmazyn_identity), więc plik przeniesiony
+    na inne konto czy maszynę się nie odszyfruje → genom nieodtwarzalny.
 
     Gdy HRR/numpy niedostępne — HRR pozostaje wyłączony, system boot-uje normalnie
     (zachowanie identyczne jak bez warstwy holograficznej).

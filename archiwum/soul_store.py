@@ -7,12 +7,12 @@ v3.0: Zunifikowana persystencja oparta na bubblefs.py
   - save_soul() → bubblefs.export() + save_identity()
   - load_soul() → bubblefs.import_() + load_identity()
   - Wsteczna kompatybilność: wykrywa stary JSONL v1/v2 i migruje do bubblefs
-  - identity.bin — bootstrap phi._p2s — BEZ ZMIAN
+  - identity.bin — bootstrap phi._p2s (v3, karmazyn_identity)
 
 Struktura na dysku (bubblefs canonical):
     <path>/
       manifest.json          ← integralność, metadane
-      identity.bin            ← phi._p2s zaciemniony przez machine fingerprint
+      identity.bin            ← phi._p2s (DPAPI albo hasło, karmazyn_identity)
       bubbles/
         <bubble_id>.bbl       ← AES-256-GCM, per-bubble key
       holograms/
@@ -61,8 +61,6 @@ except ImportError:
 
 # ─── Szyfrowanie (dla identity.bin i legacy migration) ───────────────────────
 
-IDENTITY_MAGIC = b"PHID"
-_VERSION_BYTE  = b"\x02"
 
 # Legacy format constants (dla wstecznej kompatybilności)
 _LEGACY_SOUL_MAGIC = b"SOUL"
@@ -78,78 +76,30 @@ except ImportError:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# identity.bin — bootstrap phi._p2s (BEZ ZMIAN z v2)
+# identity.bin — bootstrap phi._p2s (v3: DPAPI / hasło, patrz karmazyn_identity)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def _machine_fingerprint() -> bytes:
-    """Prosty, deterministyczny odcisk maszyny (nie sekret, ale unikalny).
-
-    Używany do zaciemnienia identity.bin — nie zastępuje właściwego szyfrowania,
-    ale uniemożliwia odczyt p2s na innej maszynie bez dodatkowych danych.
-    """
-    parts = []
+def _identity_mod():
     try:
-        import socket
-        parts.append(socket.gethostname())
-    except Exception:
-        pass
-    try:
-        import getpass
-        parts.append(getpass.getuser())
-    except Exception:
-        pass
-    for candidate in ("/etc/machine-id", "/var/lib/dbus/machine-id"):
-        try:
-            with open(candidate) as f:
-                parts.append(f.read().strip())
-            break
-        except Exception:
-            pass
-    raw = "|".join(parts).encode() or b"karmazyn-default"
-    return hashlib.sha256(raw).digest()
+        import karmazyn_identity
+    except ImportError:
+        import sys as _sys
+        _sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        import karmazyn_identity
+    return karmazyn_identity
 
 
 def save_identity(p2s: bytes, path: str) -> None:
-    """Zapisz phi._p2s do identity.bin.
-
-    Zaciemniony przez machine fingerprint XOR — nie jest to szyfrowanie,
-    ale sprawia że przeniesiony plik na inną maszynę zwróci złe p2s.
-    Format: PHID(4) + version(1) + fp_hash(8) + xored_p2s(32)
-    """
-    fp     = _machine_fingerprint()
-    fp_tag = fp[:8]
-    xored  = bytes(a ^ b for a, b in zip(p2s, fp))
-    identity_path = os.path.join(path, "identity.bin")
-    os.makedirs(path, exist_ok=True)
-    with open(identity_path, "wb") as f:
-        f.write(IDENTITY_MAGIC + _VERSION_BYTE + fp_tag + xored)
+    """Zapisz phi._p2s do identity.bin (v3, chroniony przez system albo hasło)."""
+    _identity_mod().save_identity(p2s, path)
 
 
 def load_identity(path: str) -> Optional[bytes]:
-    """Wczytaj phi._p2s z identity.bin.
+    """Wczytaj phi._p2s z identity.bin. None gdy brak albo nie da się odczytać.
 
-    Zwraca None jeśli plik nie istnieje lub maszyna się nie zgadza.
+    Stary plik v2 (XOR z fingerprintem) zostaje przepisany na v3.
     """
-    identity_path = os.path.join(path, "identity.bin")
-    if not os.path.exists(identity_path):
-        return None
-    try:
-        with open(identity_path, "rb") as f:
-            data = f.read()
-        if len(data) != 4 + 1 + 8 + 32:
-            return None
-        if data[:4] != IDENTITY_MAGIC or data[4:5] != _VERSION_BYTE:
-            return None
-        fp         = _machine_fingerprint()
-        fp_tag     = fp[:8]
-        stored_tag = data[5:13]
-        if stored_tag != fp_tag:
-            print("  [.soul] identity.bin: inna maszyna — nowe phi._p2s zostanie wygenerowane")
-            return None
-        xored = data[13:]
-        return bytes(a ^ b for a, b in zip(xored, fp))
-    except Exception:
-        return None
+    return _identity_mod().load_identity(path)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

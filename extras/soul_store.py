@@ -7,6 +7,11 @@ Przerwanie zapisu niszczy tylko ostatni rekord — reszta nienaruszona.
 Pliki:
     <path>/session.soul   — metadane, bąble, hologramy (JSONL)
     <path>/vectors.npz    — wektory numpy (binarne, bez konwersji)
+    <path>/identity.bin   — phi._p2s (DPAPI albo hasło, karmazyn_identity)
+
+Od 1.1 session.soul nie zawiera p2s ani jawnej treści bąbli: bąble idą
+szyfrogramem, a meta niesie tylko p2s_check (która tożsamość). Pliki 1.0.0
+z polem "p2s" nadal się wczytują.
 
 Typy rekordów w session.soul:
     {"type":"meta",     ...}   — jeden na początku pliku
@@ -22,7 +27,7 @@ import hashlib
 import numpy as np
 from typing import Optional
 
-SOUL_VERSION = "1.0.0"
+SOUL_VERSION = "1.1.0"   # 1.1: bez p2s i bez jawnej treści bąbli
 
 
 # ─── helpers ──────────────────────────────────────────────────────────────────
@@ -49,6 +54,16 @@ def _read_records(path: str) -> list:
                 # uszkodzona linia (np. przerwany zapis) — pomijamy
                 print(f"  [.soul] Pominięto uszkodzony rekord (linia {lineno})")
     return records
+
+
+def _identity():
+    try:
+        import karmazyn_identity
+    except ImportError:
+        import sys
+        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        import karmazyn_identity
+    return karmazyn_identity
 
 
 # ─── SAVE ─────────────────────────────────────────────────────────────────────
@@ -78,6 +93,13 @@ def save_soul(karmazyn_os, path: str = "") -> bool:
     ko = karmazyn_os
 
     try:
+        # p2s nie trafia do session.soul. Trzyma go identity.bin (DPAPI / hasło),
+        # sesja niesie tylko znacznik, którą tożsamością ją zaszyfrowano.
+        _ident = _identity()
+        p2s = ko.phi._p2s
+        if _ident.load_identity(path) != p2s:
+            _ident.save_identity(p2s, path)
+
         with open(soul_path, "w", encoding="utf-8") as f:
 
             # ── meta (pierwszy rekord) ────────────────────────────────────────
@@ -89,7 +111,7 @@ def save_soul(karmazyn_os, path: str = "") -> bool:
                 "temperature": ko.phi.temperature(),
                 "t_vacuum()":    (ko.phi.t_vacuum() if callable(ko.phi.t_vacuum) else ko.phi.t_vacuum),
                 "pid":         ko._pid,
-                "p2s":         ko.phi._p2s.hex(),   # ← klucz sesji
+                "p2s_check":   _ident.soul_check(p2s),
                 "dim":         ko.phi.dim,
                 "bubble_idx":  dict(ko.bubbles._idx),
             })
@@ -97,7 +119,6 @@ def save_soul(karmazyn_os, path: str = "") -> bool:
             # ── bąble ─────────────────────────────────────────────────────────
             for bid, b in ko.bubbles._b.items():
                 revoked = bid in ko.bubbles._rev
-                raw     = b.decrypt_content()
 
                 rec = {
                     "type":               "bubble",
@@ -109,7 +130,8 @@ def save_soul(karmazyn_os, path: str = "") -> bool:
                     "consolidated_from":  b.consolidated_from,
                     "metadata":           b.metadata,
                     "revoked":            revoked,
-                    "content_b64":        _b64(raw),
+                    # szyfrogram kluczem bąbla (sha256(phi2 + id)), nie treść
+                    "content_enc_b64":    _b64(b.encrypted_content),
                     "fingerprint_b64":    _b64(b.fingerprint),
                     "S_struct":           b.S_struct.tolist(),
                     "S_sem":              b.S_sem.tolist(),
@@ -193,6 +215,24 @@ def load_soul(karmazyn_os, path: str = "") -> bool:
         print("  [.soul] Pusty plik — brak rekordów")
         return False
 
+    # ── tożsamość: zanim ruszymy stan ─────────────────────────────────────────
+    meta = next((r for r in records if r.get("type") == "meta"), {})
+    legacy_p2s = meta.get("p2s")
+    if legacy_p2s:
+        # format 1.0.0 trzymał p2s jawnie; następny zapis go już nie zawiera
+        p2s = bytes.fromhex(legacy_p2s)
+    else:
+        _ident = _identity()
+        p2s = _ident.load_identity(path)
+        if p2s is None:
+            print(f"  [.soul] Brak tożsamości ({os.path.join(path, 'identity.bin')}) "
+                  f"— nie odszyfruję bąbli")
+            return False
+        check = meta.get("p2s_check")
+        if check and check != _ident.soul_check(p2s):
+            print("  [.soul] Sesja zapisana inną tożsamością — nie wczytuję")
+            return False
+
     # ── wczytaj wektory numpy ─────────────────────────────────────────────────
     sem_map = {}   # label → vector
     str_map = {}   # label → (S, T)
@@ -246,10 +286,8 @@ def load_soul(karmazyn_os, path: str = "") -> bool:
         if rtype == "meta":
             meta_epoch = rec.get("epoch", 0)
             ko._pid    = rec.get("pid", 100)
-            p2s_hex    = rec.get("p2s")
-            if p2s_hex:
-                ko.phi._p2s     = bytes.fromhex(p2s_hex)
-                ko.bubbles._phi2 = ko.phi.phi2_bytes()  # ← sync BubbleStore
+            ko.phi._p2s      = p2s
+            ko.bubbles._phi2 = ko.phi.phi2_bytes()  # ← sync BubbleStore
             # odtwórz czas w macierzy Φ
             ko.phi._mx.time = meta_epoch
 
@@ -261,10 +299,14 @@ def load_soul(karmazyn_os, path: str = "") -> bool:
                 # odtwórz klucz z p2s (już odtworzony z meta)
                 new_key = ko.bubbles._make_key(bid) if not rec.get("revoked") else b""
 
-                # re-encrypt zawartością plaintextową
-                raw_content = _ub64(rec["content_b64"])
-                from karmazyn import _xor_crypt
-                new_encrypted = _xor_crypt(raw_content, new_key) if new_key else raw_content
+                if "content_enc_b64" in rec:
+                    # szyfrogram tym samym kluczem (ta sama tożsamość)
+                    new_encrypted = _ub64(rec["content_enc_b64"])
+                else:
+                    # format 1.0.0: jawna treść, szyfrujemy ją przy wczytaniu
+                    raw_content = _ub64(rec["content_b64"])
+                    from karmazyn import _xor_crypt
+                    new_encrypted = _xor_crypt(raw_content, new_key) if new_key else raw_content
 
                 b = Bubble(
                     id=bid,
