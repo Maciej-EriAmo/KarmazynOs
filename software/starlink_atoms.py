@@ -24,7 +24,7 @@ import sys
 import time
 import urllib.request
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
@@ -292,6 +292,26 @@ def resolve_prop_mode(requested: str) -> str:
     return req
 
 
+def _tle_epoch(line1: str) -> Optional[datetime]:
+    """Epoka TLE: kolumny 19–20 (rok) i 21–32 (dzień roku)."""
+    try:
+        yy = int(line1[18:20])
+        year = 2000 + yy if yy < 57 else 1900 + yy
+        day = float(line1[20:32])
+    except (ValueError, IndexError):
+        return None
+    return datetime(year, 1, 1, tzinfo=timezone.utc) + timedelta(days=day - 1.0)
+
+
+def _minutes_since_epoch(sat: TleSat, when: datetime) -> float:
+    epoch = _tle_epoch(sat.line1)
+    if epoch is None:
+        return 0.0
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=timezone.utc)
+    return (when - epoch).total_seconds() / 60.0
+
+
 def position_of(
     sat: TleSat,
     *,
@@ -308,7 +328,14 @@ def position_of(
         pos = position_sgp4(sat, base)
         if pos is not None:
             return pos
-        return position_approx(sat, minutes)
+        return position_approx(sat, _minutes_since_epoch(sat, base))
+    if when is not None:
+        base = when
+        if minutes:
+            base = datetime.fromtimestamp(
+                when.timestamp() + minutes * 60.0, tz=timezone.utc
+            )
+        return position_approx(sat, _minutes_since_epoch(sat, base))
     return position_approx(sat, minutes)
 
 
