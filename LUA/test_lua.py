@@ -179,6 +179,22 @@ class I_Language(unittest.TestCase):
         out = self.r("local s=0; for i=1,100000000,0.000001 do s=s+1 end; return s")
         self.assertTrue(out.startswith("blad"))              # strażnik przerywa
 
+    def test_for_step_zero_is_error(self):
+        # PUC 5.4: 'for' step is zero — także gdy pętla nie ruszyłaby wcale
+        for src in (
+            "for i=1,0,0 do end",
+            "for i=1,5,0 do break end",
+            "for i=1.0,2.0,0.0 do break end",
+        ):
+            out = self.r(f"local ok,e = pcall(function() {src} end); return ok,e")
+            self.assertTrue(out.startswith("false\t"), src)
+            self.assertIn("krok 'for' = 0", out, src)
+        # ścieżka generatorowa (wewnątrz korutyny)
+        self.r("co = coroutine.create(function() for i=1,5,0 do break end end)")
+        out = self.r("local ok,e = coroutine.resume(co); return ok,e")
+        self.assertTrue(out.startswith("false\t"))
+        self.assertIn("krok 'for' = 0", out)
+
     def test_int_float_formatting_correct(self):
         # pkt 2 recenzji BŁĘDNY: int nie dostaje '.0'
         self.assertEqual(self.r("return tostring(1)"), "1")
@@ -983,6 +999,62 @@ class IV_Libraries(unittest.TestCase):
         self.assertEqual(self.r("local ok,v = coroutine.resume(co); return ok,v"), "true\t10")
         self.assertEqual(self.r("local ok,v = coroutine.resume(co); return ok,v"), "true\t20")
         self.assertEqual(self.r("local ok,v = coroutine.resume(co); return ok,v"), "true\t30")
+        self.assertEqual(self.r("return coroutine.status(co)"), "dead")
+
+    def test_coroutine_yield_inside_binop_metamethod(self):
+        self.r("""
+            local mt = { __add = function(a, b) return coroutine.yield(7) end }
+            local t = setmetatable({}, mt)
+            co = coroutine.create(function()
+                local x = t + t
+                return x
+            end)
+        """)
+        self.assertEqual(
+            self.r("local ok,v = coroutine.resume(co); return ok,v"),
+            "true\t7",
+        )
+        self.assertEqual(
+            self.r("local ok,v = coroutine.resume(co, 9); return ok,v"),
+            "true\t9",
+        )
+        self.assertEqual(self.r("return coroutine.status(co)"), "dead")
+
+    def test_coroutine_close_stops_after_inner_block(self):
+        # close nie może wykonać kodu za blokiem, w którym korutyna stoi
+        self.r("""
+            after = false
+            co = coroutine.create(function()
+                do coroutine.yield(1) end
+                after = true
+            end)
+            coroutine.resume(co)
+        """)
+        self.assertEqual(self.r("return coroutine.close(co)"), "true")
+        self.assertEqual(self.r("return after, coroutine.status(co)"), "false\tdead")
+
+    def test_coroutine_close_in_loop_runs_outer_close(self):
+        # bez dodatkowej iteracji; __close z bloku zewnętrznego wywołany raz
+        self.r("""
+            n, closed = 0, 0
+            co = coroutine.create(function()
+                local x <close> = setmetatable({}, {__close = function() closed = closed + 1 end})
+                while true do n = n + 1; coroutine.yield(n) end
+            end)
+            coroutine.resume(co)
+        """)
+        self.assertEqual(self.r("return coroutine.close(co)"), "true")
+        self.assertEqual(self.r("return n, closed"), "1\t1")
+
+    def test_coroutine_close_reports_close_error(self):
+        self.r("""
+            co = coroutine.create(function()
+                local x <close> = setmetatable({}, {__close = function() error("boom", 0) end})
+                coroutine.yield()
+            end)
+            coroutine.resume(co)
+        """)
+        self.assertEqual(self.r("return coroutine.close(co)"), "false\tboom")
         self.assertEqual(self.r("return coroutine.status(co)"), "dead")
 
     def test_debug_getinfo_getlocal(self):

@@ -37,7 +37,7 @@ def register(lib):
             import datetime
             dt = datetime.datetime(
                 gi("year", 1970), gi("month", 1), gi("day", 1),
-                gi("hour", 0), gi("min", 0), gi("sec", 0),
+                gi("hour", 12), gi("min", 0), gi("sec", 0),
             )
             return int(dt.timestamp())
         except Exception as ex:
@@ -62,7 +62,7 @@ def register(lib):
             for k, v in (
                 ("year", st.tm_year), ("month", st.tm_mon), ("day", st.tm_mday),
                 ("hour", st.tm_hour), ("min", st.tm_min), ("sec", st.tm_sec),
-                ("wday", st.tm_wday + 1), ("yday", st.tm_yday),
+                ("wday", (st.tm_wday + 1) % 7 + 1), ("yday", st.tm_yday),
                 ("isdst", bool(st.tm_isdst) if st.tm_isdst >= 0 else None),
             ):
                 lib.set(tb, k, v)

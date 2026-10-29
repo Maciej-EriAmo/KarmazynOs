@@ -338,7 +338,7 @@ class LuaFunction:
 
 class LuaThread:
     """Wątek korutyny (coroutine). status: suspended|running|normal|dead."""
-    __slots__ = ("fn", "status", "gen", "name", "closed")
+    __slots__ = ("fn", "status", "gen", "name", "closed", "va_stack")
 
     def __init__(self, fn, name="thread"):
         self.fn = fn
@@ -346,6 +346,7 @@ class LuaThread:
         self.gen = None           # generator _call_gen po first resume
         self.name = name
         self.closed = False       # coroutine.close
+        self.va_stack = []        # varargs tego wątku, nie współdzielone z innymi
 
 
 def lua_env_of(v):
@@ -421,3 +422,8 @@ class _Goto(Exception):
 
     def __init__(self, name):
         self.name = name
+
+
+class _ForceClose(Exception):
+    """coroutine.close: zamknij zawieszoną korutynę i jej <close>."""
+    pass

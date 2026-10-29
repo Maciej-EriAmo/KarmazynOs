@@ -1,9 +1,7 @@
 """karmazyn_lua.evaluator — montaż na Store; tabela=bąbel; metametody."""
 
-import math
-
 from .values import (
-    Store, Bubble, LuaError, LuaFunction, LuaThread, _Return, _Break, _Goto,
+    Store, Bubble, LuaError, LuaFunction, LuaThread, _Return, _Break, _Goto, _ForceClose,
     _META_KEY, _TBC_KEY, _keyname, _truthy, _type, _fmt_num, _tostring, _tonumber,
     _arith_num, _to_int, _wrap64, _idiv, _bitshift,
     _BIT_OPS, _ARITH_MM, _is_real_num, _is_concatable, _is_num_or_numstr,
@@ -421,8 +419,29 @@ class Evaluator:
                 return [True]
             co.closed = True
             co.status = "dead"
+            gen = co.gen
             co.gen = None
-            return [True]
+            if gen is None:
+                return [True]
+            prev = self._coro
+            self._coro = co
+            saved_va = self._va_stack
+            self._va_stack = co.va_stack
+            try:
+                try:
+                    gen.throw(_ForceClose())
+                except (_ForceClose, StopIteration):
+                    return [True]
+                except LuaError as e:
+                    return [False, e.lua_value]
+                # __close zrobił yield — Lua tego nie dopuszcza; dobij generator
+                gen.close()
+                return [True]
+            finally:
+                self._va_stack = saved_va
+                self._coro = prev
+                co.status = "dead"
+                co.closed = True
 
         def b_yield(*args):
             # obsłużone w _call_gen przez wartownik; tu tylko błąd sync
@@ -438,6 +457,8 @@ class Evaluator:
             prev = self._coro
             self._coro = co
             co.status = "running"
+            saved_va = self._va_stack
+            self._va_stack = co.va_stack
             try:
                 if co.gen is None:
                     co.gen = self._call_gen(co.fn, list(args))
@@ -473,6 +494,8 @@ class Evaluator:
                 co.status = "dead"
                 return [False, str(ex)]
             finally:
+                co.va_stack = self._va_stack
+                self._va_stack = saved_va
                 self._coro = prev
 
         def b_wrap(f=None, *_):
@@ -1135,6 +1158,10 @@ class Evaluator:
             return last
         except (_Return, _Break, _Goto):
             raise
+        except Exception:
+            # błąd albo _ForceClose (coroutine.close): zamknij <close> i leć wyżej
+            self._close_env(env)
+            raise
 
     def _get_env_table(self, env):
         """Wartość _ENV widoczna w env (domyślnie G)."""
@@ -1314,18 +1341,11 @@ class Evaluator:
             start = _arith_num(self._eval(e0, env), "for")
             limit = _arith_num(self._eval(e1, env), "for")
             step = _arith_num(self._eval(e2, env), "for") if e2 is not None else 1
-            if step == 0:
-                raise LuaError("krok 'for' = 0")
-            # liczba iteracji (włącznie po granicy) — policz dokładnie, odrzuć runaway
-            if step > 0:
-                est = (math.floor((limit - start) / step) + 1) if start <= limit else 0
-            else:
-                est = (math.floor((start - limit) / (-step)) + 1) if start >= limit else 0
-            if est > _LOOP_GUARD:
-                raise LuaError("pętla for: za dużo iteracji (limit hosta)")
-            i = start
-            guard = 0
-            while (step > 0 and i <= limit) or (step < 0 and i >= limit):
+            k = 0
+            while True:
+                i = self._for_control(start, step, k, limit)
+                if i is None:
+                    break
                 inner = self._block_env(env, "for")
                 atom = self.store.atom_new("var", name, value=i)
                 inner.bind(name, atom)
@@ -1335,10 +1355,7 @@ class Evaluator:
                     break
                 finally:
                     self._pop_live_env(inner)
-                i += step
-                guard += 1
-                if guard > _LOOP_GUARD:
-                    raise LuaError("pętla for przekroczyła limit iteracji")
+                k += 1
             return None
         if tag == "forin":
             # for namelist in explist do block end
@@ -1376,18 +1393,51 @@ class Evaluator:
             return None
         raise LuaError(f"nieznana instrukcja: {tag}")
 
+    def _for_control(self, start, step, k, limit):
+        """Wartość kontrolna `start + k*step`. None = pętla się nie wykonuje.
+
+        step > 0 kończy się gdy i > limit, step < 0 gdy i < limit.
+        step 0 to błąd jak w PUC 5.4, także gdy pętla nie ruszyłaby wcale.
+        """
+        if step == 0:
+            raise LuaError("krok 'for' = 0")
+        i = start + k * step
+        if step > 0:
+            if i > limit:
+                return None
+        elif i < limit:
+            return None
+        if k > _LOOP_GUARD:
+            raise LuaError("pętla for przekroczyła limit iteracji")
+        return i
+
     def _close_value(self, v):
-        """Zamknij wartość to-be-closed (iterator / <close>)."""
+        """Zamknij wartość to-be-closed (iterator / <close>). Jak _close_env."""
         if v is None or v is False:
             return
         if not isinstance(v, Bubble):
-            return
+            raise LuaError("zmienna <close> musi mieć __close (tabela)")
         mm = self._metamethod(v, "__close")
-        if mm is not None:
-            try:
-                self._call(mm, [v])
-            except LuaError:
-                pass
+        if mm is None:
+            raise LuaError("zmienna <close> bez metametody __close")
+        try:
+            self._call(mm, [v])
+        except LuaError:
+            raise
+        except Exception as ex:
+            raise LuaError(f"__close: {ex}")
+
+    def _index_foreign(self, obj, key):
+        """Indeks typu (string.byte), nie tabeli."""
+        mt = self._type_mt.get(_type(obj))
+        if mt is not None:
+            idx = self._raw_field(mt, "__index")
+            if isinstance(idx, Bubble):
+                return self._table_get(idx, key)
+            if isinstance(idx, LuaFunction) or callable(idx):
+                res = self._call(idx, [obj, key])
+                return res[0] if res else None
+        raise LuaError(f"próba indeksowania {_type(obj)}")
 
     # ── przypisanie / odczyt nazw: local vs _ENV (Lua 5.2+) ──
     def _assign_one(self, target, val, env):
@@ -1876,22 +1926,37 @@ class Evaluator:
             return last
         except (_Return, _Break, _Goto):
             raise
+        except Exception:
+            # błąd albo _ForceClose (coroutine.close): zamknij <close> i leć wyżej
+            self._close_env(env)
+            raise
 
     def _exec_stmt_gen(self, stmt, env):
         """Wersja generatorowa: większość instrukcji = sync; call-path przez gen."""
+        self._budget_tick(1)
         line, stmt = self._stmt_core(stmt)
         if line is not None:
             self._touch_frame_line(line)
         tag = stmt[0]
-        # instrukcje z potencjalnym yield w wyrażeniach / ciele
-        if tag in ("local", "global", "global_star", "localfunc", "return", "break",
-                   "assign", "exprstat", "do", "if", "while", "repeat", "goto", "label",
-                   "fornum", "forin"):
-            # użyj ścieżki sync, ale _call jest _sync_drive — yield w for/while
-            # złamie się przez "outside coroutine". Dlatego _call w trakcie coro
-            # musi iść gen. Ustawiamy flagę i nadpisujemy chwilowo? 
-            # Prościej: reimplementuj call-heavy tags z yield from.
-            pass
+        if tag == "global":
+            self._global_open = False
+            names, inits = stmt[1], stmt[2]
+            attrs = stmt[3] if len(stmt) > 3 else [None] * len(names)
+            et = self._get_env_table(env)
+            vals = (yield from self._eval_list_gen(inits, env)) if inits else []
+            for i, name in enumerate(names):
+                self._declared_globals.add(name)
+                if inits:
+                    v = vals[i] if i < len(vals) else None
+                    if self._table_get(et, name) is not None:
+                        raise LuaError(f"global '{name}' już zdefiniowane")
+                    self._table_set(et, name, v)
+                if i < len(attrs) and attrs[i] == "const":
+                    kn = self._env_key(et, name)
+                    aid = _own_aid(et, kn)
+                    if aid is not None:
+                        self.store.get_atom(aid).metadata["const"] = True
+            return None
         if tag == "exprstat":
             return (yield from self._eval_gen(stmt[1], env))
         if tag == "return":
@@ -1993,11 +2058,11 @@ class Evaluator:
             start = _arith_num((yield from self._eval_gen(e0, env)), "for")
             limit = _arith_num((yield from self._eval_gen(e1, env)), "for")
             step = _arith_num((yield from self._eval_gen(e2, env)), "for") if e2 is not None else 1
-            if step == 0:
-                raise LuaError("krok 'for' = 0")
-            i = start
-            guard = 0
-            while (step > 0 and i <= limit) or (step < 0 and i >= limit):
+            k = 0
+            while True:
+                i = self._for_control(start, step, k, limit)
+                if i is None:
+                    break
                 inner = self._block_env(env, "for")
                 atom = self.store.atom_new("var", name, value=i)
                 inner.bind(name, atom)
@@ -2007,10 +2072,7 @@ class Evaluator:
                     break
                 finally:
                     self._pop_live_env(inner)
-                i += step
-                guard += 1
-                if guard > _LOOP_GUARD:
-                    raise LuaError("pętla for przekroczyła limit iteracji")
+                k += 1
             return None
         if tag == "forin":
             _, names, exprs, blk = stmt
@@ -2044,8 +2106,22 @@ class Evaluator:
             finally:
                 self._close_value(closer)
             return None
-        # fallback: sync (break/goto/label/global/localfunc)
-        return self._exec_stmt(stmt, env)
+        if tag == "break":
+            raise _Break()
+        if tag == "goto":
+            raise _Goto(stmt[1])
+        if tag == "label":
+            return None
+        if tag == "global_star":
+            self._global_open = True
+            return None
+        if tag == "localfunc":
+            _, name, params, body = stmt
+            atom = self.store.atom_new("var", name, value=None)
+            env.bind(name, atom)
+            atom.metadata["v"] = LuaFunction(params, body, env, name)
+            return None
+        raise LuaError(f"nieznana instrukcja: {tag}")
 
     def _eval_gen(self, e, env):
         tag = e[0]
@@ -2058,9 +2134,9 @@ class Evaluator:
         if tag == "index":
             obj = yield from self._eval_gen(e[1], env)
             key = yield from self._eval_gen(e[2], env)
-            if not isinstance(obj, Bubble):
-                raise LuaError(f"próba indeksowania {_type(obj)}")
-            return self._table_get(obj, key)
+            if isinstance(obj, Bubble):
+                return self._table_get(obj, key)
+            return (yield from self._index_foreign_gen(obj, key))
         if tag == "call" or tag == "methodcall":
             vals = yield from self._invoke_gen(e, env)
             return vals[0] if vals else None
@@ -2069,7 +2145,9 @@ class Evaluator:
         if tag == "table":
             return (yield from self._build_table_gen(e[1], env))
         if tag == "unop":
-            return self._unop(e[1], (yield from self._eval_gen(e[2], env)))
+            return (yield from self._unop_gen(
+                e[1], (yield from self._eval_gen(e[2], env))
+            ))
         if tag == "binop":
             # and/or short-circuit
             if e[1] == "and":
@@ -2078,7 +2156,9 @@ class Evaluator:
             if e[1] == "or":
                 l = yield from self._eval_gen(e[2], env)
                 return l if _truthy(l) else (yield from self._eval_gen(e[3], env))
-            return self._binop(e[1], e[2], e[3], env)  # may call metamethods via _call sync
+            l = yield from self._eval_gen(e[2], env)
+            r = yield from self._eval_gen(e[3], env)
+            return (yield from self._apply_binop_gen(e[1], l, r))
         return self._eval(e, env)
 
     def _eval_list_gen(self, exprs, env):
@@ -2169,9 +2249,9 @@ class Evaluator:
         if tag == "index":
             obj = self._eval(e[1], env)
             key = self._eval(e[2], env)
-            if not isinstance(obj, Bubble):
-                raise LuaError(f"próba indeksowania {_type(obj)}")
-            return self._table_get(obj, key)
+            if isinstance(obj, Bubble):
+                return self._table_get(obj, key)
+            return self._index_foreign(obj, key)
         if tag == "call" or tag == "methodcall":
             vals = self._invoke(e, env)
             return vals[0] if vals else None             # kontekst 1-wartościowy: dostrojenie
@@ -2248,6 +2328,20 @@ class Evaluator:
             return l if _truthy(l) else self._eval(re, env)
         l = self._eval(le, env)
         r = self._eval(re, env)
+        return self._apply_binop(op, l, r)
+
+    def _index_foreign_gen(self, obj, key):
+        mt = self._type_mt.get(_type(obj))
+        if mt is not None:
+            idx = self._raw_field(mt, "__index")
+            if isinstance(idx, Bubble):
+                return self._table_get(idx, key)
+            if isinstance(idx, LuaFunction) or callable(idx):
+                res = yield from self._call_gen(idx, [obj, key])
+                return res[0] if res else None
+        raise LuaError(f"próba indeksowania {_type(obj)}")
+
+    def _apply_binop(self, op, l, r):
         if op == "..":
             if _is_concatable(l) and _is_concatable(r):
                 return _tostring(l) + _tostring(r)
@@ -2275,6 +2369,108 @@ class Evaluator:
             kind = "operacji bitowej" if op in _BIT_OPS else "arytmetyki"
             raise LuaError(f"próba {kind} ({op}) na {_type(bad)}")
         raise LuaError(f"nieznany operator: {op}")
+
+    def _unop_gen(self, op, v):
+        """Jak _unop, ale metametoda może coroutine.yield."""
+        if op == "-":
+            if _is_num_or_numstr(v):
+                return -_arith_num(v, "-")
+            mm = self._metamethod(v, "__unm")
+            if mm is not None:
+                res = yield from self._call_gen(mm, [v, v])
+                return res[0] if res else None
+            raise LuaError(f"próba arytmetyki (-) na {_type(v)}")
+        if op == "not":
+            return not _truthy(v)
+        if op == "~":
+            if _bitable(v):
+                return _wrap64(~_to_int(v))
+            mm = self._metamethod(v, "__bnot")
+            if mm is not None:
+                res = yield from self._call_gen(mm, [v, v])
+                return res[0] if res else None
+            raise LuaError(f"operacja bitowa na {_type(v)}")
+        if op == "#":
+            if isinstance(v, str):
+                return len(v)
+            if isinstance(v, Bubble):
+                mm = self._metamethod(v, "__len")
+                if mm is not None:
+                    res = yield from self._call_gen(mm, [v])
+                    return res[0] if res else None
+                return _array_len(v)
+            raise LuaError(f"próba użycia długości na {_type(v)}")
+        raise LuaError(f"nieznany operator unarny: {op}")
+
+    def _apply_binop_gen(self, op, l, r):
+        """Jak _apply_binop, ale __concat / __eq / arytmetyka mogą yield."""
+        if op == "..":
+            if _is_concatable(l) and _is_concatable(r):
+                return _tostring(l) + _tostring(r)
+            handled, res = yield from self._try_binop_mm_gen("__concat", l, r)
+            if handled:
+                return res
+            bad = l if not _is_concatable(l) else r
+            raise LuaError(f"próba konkatenacji {_type(bad)}")
+        if op == "==":
+            return (yield from self._eq_mm_gen(l, r))
+        if op == "~=":
+            return not (yield from self._eq_mm_gen(l, r))
+        if op in ("<", ">", "<=", ">="):
+            return (yield from self._cmp_mm_gen(op, l, r))
+        event = _ARITH_MM.get(op)
+        if event is not None:
+            raw = self._raw_numeric(op, l, r)
+            if raw is not _NOVAL:
+                return raw
+            handled, res = yield from self._try_binop_mm_gen(event, l, r)
+            if handled:
+                return res
+            bad = l if not self._numeric_ok(op, l) else r
+            kind = "operacji bitowej" if op in _BIT_OPS else "arytmetyki"
+            raise LuaError(f"próba {kind} ({op}) na {_type(bad)}")
+        raise LuaError(f"nieznany operator: {op}")
+
+    def _try_binop_mm_gen(self, event, l, r):
+        mm = self._metamethod(l, event)
+        if mm is None:
+            mm = self._metamethod(r, event)
+        if mm is None:
+            return (False, None)
+        res = yield from self._call_gen(mm, [l, r])
+        return (True, res[0] if res else None)
+
+    def _eq_mm_gen(self, l, r):
+        if self._eq(l, r):
+            return True
+        if isinstance(l, Bubble) and isinstance(r, Bubble):
+            mm = self._metamethod(l, "__eq") or self._metamethod(r, "__eq")
+            if mm is not None:
+                res = yield from self._call_gen(mm, [l, r])
+                return _truthy(res[0] if res else None)
+        return False
+
+    def _cmp_mm_gen(self, op, l, r):
+        rawable = (
+            (_is_real_num(l) and _is_real_num(r))
+            or (isinstance(l, str) and isinstance(r, str))
+        )
+        if rawable:
+            return self._cmp(op, l, r)
+        if op == "<":
+            return (yield from self._order_mm_gen("__lt", l, r))
+        if op == ">":
+            return (yield from self._order_mm_gen("__lt", r, l))
+        if op == "<=":
+            return (yield from self._order_mm_gen("__le", l, r))
+        return (yield from self._order_mm_gen("__le", r, l))
+
+    def _order_mm_gen(self, event, l, r):
+        mm = self._metamethod(l, event) or self._metamethod(r, event)
+        if mm is not None:
+            res = yield from self._call_gen(mm, [l, r])
+            return _truthy(res[0] if res else None)
+        raise LuaError(f"próba porównania {_type(l)} z {_type(r)}")
 
     # ── metametody: pomocnicy ──
     def _metamethod(self, v, name):

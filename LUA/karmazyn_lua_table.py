@@ -19,35 +19,43 @@ def register(lib):
 
     t = lib.table()
 
-    def b_insert(tbl, a=None, b=None, *_):
+    def b_insert(tbl, *args):
         need_table(tbl, "insert")
         n = lib.arraylen(tbl)
-        if b is None:
-            # insert(t, v) -> na koniec
-            lib.set(tbl, n + 1, a)
-        else:
-            # insert(t, pos, v) -> wstaw, przesuwając w prawo
-            pos = int(a)
+        if len(args) >= 2:
+            # insert(t, pos, v) — v może być jawnym nil
+            pos = int(args[0])
             if pos < 1 or pos > n + 1:
                 raise Error("table.insert: pozycja poza zakresem")
             for i in range(n, pos - 1, -1):
                 lib.set(tbl, i + 1, lib.rawget(tbl, i))
-            lib.set(tbl, pos, b)
+            lib.set(tbl, pos, args[1])
+        else:
+            # insert(t, v) albo insert(t) → na koniec, także nil
+            val = args[0] if args else None
+            lib.set(tbl, n + 1, val)
         return None
 
-    def b_remove(tbl, pos=None, *_):
+    def b_remove(tbl, *args):
         need_table(tbl, "remove")
         n = lib.arraylen(tbl)
-        if n == 0 and pos is None:
-            return None
-        p = n if pos is None else int(pos)
-        if n > 0 and (p < 1 or p > n + 1):
-            raise Error("table.remove: pozycja poza zakresem")
+        if not args:
+            if n == 0:
+                return None
+            p = n
+        else:
+            if args[0] is None:
+                raise Error("table.remove: pozycja poza zakresem")
+            p = int(args[0])
+            if p < 1 or p > n + 1:
+                raise Error("table.remove: pozycja poza zakresem")
+            if p == n + 1:
+                return None
         val = lib.rawget(tbl, p)
         for i in range(p, n):
             lib.set(tbl, i, lib.rawget(tbl, i + 1))
-        if n > 0:
-            lib.set(tbl, n, None)                    # usuń ostatni (nil = delete)
+        if p <= n:
+            lib.set(tbl, n, None)
         return val
 
     def b_concat(tbl, sep=None, i=None, j=None, *_):
