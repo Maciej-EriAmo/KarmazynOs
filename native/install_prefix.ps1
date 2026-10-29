@@ -54,26 +54,42 @@ function Copy-One {
     Write-Host "  + $dest"
 }
 
-$shellExe = Join-Path $Shell "target\release\karmazyn_shell.exe"
+# CARGO_TARGET_DIR (wspólny katalog) albo target\ każdego crate'a.
+function Release-Dir([string]$crate) {
+    if ($env:CARGO_TARGET_DIR) { return Join-Path $env:CARGO_TARGET_DIR "release" }
+    return Join-Path $crate "target\release"
+}
+
+$shellExe = Join-Path (Release-Dir $Shell) "karmazyn_shell.exe"
 if (-not (Test-Path $shellExe)) {
-    $shellExe = Join-Path $Shell "target\release\karmazyn_shell"
+    $shellExe = Join-Path (Release-Dir $Shell) "karmazyn_shell"
 }
 Copy-One $shellExe $Bin
 
 $hdr = Join-Path $Sub "include\karmazyn_substrate.h"
 Copy-One $hdr $Inc
 
-# Windows: dll + import lib; Unix-ish: .so / .a if present
-$rel = Join-Path $Sub "target\release"
+# Windows: dll + import lib (MSVC .dll.lib albo GNU .dll.a); Unix-ish: .so / .a
+$rel = Release-Dir $Sub
+$libNames = @(
+    "karmazyn_substrate.dll",
+    "karmazyn_substrate.dll.lib",
+    "libkarmazyn_substrate.dll.a",
+    "libkarmazyn_substrate.rlib",
+    "libkarmazyn_substrate.so",
+    "libkarmazyn_substrate.a",
+    "libkarmazyn_substrate.dylib"
+)
+# Import lib drugiego toolchainu z poprzedniej instalacji nie pasuje do nowej DLL.
+foreach ($n in $libNames) {
+    $old = Join-Path $Lib $n
+    if ((Test-Path $old) -and -not (Test-Path (Join-Path $rel $n))) {
+        Remove-Item -Force $old
+        Write-Host "  - $old"
+    }
+}
 $copiedLib = $false
-foreach ($n in @(
-        "karmazyn_substrate.dll",
-        "karmazyn_substrate.dll.lib",
-        "libkarmazyn_substrate.rlib",
-        "libkarmazyn_substrate.so",
-        "libkarmazyn_substrate.a",
-        "libkarmazyn_substrate.dylib"
-    )) {
+foreach ($n in $libNames) {
     $p = Join-Path $rel $n
     if (Test-Path $p) {
         Copy-One $p $Lib
