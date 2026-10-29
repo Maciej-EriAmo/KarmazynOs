@@ -59,6 +59,11 @@ def _xor_crypt(data: bytes, key: bytes) -> bytes:
         counter += 1
     return bytes(out)
 
+def _call_or_value(obj):
+    """Właściwość albo metoda bez argumentów (t_vacuum bywa jednym i drugim)."""
+    return obj() if callable(obj) else obj
+
+
 def _manifest_hash(bubbles_dir: str, holograms_dir: str) -> str:
     h = hashlib.sha256()
     for d in [bubbles_dir, holograms_dir]:
@@ -174,8 +179,8 @@ def export(karmazyn_os, path: str, shared_secret: Optional[bytes] = None,
         "karmazyn_version":   getattr(ko, 'VERSION', '?'),
         "epoch":              ko.phi.epoch,
         "dim":                ko.phi.dim,
-        "t_vacuum()":           ko.phi.t_vacuum(),
-        "temperature":        ko.phi.temperature(),
+        "t_vacuum()":           _call_or_value(ko.phi.t_vacuum),
+        "temperature":        _call_or_value(ko.phi.temperature),
         "n_bubbles":          len(exported_bubbles),
         "n_holograms":        len(exported_holograms),
         "n_phi_atoms":        len(ko.phi._mx.atoms),
@@ -233,15 +238,12 @@ def import_(karmazyn_os, path: str, shared_secret: Optional[bytes] = None,
 
     ko = karmazyn_os
 
-    if not merge:
-        ko.bubbles._b.clear()
-        ko.bubbles._idx.clear()
-        ko.bubbles._rev.clear()
-        ko.holograms.clear()
-
     imported_bubbles = []
     imported_holograms = []
     skipped = []
+    # Najpierw pamięć. Czyścimy store dopiero gdy pliki się sparsują.
+    pending_bubbles = []
+    pending_holograms = []
 
     # ── Bąble ────────────────────────────────────────────────────────────────
     if os.path.isdir(bdir):
@@ -268,9 +270,14 @@ def import_(karmazyn_os, path: str, shared_secret: Optional[bytes] = None,
             label   = bbl["label"]
             revoked = bbl.get("revoked", False)
 
+            # Bez klucza nie xorujemy szyfrogramu drugim kluczem.
+            if bbl.get("content_encrypted") and shared_secret is None:
+                skipped.append(f"{bid}: encrypted without shared_secret")
+                continue
+
             # re-decrypt zawartość
             raw_content_enc = _ub64(bbl["content_b64"])
-            if bbl.get("content_encrypted") and shared_secret is not None:
+            if bbl.get("content_encrypted"):
                 exp_key = _export_key(shared_secret, bid)
                 raw_content = _xor_crypt(raw_content_enc, exp_key)
             else:
@@ -316,12 +323,7 @@ def import_(karmazyn_os, path: str, shared_secret: Optional[bytes] = None,
                 b.is_alive          = lambda: bool(b.bubble_key)
                 b.decrypt_content   = lambda: _xor_crypt(b.encrypted_content, b.bubble_key)
 
-            ko.bubbles._b[bid]     = b
-            ko.bubbles._idx[label] = bid
-            if revoked:
-                ko.bubbles._rev.add(bid)
-
-            imported_bubbles.append(bid)
+            pending_bubbles.append((bid, label, revoked, b))
 
     # ── Hologramy ─────────────────────────────────────────────────────────────
     if os.path.isdir(hdir):
@@ -350,35 +352,61 @@ def import_(karmazyn_os, path: str, shared_secret: Optional[bytes] = None,
                     decay_rate=hgm.get("decay_rate", 0.001),
                     metadata=hgm.get("metadata", {}),
                 )
-                ko.holograms[hid] = h
+                pending_holograms.append((hid, h))
             else:
-                # fallback
-                ko.holograms[hid] = hgm
+                pending_holograms.append((hid, hgm))
 
-            imported_holograms.append(hid)
-
-    # ── Wektory Φ ─────────────────────────────────────────────────────────────
+    # ── Wektory Φ (odczyt zanim ruszamy store) ───────────────────────────────
     sem_path = os.path.join(pdir, "sem_vectors.npz")
+    sem_loaded = None
     if os.path.exists(sem_path):
         # allow_pickle=False: npz trzyma same tablice numeryczne (bez object arrays).
-        # True = RCE przy złośliwym pliku; archiwum/bubblefs już ładuje bezpiecznie.
-        sem_data = np.load(sem_path, allow_pickle=False)
-        for k in sem_data.files:
-            ko.phi._sem[k] = sem_data[k]
+        sem_loaded = np.load(sem_path, allow_pickle=False)
 
     str_path  = os.path.join(pdir, "structural.npz")
     temp_path = os.path.join(pdir, "temperatures.npz")
+    str_data = temp_data = None
     if os.path.exists(str_path) and os.path.exists(temp_path):
         str_data  = np.load(str_path,  allow_pickle=False)
         temp_data = np.load(temp_path, allow_pickle=False)
-        existing_labels = {a['label'] for a in ko.phi._mx.atoms}
-        for lbl in str_data.files:
-            if lbl not in existing_labels:
-                T = float(temp_data[lbl][0]) if lbl in temp_data.files else 1.0
-                ko.phi._mx.add_atom_vector(
-                    label=lbl, topic="bubblefs_import",
-                    vector=str_data[lbl], init_T=T
-                )
+
+    if not merge:
+        ko.bubbles._b.clear()
+        ko.bubbles._idx.clear()
+        ko.bubbles._rev.clear()
+        ko.holograms.clear()
+
+    for bid, label, revoked, b in pending_bubbles:
+        ko.bubbles._b[bid] = b
+        ko.bubbles._idx[label] = bid
+        if revoked:
+            ko.bubbles._rev.add(bid)
+        imported_bubbles.append(bid)
+
+    for hid, h in pending_holograms:
+        ko.holograms[hid] = h
+        imported_holograms.append(hid)
+
+    if sem_loaded is not None:
+        try:
+            for k in sem_loaded.files:
+                ko.phi._sem[k] = np.array(sem_loaded[k])
+        finally:
+            sem_loaded.close()
+
+    if str_data is not None and temp_data is not None:
+        try:
+            existing_labels = {a['label'] for a in ko.phi._mx.atoms}
+            for lbl in str_data.files:
+                if lbl not in existing_labels:
+                    T = float(temp_data[lbl][0]) if lbl in temp_data.files else 1.0
+                    ko.phi._mx.add_atom_vector(
+                        label=lbl, topic="bubblefs_import",
+                        vector=np.array(str_data[lbl]), init_T=T
+                    )
+        finally:
+            str_data.close()
+            temp_data.close()
 
     result = {
         "imported_bubbles":   len(imported_bubbles),
@@ -410,11 +438,16 @@ def inspect(path: str) -> dict:
     bubble_files   = os.listdir(bdir) if os.path.isdir(bdir) else []
     hologram_files = os.listdir(hdir) if os.path.isdir(hdir) else []
 
+    raw_tv = m.get("t_vacuum()", m.get("t_vacuum"))
+    try:
+        tv_txt = f"{float(raw_tv):.4f}"
+    except (TypeError, ValueError):
+        tv_txt = "?"
     print(f"[BubbleFS] {path}")
     print(f"  wersja:     {m.get('bubblefs_version')} / karmazyn {m.get('karmazyn_version')}")
     print(f"  epoka:      {m.get('epoch')}  dim={m.get('dim')}")
     print(f"  bąble:      {len(bubble_files)}  hologramy={len(hologram_files)}")
-    print(f"  szyfrowane: {m.get('encrypted')}  T_vacuum={m.get('t_vacuum()', '?'):.4f}")
+    print(f"  szyfrowane: {m.get('encrypted')}  T_vacuum={tv_txt}")
     return m
 
 
