@@ -50,6 +50,13 @@ fn main() {
     let store = Store::new(thermal);
     let lisp = Evaluator::new(&store);
     let lua = LuaEvaluator::new(&store);
+    // KARMAZYN_LUA_BUDGET=<instrukcje na chunk>, 0 = bez limitu
+    if let Some(n) = env::var("KARMAZYN_LUA_BUDGET")
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+    {
+        lua.set_budget((n > 0).then_some(n));
+    }
     let tools = preload_lua_bin(&lua);
     let app = App { store, lisp, lua };
     let args: Vec<String> = env::args().skip(1).collect();
@@ -933,6 +940,7 @@ fn print_help() {
   save <path> / load <path>     KSUB_SNAP v1. load remounts lisp and lua
   (define x 10) / lisp <expr>   mini-Lisp guest (atoms = vars)
   lua <chunk>                   Lua guest (mlua). return karmazyn._VERSION
+                                limit instrukcji na chunk: KARMAZYN_LUA_BUDGET (0 = brak)
   tool <name> [args] | :tool    lua_bin tool (uptime, ls, df, nano, …). bare tool lists names
   help | quit
 

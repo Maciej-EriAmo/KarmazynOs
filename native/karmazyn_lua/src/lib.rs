@@ -18,10 +18,18 @@ use std::time::Duration;
 use karmazyn_substrate::{
     state_for_t, AtomId, BubbleId, Store, T_HOT, T_INIT, T_MAX, T_TOMB, T_WARM,
 };
-use mlua::{Lua, MultiValue, Result as LuaResult, Value};
+use mlua::{ffi, Function, Lua, MultiValue, Result as LuaResult, Value};
 
 const HOST_API_VERSION: &str = "1.1.0";
 const GUEST_VERSION: &str = "Lua 5.4 (Karmazyn mlua)";
+/// Instruction budget for one chunk (`eval_line` / `run_tool`). As PID 1 an
+/// endless loop would hang the whole system, so the guest cuts it off.
+pub const DEFAULT_BUDGET: u64 = 200_000_000;
+/// The hook fires every this many VM instructions.
+const HOOK_STEP: i32 = 10_000;
+/// Registry keys read by `budget_hook` (integers; limit 0 = no limit).
+const BUDGET_LIMIT_KEY: &str = "karmazyn.budget.limit";
+const BUDGET_USED_KEY: &str = "karmazyn.budget.used";
 
 struct AgentRec {
     name: String,
@@ -58,6 +66,10 @@ pub struct Evaluator {
     project: Rc<RefCell<Option<PathBuf>>>,
     tools: Rc<RefCell<Vec<String>>>,
     guest: Rc<Guest>,
+    /// None = no limit. Counted per chunk; `eval_line` resets the count.
+    budget: Cell<Option<u64>>,
+    /// C function that arms `budget_hook` on the thread that runs chunks.
+    arm_budget: Function,
 }
 
 impl Evaluator {
@@ -92,6 +104,7 @@ impl Evaluator {
         install_print(&lua, prints.clone()).expect("lua print");
         install_searchers(&lua, project.clone()).expect("lua searchers");
         install_karmazyn(&lua, store.clone(), guest.clone()).expect("karmazyn host");
+        let arm_budget = install_budget(&lua, Some(DEFAULT_BUDGET)).expect("lua budget");
         Self {
             env: Cell::new(env),
             lua,
@@ -99,7 +112,21 @@ impl Evaluator {
             project,
             tools,
             guest,
+            budget: Cell::new(Some(DEFAULT_BUDGET)),
+            arm_budget,
         }
+    }
+
+    /// Instruction limit per chunk. `None` turns it off.
+    pub fn set_budget(&self, limit: Option<u64>) {
+        self.budget.set(limit);
+        let _ = self
+            .lua
+            .set_named_registry_value(BUDGET_LIMIT_KEY, budget_reg(limit));
+    }
+
+    pub fn budget(&self) -> Option<u64> {
+        self.budget.get()
     }
 
     /// Re-bind the session root after a snapshot load. The mlua heap is not
@@ -247,10 +274,58 @@ impl Evaluator {
             return String::new();
         }
         self.prints.borrow_mut().clear();
+        if let Err(e) = self.arm_budget.call::<()>(()) {
+            return format!("blad: {e}");
+        }
         match self.lua.load(line).set_name("=stdin").eval::<MultiValue>() {
             Ok(values) => join_print_and_return(&self.prints.borrow(), &values),
             Err(e) => format!("blad: {e}"),
         }
+    }
+}
+
+fn budget_reg(limit: Option<u64>) -> i64 {
+    limit.map_or(0, |n| i64::try_from(n).unwrap_or(i64::MAX))
+}
+
+/// Instruction budget as a raw count hook. mlua's own `set_hook` serves one
+/// thread only and switches itself off in coroutines; a raw `lua_sethook` is
+/// copied by `lua_newthread`, so every coroutine counts against the same chunk.
+/// Returns the C function that arms the hook and zeroes the count.
+fn install_budget(lua: &Lua, limit: Option<u64>) -> LuaResult<Function> {
+    lua.set_named_registry_value(BUDGET_LIMIT_KEY, budget_reg(limit))?;
+    lua.set_named_registry_value(BUDGET_USED_KEY, 0i64)?;
+    unsafe extern "C-unwind" fn arm(l: *mut ffi::lua_State) -> std::os::raw::c_int {
+        ffi::lua_pushinteger(l, 0);
+        ffi::lua_setfield(l, ffi::LUA_REGISTRYINDEX, c"karmazyn.budget.used".as_ptr());
+        ffi::lua_sethook(l, Some(budget_hook), ffi::LUA_MASKCOUNT, HOOK_STEP);
+        0
+    }
+    unsafe { lua.create_c_function(arm) }
+}
+
+/// Past the limit the hook fires on every instruction, so the error comes back
+/// right after a `pcall` (or a failed `coroutine.resume`) that caught it.
+/// No value with a destructor is alive when `lua_error` longjmps out.
+unsafe extern "C-unwind" fn budget_hook(l: *mut ffi::lua_State, _ar: *mut ffi::lua_Debug) {
+    let step = ffi::lua_Integer::from(ffi::lua_gethookcount(l).max(1));
+    ffi::lua_getfield(l, ffi::LUA_REGISTRYINDEX, c"karmazyn.budget.limit".as_ptr());
+    let limit = ffi::lua_tointegerx(l, -1, std::ptr::null_mut());
+    ffi::lua_getfield(l, ffi::LUA_REGISTRYINDEX, c"karmazyn.budget.used".as_ptr());
+    let used = ffi::lua_tointegerx(l, -1, std::ptr::null_mut()).saturating_add(step);
+    ffi::lua_pop(l, 2);
+    ffi::lua_pushinteger(l, used);
+    ffi::lua_setfield(l, ffi::LUA_REGISTRYINDEX, c"karmazyn.budget.used".as_ptr());
+    if limit > 0 && used > limit {
+        ffi::lua_sethook(l, Some(budget_hook), ffi::LUA_MASKCOUNT, 1);
+        let msg = format!("przekroczono limit instrukcji ({limit})");
+        ffi::lua_pushlstring(l, msg.as_ptr().cast(), msg.len());
+        drop(msg);
+        ffi::lua_error(l);
+    }
+    if step != ffi::lua_Integer::from(HOOK_STEP) {
+        // wątek z poprzedniego chunka mógł zostać na kroku 1
+        ffi::lua_sethook(l, Some(budget_hook), ffi::LUA_MASKCOUNT, HOOK_STEP);
     }
 }
 
@@ -1475,6 +1550,76 @@ mod tests {
         let (store, ev) = guest();
         let s = ev.eval_line(&store, "return (");
         assert!(s.starts_with("blad:"), "{s}");
+    }
+
+    #[test]
+    fn endless_loop_hits_budget() {
+        let (store, ev) = guest();
+        ev.set_budget(Some(1_000_000));
+        let s = ev.eval_line(&store, "while true do end");
+        assert!(s.starts_with("blad:") && s.contains("limit instrukcji"), "{s}");
+        // licznik od nowa: następny chunk działa
+        assert_eq!(ev.eval_line(&store, "return 6*7"), "42");
+    }
+
+    #[test]
+    fn pcall_cannot_swallow_budget() {
+        let (store, ev) = guest();
+        ev.set_budget(Some(1_000_000));
+        let s = ev.eval_line(
+            &store,
+            "while true do pcall(function() while true do end end) end",
+        );
+        assert!(s.contains("limit instrukcji"), "{s}");
+    }
+
+    #[test]
+    fn coroutine_loop_hits_budget() {
+        let (store, ev) = guest();
+        ev.set_budget(Some(1_000_000));
+        let s = ev.eval_line(
+            &store,
+            "local co = coroutine.create(function() while true do end end)              local ok, e = coroutine.resume(co) error(e, 0)",
+        );
+        assert!(s.contains("limit instrukcji"), "{s}");
+    }
+
+    #[test]
+    fn xpcall_cannot_swallow_budget() {
+        let (store, ev) = guest();
+        ev.set_budget(Some(1_000_000));
+        let s = ev.eval_line(
+            &store,
+            "while true do xpcall(function() while true do end end, function(e) return e end) end",
+        );
+        assert!(s.contains("limit instrukcji"), "{s}");
+    }
+
+    #[test]
+    fn coroutine_survives_into_next_chunk() {
+        // wątek, który przekroczył limit, zostaje na kroku 1; nowy chunk go nie karze
+        let (store, ev) = guest();
+        ev.set_budget(Some(1_000_000));
+        ev.eval_line(
+            &store,
+            "co = coroutine.wrap(function() local n = 0 \
+               while true do n = n + 1 if n % 1000 == 0 then coroutine.yield(n) end end end)",
+        );
+        let s = ev.eval_line(&store, "local s = 0 for i = 1, 500 do s = co() end return s");
+        assert!(s.contains("limit instrukcji"), "{s}");
+        let s = ev.eval_line(&store, "local s = 0 for i = 1, 20 do s = s + 1 end return s");
+        assert_eq!(s, "20");
+    }
+
+    #[test]
+    fn budget_can_be_lifted() {
+        let (store, ev) = guest();
+        assert_eq!(ev.budget(), Some(DEFAULT_BUDGET));
+        ev.set_budget(Some(100_000));
+        let work = "local s = 0 for i = 1, 200000 do s = s + i end return s";
+        assert!(ev.eval_line(&store, work).contains("limit instrukcji"));
+        ev.set_budget(None);
+        assert_eq!(ev.eval_line(&store, work), "20000100000");
     }
 
     #[test]
