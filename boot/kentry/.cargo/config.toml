@@ -7,4 +7,5 @@
 rustflags = [
   "-C", "link-arg=-Tlinker.ld",
   "-C", "relocation-model=static",
+  "-C", "no-redzone",
 ]

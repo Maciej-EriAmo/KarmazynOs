@@ -10,6 +10,11 @@ SECTIONS
     KEEP(*(.multiboot_header))
   }
 
+  .note.Xen : ALIGN(4)
+  {
+    KEEP(*(.note.Xen))
+  }
+
   .text : ALIGN(4K)
   {
     *(.text .text.*)

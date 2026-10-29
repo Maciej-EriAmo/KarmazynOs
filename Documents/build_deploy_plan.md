@@ -4,7 +4,7 @@
 **Data:** 2026-07-31  
 **Wzór:** Gentoo stages + Dual-track (Product native / Lab python)  
 **Kompilator Product:** `rustc` + cargo · **Mapa:** `rust_substrate_map.md`  
-**Język:** L2+ (GRUB/ISO/kentry) = plan, nie nośnik — nie raportować jako „done”.
+**Język:** L2 produkt (prompt `karmazyn>`) = plan, nie nośnik. ISO kentry (marker serial) jest nośnikiem fazy F, nie obrazem produktu.
 
 Powiązania: `io_stage1.md`, `studio_sdl.md`, `grub_loader_plan.md`, `runtime_pl.md`, `VERSION.txt`.
 
@@ -19,7 +19,7 @@ zbudowany substrat Rust (default)
   → boot z matrycą I/O Stage 1 (twarde FAIL jeśli brak)
   → gość Lua + host API + lua_bin
   → opcjonalnie Studio SDL (mapa T tło, prompt pełne okno)
-  → (później) GRUB / ISO / kentry
+  → (później) ISO produktu do promptu `karmazyn>`
 ```
 
 **Nie-cel na ten plan:** pełny bare-metal OS w jednej iteracji; Secure Boot; sieć bąblowa L0.
@@ -91,8 +91,8 @@ Python, PyO3, ctypes, Studio, Lua — to **szwy i goście**, nie miejsce definic
 | **L1 Product host** | ✅ | `gate_product` + `dry_run_l1` · tag `l1-host-2026-07-31` |
 | CI automatyczne | ✅ | `.github/workflows/gate.yml` |
 | BootConfig / cmdline | ✅ parser | `software/karmazyn_bootcfg.py` + testy; GRUB map = `parse_cmdline_string` |
-| GRUB / ISO (L2) | 📋 plan only | faza E — **nie done** |
-| kentry Multiboot (L3) | 🚧 szkielet | `boot/kentry` — marker, nie Store |
+| GRUB / ISO (L2) | 📋 plan only | faza E — **nie done** (prompt `karmazyn>`) |
+| kentry Multiboot (L3) | ✅ marker | `boot/kentry` + ISO GRUB (serial); nie Store |
 | Store freestanding (L4) | 📋 plan only | faza G — **po** alloc design |
 
 **Baseline gate (musi przechodzić przed nowymi fazami):**
@@ -234,16 +234,17 @@ python kernel_boundary.py archiwum/kernel_python software/
 |------|-----------|------|
 | F1 | Crate `boot/kentry` Multiboot2 header | ✅ szkielet |
 | F2 | Serial early print `KARMAZYN_KENTRY_OK` | ✅ w źródle + ELF (build `--target x86_64-unknown-none`) |
-| F3 | Dump cmdline | ❌ |
-| F4 | QEMU gate serial expect | ⏳ (manual / gdy ISO) |
+| F3 | Dump cmdline | ✅ `CMDLINE=karmazyn.kentry=1` z GRUB |
+| F4 | QEMU gate serial expect | ✅ `qemu_serial.ps1` (PVH, bez ISO) |
+| F4b | ISO GRUB ładuje ELF | ✅ `scripts/build_kentry_iso.ps1` + `qemu_iso.ps1` |
 | F5 | (później) link Store freestanding / alokator | ❌ po §4 roadmap |
 
 | ID | Punkt sukcesu F |
 |----|-----------------|
 | **SF.1** | `cargo build` kentry exit 0 — ✅ (target none) |
-| **SF.2** | QEMU + GRUB: serial zawiera `KARMAZYN_KENTRY_OK` — ⏳ |
+| **SF.2** | QEMU `-kernel` (bez ISO): serial zawiera `KARMAZYN_KENTRY_OK` i `SLAB_OK` — ✅ |
 | **SF.3** | Brak CPython w ścieżce kentry — ✅ |
-| **SF.4** | Cmdline z Multiboot dostępne w kentry (string) — ❌ |
+| **SF.4** | Cmdline z Multiboot dostępne w kentry (string) — ✅ `karmazyn.kentry=1` na serialu z ISO |
 
 ---
 

@@ -10,7 +10,7 @@
 | Mówimy | Nie mówimy (dopóki L4) |
 |--------|-------------------------|
 | Product **host** runtime | „Samodzielny OS” / bootowalny Karmazyn |
-| Plan GRUB/ISO (papier L2+) | „Mamy GRUB / ISO” |
+| ISO GRUB dla kentry (marker serial) | „Mamy OS” / obraz do promptu `karmazyn>` |
 | Studio SDL na hoście | „Desktop OS” |
 
 ---
@@ -49,9 +49,9 @@ python software/karmazyn_studio.py
 
 1. Utrzymać G0 + dry_run_l1 zielone (`verify_rebuild` + gate: slab→substrate→shell→kcc)  
 2. **Rust roadmap** — `Documents/rust_roadmap_tech.md` ✅  
-3. **kentry F** — `boot/kentry` marker ELF ✅; QEMU serial ⏳  
+3. **kentry F** — `boot/kentry` marker ELF ✅; QEMU serial ✅ (`boot/kentry/qemu_serial.ps1`, PVH bez płyty)  
 4. **BootConfig** — `karmazyn_bootcfg.py` ✅ (faza B parser + :info)  
-5. **ISO L2 / GRUB** świadomie; **Store freestanding G** po alloc design  
+5. **ISO kentry + GRUB** ✅ (marker serial, `scripts/build_kentry_iso.ps1`); obraz produktu do promptu `karmazyn>` nadal później; **Store freestanding G** po alloc design  
 
 
 Szczegóły: `Documents/build_deploy_plan.md` · `Documents/rust_roadmap_tech.md`.
@@ -64,7 +64,7 @@ Szczegóły: `Documents/build_deploy_plan.md` · `Documents/rust_roadmap_tech.md
 |----------------|---------------------|
 | Runtime host + Rust Store default | Bootowalny samodzielny OS |
 | Matryca I/O Stage 1 | Serial/VESA bare-metal |
-| Studio SDL (opcjonalnie pygame) | ISO / GRUB wdrożone |
+| Studio SDL (opcjonalnie pygame) | ISO produktu do promptu `karmazyn>` |
 | Plany L2–L4 na papierze | Twierdzenie „OS w produkcji” |
 
 ---

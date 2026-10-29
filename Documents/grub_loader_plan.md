@@ -1,6 +1,6 @@
 # GRUB jako program ładujący KarmazynOs — lista i plan
 
-**Status:** 📋 **PLAN TYLKO — NIE ZAIMPLEMENTOWANE** (L2/L3 w `build_deploy_plan.md`)  
+**Status:** faza 2 (kentry + GRUB, marker serial) zrobiona 2026-10-19. Faza 1 (Linux → prompt `karmazyn>`) nadal plan.  
 **Nie mylić z L1 Product host** (boot na hoście Python/Rust DLL).  
 **Data:** 2026-07-31  
 **Powiązania:** `runtime_pl.md`, `ARCHITECTURE.pl.md`, `bubble_network_assumptions.md` §9, `native/README.md`, sekwencja `software/karmazyn_boot.py`
@@ -397,18 +397,19 @@ Bez tego ISO z GRUB i tak nie da kontrolowanego Product bootu.
 
 **Cel:** GRUB *potrafi* załadować własny ELF; jeszcze bez pełnych usług.
 
-- [ ] Crate `native/karmazyn_kentry` (lub `boot/kentry`):
+- [x] Crate `boot/kentry`:
   - Multiboot2 header
   - early serial print: `KARMAZYN_KENTRY_OK`
   - halt lub nieskończona pętla ze statusem
-- [ ] `grub.cfg` entry wskazujący na ten ELF
-- [ ] QEMU: GRUB menu → kentry marker na serial
-- [ ] Cmdline dump (surowy string z multiboot info)
+- [x] `grub.cfg` entry wskazujący na ten ELF (`boot/grub/grub.cfg`)
+- [x] QEMU: GRUB menu → kentry marker na serial (`boot/kentry/qemu_iso.ps1`, 2026-10-19)
+- [x] Cmdline dump (surowy string z multiboot info): `CMDLINE=karmazyn.kentry=1`
 
 **Kompilator:** `rustc` + target freestanding (`x86_64-unknown-none` lub custom).  
 **Nie** wciągać Store do kentry w tej fazie (minimalny entry only).
 
-**Gate:** serial zawiera `KARMAZYN_KENTRY_OK` po wyborze wpisu.
+**Gate:** serial zawiera `KARMAZYN_KENTRY_OK` po wyborze wpisu.  
+**2026-10-19:** `out/karmazyn-kentry.iso` (poza gitem). Serial ma też `MB2_MAGIC_OK`, `SLAB_OK` i `karmazyn.kentry=1`. To nie jest faza 1 ani prompt `karmazyn>`.
 
 ---
 

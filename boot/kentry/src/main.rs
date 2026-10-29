@@ -6,9 +6,13 @@
 //!
 //!   cd boot/kentry
 //!   cargo build --release --target x86_64-unknown-none
+//!
+//! Wejście Multiboot2 jest 32-bit. `boot.s` włącza long mode i woła `kmain`.
 
 #![no_std]
 #![no_main]
+
+core::arch::global_asm!(include_str!("boot.s"), options(att_syntax));
 
 use core::arch::asm;
 use core::panic::PanicInfo;
@@ -61,21 +65,9 @@ pub const KENTRY_OK: &[u8] = b"KARMAZYN_KENTRY_OK\n";
 /// Freestanding store — BSS, not stack (R3 stack-size lesson).
 static mut SLAB: SlabStore = SlabStore::new();
 
+/// Multiboot2: `magic` = EAX, `info_ptr` = EBX. CPU jest już w long mode (`boot.s`).
 #[no_mangle]
-pub extern "C" fn _start() -> ! {
-    // Multiboot2: EAX = magic, EBX = &boot_info (32-bit ptr)
-    let magic: u32;
-    let info_ptr: u32;
-    unsafe {
-        asm!(
-            "mov {m:e}, eax",
-            "mov {i:e}, ebx",
-            m = out(reg) magic,
-            i = out(reg) info_ptr,
-            options(nostack, nomem),
-        );
-    }
-
+pub extern "C" fn kmain(magic: u32, info_ptr: u32) -> ! {
     serial_init();
     serial_write(KENTRY_OK);
 

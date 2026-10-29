@@ -53,7 +53,7 @@ Powiązania: `rust_substrate_map.md`, `build_deploy_plan.md` §F–G, `native/RE
 | `slab` re-export w substrate | ✅ ten sam crate co kentry |
 | `features default=["std"]` | ✅ R4 |
 | `boot/kentry` | ✅ R5: marker + cmdline + `SLAB_OK` stats |
-| QEMU serial SF.2 | ⏳ brak qemu w PATH na host dev (opcjonalnie) |
+| QEMU serial SF.2 | ✅ QEMU 11.1 `-kernel`, log `KARMAZYN_KENTRY_OK` + `SLAB_OK` |
 | Store freestanding full GC | ❌ G — host HashMap Store nadal osobny |
 | Golden T×reach Store↔Slab | ✅ R6 — `golden_txreach` w substrate |
 | Tor B wzorzec LFS | ✅ rustc + crate’y (`verify_rebuild`); kcc = minister; nie full rustc |
@@ -114,7 +114,7 @@ Wystarczy na: tablice atomów o **stałym limicie** (np. MAX_ATOMS=4096), nie na
 - [x] **reach-GC na slab** (root retain / orphan vacuum / env_bubble / unset_root)  
 - [x] **kentry linkuje `SlabStore` (R5)** — serial `SLAB_ATOMS` / `REAPED` / `LIVE` / `SLAB_OK`  
 - [x] **Golden T×reach Store ↔ SlabStore (R6)**  
-- [ ] QEMU potwierdza serial (SF.2) — opcjonalne przed G, zalecane  
+- [x] QEMU potwierdza serial (SF.2) — `boot/kentry/qemu_serial.ps1` (QEMU 11.1, bez ISO)  
 
 
 ### Dług (aktywny)
@@ -123,7 +123,7 @@ Wystarczy na: tablice atomów o **stałym limicie** (np. MAX_ATOMS=4096), nie na
 |------|--------|
 | Stack size `SlabStore` | złagodzony mniejszymi MAX_*; freestanding → `static mut` |
 | `Store` (HashMap) vs `SlabStore` dual path | zamierzone do G; R6 golden law ✅ |
-| QEMU SF.2 | brak qemu w PATH dev |
+| QEMU SF.2 | ✅ bramka `boot/kentry/qemu_serial.ps1` |
 | Brak reach hooks dynamicznych na slab | `env_bubble` fixed zamiast callback |
 | Bubble auto-vacuum | brak — tylko `bubble_drop` / `reset` (atomy freelist OK) |
 | `BumpAlloc` nie zasilany przez SlabStore | API osobno; store = fixed tables |
@@ -169,7 +169,9 @@ python scripts/dry_run_l1.py
 rustup target add x86_64-unknown-none
 cargo build --manifest-path boot/kentry/Cargo.toml --target x86_64-unknown-none --release
 # ELF musi zawierać KARMAZYN_KENTRY_OK + SLAB_OK
-# QEMU: patrz boot/kentry/README.md
+# QEMU (bez ISO): boot/kentry/qemu_serial.ps1
+# ISO GRUB (marker, nie prompt): scripts/build_kentry_iso.ps1 i boot/kentry/qemu_iso.ps1
+# wejście 32-bit Multiboot2 → boot/kentry/src/boot.s (long mode) → kmain
 ```
 
 ---
@@ -189,4 +191,6 @@ cargo build --manifest-path boot/kentry/Cargo.toml --target x86_64-unknown-none 
 
 *Aktualizacja 2026-07-31: R5 — `native/karmazyn_slab` + kentry link.*  
 *Recenzja+fix: freelist po vacuum, uczciwy `SLAB_OK`, vacuum+retain demo.*  
-*2026-08-06: R6 golden_txreach; Tor B seed `TOR_B_TOOLCHAIN.pl.md` (nie = budowa rustc).*
+*2026-08-06: R6 golden_txreach; Tor B seed `TOR_B_TOOLCHAIN.pl.md` (nie = budowa rustc).*  
+*2026-10-19: SF.2 zamknięte. QEMU 11.1 (`C:\Program Files\qemu`) ładuje ELF notatką PVH. Serial: `KARMAZYN_KENTRY_OK`, `SLAB_OK`. Multiboot2 zostaje dla GRUB.*  
+*2026-10-19: ISO GRUB kentry. `out/karmazyn-kentry.iso` (poza gitem). Serial z `-cdrom`: `KARMAZYN_KENTRY_OK`, `MB2_MAGIC_OK`, `CMDLINE=karmazyn.kentry=1`, `SLAB_OK`. Nie jest obrazem do promptu `karmazyn>`. GRUB 2.12 for Windows (2.14 ma `kernel.img` z VMA 0).*
