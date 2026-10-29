@@ -44,9 +44,9 @@ class BootConfig:
             os.environ["KARMAZYN_PROJECT"] = self.project
         if self.io_optional:
             os.environ["KARMAZYN_IO_OPTIONAL"] = "1"
-        elif "KARMAZYN_IO_OPTIONAL" in os.environ and not self.io_optional:
-            # nie kasuj jeśli user ustawil ręcznie poza parserem
-            pass
+        else:
+            os.environ.pop("KARMAZYN_IO_OPTIONAL", None)
+        os.environ["KARMAZYN_TICK_MS"] = str(int(self.tick_ms))
 
     def summary_lines(self) -> List[str]:
         lines = [
@@ -109,6 +109,13 @@ def parse_boot_config(
     if env.get("KARMAZYN_IO_OPTIONAL", "").strip().lower() in ("1", "true", "yes", "on"):
         cfg.io_optional = True
         cfg.sources["io_optional"] = "env"
+    if env.get("KARMAZYN_TICK_MS"):
+        try:
+            ms = int(str(env["KARMAZYN_TICK_MS"]).strip())
+        except ValueError:
+            ms = 0
+        if ms > 0:
+            _set(cfg, "tick_ms", ms, "env")
 
     # --- argv ---
     i = 0
@@ -150,6 +157,14 @@ def parse_boot_config(
         elif a == "--io-optional":
             cfg.io_optional = True
             cfg.sources["io_optional"] = "argv"
+        elif a == "--tick" and i + 1 < len(argv):
+            i += 1
+            try:
+                ms = int(argv[i])
+            except ValueError:
+                ms = 0
+            if ms > 0:
+                _set(cfg, "tick_ms", ms, "argv")
         i += 1
 
     return cfg
@@ -166,13 +181,16 @@ def parse_cmdline_string(s: str) -> BootConfig:
             k = k.strip().lower()
             v = v.strip()
             if k == "substrate":
-                argv.extend(["--" + ("python" if v == "python" else "native")])
+                # both = referencja Pythona (jak KARMAZYN_SUBSTRATE=both)
+                argv.append("--python" if v in ("python", "both") else "--native")
             elif k == "guest":
                 argv.extend(["--guest", v])
             elif k == "io":
                 argv.extend(["--io", v])
             elif k == "project":
                 argv.extend(["--project", v])
+            elif k in ("tick", "tick_ms"):
+                argv.extend(["--tick", v])
             elif k == "rescue" and v in ("1", "true", "yes"):
                 argv.append("--rescue")
         else:

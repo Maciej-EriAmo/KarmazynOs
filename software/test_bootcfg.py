@@ -54,6 +54,7 @@ class BootConfigTests(unittest.TestCase):
         cfg = parse_boot_config(argv=["--python", "--io", "null"], env={})
         # isolate
         old = os.environ.get("KARMAZYN_SUBSTRATE")
+        old_tick = os.environ.get("KARMAZYN_TICK_MS")
         try:
             cfg.apply_env()
             self.assertEqual(os.environ.get("KARMAZYN_SUBSTRATE"), "python")
@@ -63,6 +64,30 @@ class BootConfigTests(unittest.TestCase):
                 os.environ.pop("KARMAZYN_SUBSTRATE", None)
             else:
                 os.environ["KARMAZYN_SUBSTRATE"] = old
+            if old_tick is None:
+                os.environ.pop("KARMAZYN_TICK_MS", None)
+            else:
+                os.environ["KARMAZYN_TICK_MS"] = old_tick
+
+    def test_substrate_both_is_python(self):
+        env = parse_boot_config(argv=[], env={"KARMAZYN_SUBSTRATE": "both"})
+        self.assertEqual(env.substrate, "python")
+        cmd = parse_cmdline_string("substrate=both")
+        self.assertEqual(cmd.substrate, "python")
+
+    def test_tick_and_io_optional_clear(self):
+        cfg = parse_boot_config(argv=["--tick", "250"], env={"KARMAZYN_TICK_MS": "4000"})
+        self.assertEqual(cfg.tick_ms, 250)
+        self.assertEqual(cfg.sources["tick_ms"], "argv")
+        cfg.io_optional = False
+        os.environ["KARMAZYN_IO_OPTIONAL"] = "1"
+        try:
+            cfg.apply_env()
+            self.assertNotIn("KARMAZYN_IO_OPTIONAL", os.environ)
+            self.assertEqual(os.environ.get("KARMAZYN_TICK_MS"), "250")
+        finally:
+            os.environ.pop("KARMAZYN_IO_OPTIONAL", None)
+            os.environ.pop("KARMAZYN_TICK_MS", None)
 
     def test_summary(self):
         cfg = parse_boot_config(argv=["--verbose"], env={})

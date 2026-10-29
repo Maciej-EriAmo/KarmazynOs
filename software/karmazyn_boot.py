@@ -86,10 +86,11 @@ class BootLog:
 
     _COLOR = {"ok": "32", "warn": "33", "fail": "31"}   # zielony/zolty/czerwony
 
-    def __init__(self, stream=None, color=None):
+    def __init__(self, stream=None, color=None, quiet=False):
         self.stream = stream or sys.stdout
         self.color = (self.stream.isatty() if color is None else color)
         self.failed = False
+        self.quiet = bool(quiet)
 
     def _tag(self, code):
         label = {"ok": " OK ", "warn": "WARN", "fail": "FAIL"}[code]
@@ -103,6 +104,8 @@ class BootLog:
         print(f"  {self._tag(code)} {name}{d}{t}", file=self.stream)
 
     def ok(self, name, detail="", ms=None):
+        if self.quiet:
+            return
         self._line("ok", name, detail, ms)
 
     def warn(self, name, detail="", ms=None):
@@ -288,22 +291,26 @@ def mount_evaluator(store, kind=None, project=None, tools=None, caps=None,
             if project and getattr(kl, "set_project", None):
                 kl.set_project(ev, project)
         # lua_bin: preload + module root (host; gość bez FS)
-        if lua_bin and getattr(kl, "attach_lua_bin", None):
-            try:
-                kl.attach_lua_bin(ev, lua_bin)
-            except Exception:
-                # nie zabijaj bootu jeśli stary skrypt w bin
+        attached = False
+        attach_err = None
+        if lua_bin:
+            attachers = []
+            if getattr(kl, "attach_lua_bin", None):
+                attachers.append(kl.attach_lua_bin)
+
+            def _attach_fallback(ev_, path):
                 from karmazyn_lua.project import attach_lua_bin
+                return attach_lua_bin(ev_, path)
+
+            attachers.append(_attach_fallback)
+            for fn in attachers:
                 try:
-                    attach_lua_bin(ev, lua_bin)
-                except Exception:
-                    pass
-        elif lua_bin:
-            try:
-                from karmazyn_lua.project import attach_lua_bin
-                attach_lua_bin(ev, lua_bin)
-            except Exception:
-                pass
+                    fn(ev, lua_bin)
+                    attached = True
+                    attach_err = None
+                    break
+                except Exception as ex:
+                    attach_err = ex
         if io is not None:
             ev.io = io
         if thermal is not None:
@@ -312,9 +319,12 @@ def mount_evaluator(store, kind=None, project=None, tools=None, caps=None,
         try:
             from karmazyn_host import install_karmazyn_host
             install_karmazyn_host(ev, store=store, io=io, thermal=thermal)
-            ev._lua_bin = lua_bin
         except Exception as hex_:
             ev._host_install_error = hex_
+        if attached:
+            ev._lua_bin = lua_bin
+        elif attach_err is not None:
+            ev._lua_bin_error = attach_err
         _GUEST_KIND = "lua"
         return ev
     except Exception as e:
@@ -427,6 +437,7 @@ class KarmazynShell:
         try:
             ev = mount_evaluator(
                 self.store, kind=want, project=self.project_root,
+                io=self.io, thermal=self.thermal,
             )
         except Exception as e:
             return f"nie udalo sie zamontowac {want}: {type(e).__name__}: {e}"
@@ -762,9 +773,17 @@ def boot(verbose_events=False, log=None, project=None, boot_config=None):
             boot_config = parse_boot_config()
         except Exception:
             boot_config = None
-    print("=" * 60)
-    print("  KarmazynOS — sekwencja startowa")
-    print("=" * 60)
+    quiet = bool(
+        boot_config is not None
+        and getattr(boot_config, "quiet", False)
+        and not getattr(boot_config, "verbose", False)
+    )
+    if quiet and hasattr(log, "quiet"):
+        log.quiet = True
+    if not quiet:
+        print("=" * 60)
+        print("  KarmazynOS — sekwencja startowa")
+        print("=" * 60)
 
     # 1. fasada jadra (musi zaladowac sie samodzielnie)
     t = time.perf_counter()
@@ -898,6 +917,8 @@ def boot(verbose_events=False, log=None, project=None, boot_config=None):
         lb = getattr(evaluator, "_lua_bin", None)
         if lb:
             log.ok("lua_bin", lb)
+        elif getattr(evaluator, "_lua_bin_error", None):
+            log.warn("lua_bin", str(evaluator._lua_bin_error))
 
     # 4. shell
     t = time.perf_counter()
@@ -929,10 +950,34 @@ def _setup_history():
         pass
 
 
-def repl(interval=2.0):
-    log = BootLog()
+def repl(interval=None):
+    boot_config = None
     try:
-        store, shell = boot(verbose_events=True, log=log)
+        from karmazyn_bootcfg import parse_boot_config
+        boot_config = parse_boot_config()
+    except Exception:
+        boot_config = None
+    if interval is None:
+        ms = 2000
+        if boot_config is not None:
+            try:
+                ms = int(boot_config.tick_ms)
+            except (TypeError, ValueError):
+                ms = 2000
+        interval = max(0.05, ms / 1000.0)
+    verbose_events = True
+    log_quiet = False
+    if boot_config is not None and boot_config.verbose:
+        verbose_events = True
+        log_quiet = False
+    elif boot_config is not None and boot_config.quiet:
+        verbose_events = False
+        log_quiet = True
+    log = BootLog(quiet=log_quiet)
+    try:
+        store, shell = boot(
+            verbose_events=verbose_events, log=log, boot_config=boot_config,
+        )
     except BootError as e:
         print(f"\n  start przerwany: {e}")
         sys.exit(1)

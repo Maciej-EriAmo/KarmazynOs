@@ -333,9 +333,10 @@ class KarmazynHost:
         q = getattr(self.ev, "_io_input", None)
         if q:
             line = q.pop(0)
-            if self.thermal is not None:
+            text = line if isinstance(line, str) else str(line)
+            if self.thermal is not None and text.strip():
                 self.thermal.heat_input()
-            return line if isinstance(line, str) else str(line)
+            return text
         # 2) matryca termiczna + IoPort (kanon Product)
         if self.thermal is not None:
             return self.thermal.read_line(p)
