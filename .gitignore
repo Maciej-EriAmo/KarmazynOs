@@ -24,7 +24,6 @@ native/karmazyn_substrate_rs/wheels/
 
 # runtime data lives in %LOCALAPPDATA%\KarmazynOs
 karmazyn_data/
-dist/
 out/
 !out/.gitkeep
 
