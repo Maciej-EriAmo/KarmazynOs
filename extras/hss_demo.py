@@ -43,17 +43,27 @@ def decrypt(s_agent: np.ndarray, u: np.ndarray, v: np.ndarray) -> np.ndarray:
     Zwraca wektor bitów (int64, wartości 0 lub 1) o długości len(v).
     """
     # u i v są listami/tablicami próbek
+    u_arr = np.atleast_2d(np.asarray(u))
+    v_arr = np.atleast_1d(np.asarray(v)).reshape(-1)
+    if u_arr.shape[0] == 1 and v_arr.size == 1 and np.asarray(u).ndim == 1:
+        pairs = [(np.asarray(u).reshape(-1), int(v_arr[0]))]
+    elif u_arr.shape[0] == v_arr.size:
+        pairs = [(u_arr[i], int(v_arr[i])) for i in range(v_arr.size)]
+    else:
+        raise ValueError(
+            f"decrypt: {u_arr.shape[0]} wektorów u, {v_arr.size} wartości v"
+        )
     bits = []
-    for ui, vi in zip(u, v):
+    for ui, vi in pairs:
         # iloczyn skalarny w Z_q
         dot = np.dot(s_agent, ui) % Q
         # różnica, skalowanie, zaokrąglenie do bitu
         diff = (vi - dot) % Q
-        # Jeśli diff jest blisko 0 -> bit 0, blisko Q/2 -> bit 1
-        if diff < Q//4 or diff > 3*Q//4:
-            bit = 1 if diff > Q//2 else 0
+        # Blisko 0 albo Q (szum wokół 0) → bit 0. Środek, blisko Q/2 → bit 1.
+        if diff < Q // 4 or diff > 3 * Q // 4:
+            bit = 0
         else:
-            bit = 0  # szum
+            bit = 1
         bits.append(bit)
     return np.array(bits, dtype=np.int64)
 
@@ -76,6 +86,7 @@ class HSSDaemon:
         self._inodes = {}
         # Śledzenie zakończonych agentów dla vacuum_decay
         self._terminated_agents = set()
+        self._pending_vacuum = set()
 
     def init_phi_session(self, phi2_vec: np.ndarray, phi_pid: int) -> np.ndarray:
         """
@@ -130,7 +141,8 @@ class HSSDaemon:
         results = []
         for i, stored_vec in enumerate(history):
             # u – losowy wektor (tajny)
-            np.random.seed(hash(f"{inode}_{i}_u") % 2**32)
+            digest = hashlib.sha256(f"{inode}_{i}_u".encode("utf-8")).hexdigest()
+            np.random.seed(int(digest, 16) % 2**32)
             u = np.random.randint(0, Q, size=(N,), dtype=np.int64)
             # v = <s_agent, u> + szum + stored_vec_bit * (Q/2)
             dot = np.dot(s_agent, u) % Q
@@ -147,17 +159,18 @@ class HSSDaemon:
             results.append(RLWEResult(prisms[0], u, v))
         return results
 
-    def terminate_agent(self, pid: int, inodes: list):
+    def terminate_agent(self, pid: int, inodes: list = None):
         """
-        Usuwa agenta i czyści jego ślady (opcjonalnie).
+        Usuwa agenta. Inody z listy znikają przy vacuum_decay.
         """
         if pid in self._agents:
             del self._agents[pid]
             self._terminated_agents.add(pid)
+        for name in inodes or []:
+            self._pending_vacuum.add(str(name))
 
     def vacuum_decay(self):
-        """
-        Okresowe czyszczenie – w demo nie robi nic poza
-        ewentualnym zmniejszeniem historii (można dodać).
-        """
-        pass
+        """Usuwa inody oddane przez terminate_agent."""
+        for name in list(self._pending_vacuum):
+            self._inodes.pop(name, None)
+        self._pending_vacuum.clear()
