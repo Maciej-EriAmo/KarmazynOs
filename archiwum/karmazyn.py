@@ -40,6 +40,10 @@ def _xor_crypt(data: bytes, key: bytes) -> bytes:
         counter += 1
     return bytes(out)
 
+class BubbleIntegrityError(ValueError):
+    """Szyfrogram bąbla nie zgadza się z jego odciskiem (podmiana albo zły klucz)."""
+
+
 def _compute_fingerprint(content: bytes, key: bytes, label: str) -> bytes:
     return hmac.HMAC(key, label.encode() + content, hashlib.sha256).digest()
 
@@ -66,8 +70,18 @@ class Bubble:
         return math.exp(-self.decay_rate * elapsed)
 
     def decrypt_content(self):
-        key = self.bubble_key if self.bubble_key else b"revoked_warp_oblivion"
-        return _xor_crypt(self.encrypted_content, key)
+        """Treść bąbla. Żywy bąbel sprawdza odcisk HMAC(klucz, label + treść).
+
+        Szyfr strumieniowy nie wykrywa podmiany sam, odcisk tak. Unieważniony
+        bąbel (bez klucza) zwraca szum jak dotąd.
+        """
+        if not self.bubble_key:
+            return _xor_crypt(self.encrypted_content, b"revoked_warp_oblivion")
+        raw = _xor_crypt(self.encrypted_content, self.bubble_key)
+        expected = _compute_fingerprint(raw, self.bubble_key, self.label)
+        if not hmac.compare_digest(expected, self.fingerprint):
+            raise BubbleIntegrityError(f"bąbel '{self.label}' zmieniony (odcisk niezgodny)")
+        return raw
 
 # =====================================================================
 # BubbleStore
@@ -448,7 +462,11 @@ class KarmazynOS:
     def read_bubble(self, label):
         b = self.bubbles.get_by_label(label)
         if not b: return None
-        raw = b.decrypt_content()
+        try:
+            raw = b.decrypt_content()
+        except BubbleIntegrityError as e:
+            print(f"  [!] {e}")
+            return None
         try: return raw.decode('utf-8', errors='replace')
         except: return raw.hex()
 
@@ -458,7 +476,11 @@ class KarmazynOS:
         liv = b.liveliness(self.phi.epoch)
         T_init = DELTA_T_BASE * (0.3 + 0.7 * liv) + 0.1 * math.log1p(b.recall_count)
         T_init = min(T_init, DELTA_T_BASE * 2.0)
-        content = b.decrypt_content()
+        try:
+            content = b.decrypt_content()
+        except BubbleIntegrityError as e:
+            print(f"  [!] {e}")
+            return None
         new_label = self.phi.add(content, label=f"react_{label}", init_T=T_init)
         print(f"  [REAKTYWACJA] '{label[:30]}' → {new_label} (T={T_init:.2f})")
         return new_label

@@ -19,6 +19,7 @@ python testy/test_lisp_golden.py   # Python Store vs karmazyn_shell (ten sam lis
 | `test_hrr.py` | HRR (numpy; skip bez numpy) |
 | `test_qubit.py` | minister kubitów |
 | `test_phi_composition.py` | φ 8.1 / 8.4 |
+| `test_bubble_integrity.py` | odcisk HMAC bąbla w jądrze; BubbleFS 1.1: MAC treści, bez bąbla tożsamości, eksport jawny tylko za zgodą; archiwum odrzuca jawny rekord i manifest bez HMAC |
 | `test_identity_store.py` | identity.bin v3 (DPAPI / hasło / jawny, migracja v2); session.soul bez p2s i jawnej treści |
 | `test_crimson_resonance.py` | ten sam `_p2s` otwiera uścisk (próg 0.8); obcy `_p2s` milczy; macierz phi_space zostaje słownikiem |
 | `lisp_golden.txt` | przenośny korpus mini-Lisp (nie Rust, nie Python) |

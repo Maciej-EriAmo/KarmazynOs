@@ -105,6 +105,9 @@ def _aes_decrypt(blob: bytes, master_key: bytes, record_id: str,
         raise ValueError("Plik za krótki")
     magic = blob[:4]
     if magic == magic_pln:
+        # Z cryptography eksport zawsze szyfruje. Jawny rekord to podmiana.
+        if _CRYPTO_OK:
+            raise ValueError("jawny rekord odrzucony (oczekiwano szyfrogramu)")
         return blob[4:]
     if magic != magic_enc:
         raise ValueError(f"Zły magic: {magic!r}")
@@ -380,7 +383,10 @@ def import_(karmazyn_os, path: str, shared_secret: Optional[bytes] = None,
         actual = _manifest_hash(path)
         if actual != manifest.get("integrity_sha256"):
             raise ValueError(f"Błąd integralności! Oczekiwano {manifest['integrity_sha256']}, jest {actual}")
-        if _CRYPTO_OK and "integrity_hmac" in manifest:
+        if _CRYPTO_OK and "integrity_hmac" not in manifest:
+            # sam sha256 da się przeliczyć po podmianie; HMAC nie
+            raise ValueError("Brak HMAC manifestu!")
+        if _CRYPTO_OK:
             stored = manifest.pop("integrity_hmac", None)
             recalc = _hmac.new(master_key, _canonical_json(manifest), hashlib.sha256).hexdigest()
             manifest["integrity_hmac"] = stored
@@ -461,7 +467,10 @@ def import_(karmazyn_os, path: str, shared_secret: Optional[bytes] = None,
                         id=bid, label=label,
                         S_struct=np.array(bbl["S_struct"], dtype=np.float32),
                         S_sem=np.array(bbl["S_sem"], dtype=np.float32),
-                        fingerprint=_ub64(bbl["fingerprint_b64"]),
+                        # odcisk tym kluczem, którym bąbel jest teraz szyfrowany
+                        fingerprint=(_hmac.new(new_key, label.encode() + raw_content,
+                                               hashlib.sha256).digest()
+                                     if new_key else _ub64(bbl["fingerprint_b64"])),
                         bubble_key=new_key,
                         encrypted_content=_xor_crypt(raw_content, new_key) if new_key else raw_content,
                         inode=bbl.get("inode", f"karmazyn://bubbles/{label}"),

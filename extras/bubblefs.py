@@ -21,7 +21,10 @@ Szyfrowanie przy eksporcie:
   - przy eksporcie: decrypt content → re-encrypt nowym kluczem eksportowym
   - klucz eksportowy = HMAC(shared_secret, bubble_id) gdzie shared_secret
     to argument export() / import_()
-  - jeśli shared_secret=None → eksport plaintextów (tryb debug/lokalny)
+  - shared_secret=None wymaga allow_plaintext=True (tryb debug/lokalny)
+  - zaszyfrowana treść ma MAC: HMAC(HMAC(shared_secret, "bbl-mac:" + id),
+    id | label | szyfrogram). Import bez zgodnego MAC pomija bąbel
+  - bąbel tożsamości (phi._p2s) nigdy nie jest eksportowany ani importowany
 """
 
 import os
@@ -32,7 +35,7 @@ import hmac as _hmac
 import numpy as np
 from typing import Optional, Dict, Any
 
-BUBBLEFS_VERSION = "1.0.0"
+BUBBLEFS_VERSION = "1.1.0"   # 1.1: MAC treści, bez bąbla tożsamości
 BBL_EXT  = ".bbl"
 HGM_EXT  = ".hgm"
 
@@ -47,6 +50,82 @@ def _ub64(s: str) -> bytes:
 
 def _export_key(shared_secret: bytes, bubble_id: str) -> bytes:
     return _hmac.new(shared_secret, b"bbl-export:" + bubble_id.encode(), hashlib.sha256).digest()
+
+def _mac_key(shared_secret: bytes, bubble_id: str) -> bytes:
+    return _hmac.new(shared_secret, b"bbl-mac:" + bubble_id.encode(), hashlib.sha256).digest()
+
+
+def _content_mac(shared_secret: bytes, bubble_id: str, label: str, ct: bytes) -> bytes:
+    msg = bubble_id.encode() + b"\x00" + label.encode() + b"\x00" + ct
+    return _hmac.new(_mac_key(shared_secret, bubble_id), msg, hashlib.sha256).digest()
+
+
+IDENTITY_LABEL = "__phi_identity_p2s__"
+
+
+def _is_identity(label, metadata) -> bool:
+    """Bąbel z phi._p2s: nie opuszcza instancji."""
+    meta = metadata if isinstance(metadata, dict) else {}
+    return label == IDENTITY_LABEL or meta.get("type") == "phi_identity"
+
+
+def _fingerprint(content: bytes, key: bytes, label: str) -> bytes:
+    """Jak karmazyn._compute_fingerprint: HMAC(klucz bąbla, label + treść)."""
+    return _hmac.new(key, label.encode() + content, hashlib.sha256).digest()
+
+
+def _bubble_record(ko, bid, bubble, shared_secret):
+    """Rekord .bbl albo None (bąbel tożsamości / uszkodzony)."""
+    if _is_identity(bubble.label, bubble.metadata):
+        return None
+    revoked = bid in ko.bubbles._rev
+    try:
+        raw_content = bubble.decrypt_content()
+    except ValueError as e:   # BubbleIntegrityError: podmieniony szyfrogram
+        print(f"[BubbleFS] Pomijam bąbel '{bubble.label}': {e}")
+        return None
+
+    if shared_secret is not None and not revoked:
+        exported_content = _xor_crypt(raw_content, _export_key(shared_secret, bid))
+        content_encrypted = True
+    else:
+        exported_content = raw_content
+        content_encrypted = False
+
+    bbl: Dict[str, Any] = {
+        "id":                  bubble.id,
+        "label":               bubble.label,
+        "inode":               bubble.inode,
+        "epoch_born":          bubble.epoch_born,
+        "recall_count":        bubble.recall_count,
+        "consolidated_from":   bubble.consolidated_from,
+        "metadata":            bubble.metadata,
+        "revoked":             revoked,
+        "content_encrypted":   content_encrypted,
+        "content_b64":         _b64(exported_content),
+        "fingerprint_b64":     _b64(bubble.fingerprint),
+        "S_struct":            bubble.S_struct.tolist(),
+        "S_sem":               bubble.S_sem.tolist(),
+    }
+    if content_encrypted:
+        bbl["content_mac_b64"] = _b64(
+            _content_mac(shared_secret, bid, bubble.label, exported_content)
+        )
+    if bubble.decay_start_epoch is not None:
+        bbl["decay_start_epoch"] = bubble.decay_start_epoch
+        bbl["decay_rate"]        = bubble.decay_rate
+    return bbl
+
+
+def _need_secret(shared_secret, allow_plaintext, what):
+    if shared_secret is None and not allow_plaintext:
+        raise ValueError(
+            f"BubbleFS {what}: bez shared_secret treść bąbli byłaby jawna. "
+            f"Podaj shared_secret albo allow_plaintext=True."
+        )
+    if shared_secret is None:
+        print(f"[BubbleFS] UWAGA: {what} bez szyfrowania (allow_plaintext=True)")
+
 
 def _xor_crypt(data: bytes, key: bytes) -> bytes:
     out, offset, counter = bytearray(len(data)), 0, 0
@@ -80,7 +159,7 @@ def _manifest_hash(bubbles_dir: str, holograms_dir: str) -> str:
 # ─── EXPORT ──────────────────────────────────────────────────────────────────
 
 def export(karmazyn_os, path: str, shared_secret: Optional[bytes] = None,
-           include_phi_vectors: bool = True) -> dict:
+           include_phi_vectors: bool = True, allow_plaintext: bool = False) -> dict:
     """
     Eksportuje stan KarmazynOS do katalogu BubbleFS.
 
@@ -88,12 +167,13 @@ def export(karmazyn_os, path: str, shared_secret: Optional[bytes] = None,
         karmazyn_os:      instancja KarmazynOS
         path:             katalog docelowy (zostanie utworzony)
         shared_secret:    klucz wymiany dla re-szyfrowania bąbli
-                          None = plaintext (tryb lokalny/debug)
         include_phi_vectors: czy eksportować wektory Φ (sem + structural)
+        allow_plaintext:  True = zgoda na eksport bez shared_secret (jawna treść)
 
     Returns:
         dict z metadanymi eksportu
     """
+    _need_secret(shared_secret, allow_plaintext, "eksport")
     os.makedirs(path, exist_ok=True)
     bdir = os.path.join(path, "bubbles");    os.makedirs(bdir, exist_ok=True)
     hdir = os.path.join(path, "holograms"); os.makedirs(hdir, exist_ok=True)
@@ -105,39 +185,9 @@ def export(karmazyn_os, path: str, shared_secret: Optional[bytes] = None,
 
     # ── Bąble ────────────────────────────────────────────────────────────────
     for bid, bubble in ko.bubbles._b.items():
-        revoked = bid in ko.bubbles._rev
-
-        # odszyfruj oryginalną zawartość
-        raw_content = bubble.decrypt_content()
-
-        # re-encrypt kluczem eksportowym (lub zostaw plaintext)
-        if shared_secret is not None and not revoked:
-            exp_key = _export_key(shared_secret, bid)
-            exported_content = _xor_crypt(raw_content, exp_key)
-            content_encrypted = True
-        else:
-            exported_content = raw_content
-            content_encrypted = False
-
-        bbl: Dict[str, Any] = {
-            "id":                  bubble.id,
-            "label":               bubble.label,
-            "inode":               bubble.inode,
-            "epoch_born":          bubble.epoch_born,
-            "recall_count":        bubble.recall_count,
-            "consolidated_from":   bubble.consolidated_from,
-            "metadata":            bubble.metadata,
-            "revoked":             revoked,
-            "content_encrypted":   content_encrypted,
-            "content_b64":         _b64(exported_content),
-            "fingerprint_b64":     _b64(bubble.fingerprint),
-            "S_struct":            bubble.S_struct.tolist(),
-            "S_sem":               bubble.S_sem.tolist(),
-        }
-        # decay
-        if bubble.decay_start_epoch is not None:
-            bbl["decay_start_epoch"] = bubble.decay_start_epoch
-            bbl["decay_rate"]        = bubble.decay_rate
+        bbl = _bubble_record(ko, bid, bubble, shared_secret)
+        if bbl is None:
+            continue
 
         fpath = os.path.join(bdir, bid + BBL_EXT)
         with open(fpath, 'w', encoding='utf-8') as f:
@@ -201,7 +251,8 @@ def export(karmazyn_os, path: str, shared_secret: Optional[bytes] = None,
 # ─── IMPORT ──────────────────────────────────────────────────────────────────
 
 def import_(karmazyn_os, path: str, shared_secret: Optional[bytes] = None,
-            merge: bool = False, verify_integrity: bool = True) -> dict:
+            merge: bool = False, verify_integrity: bool = True,
+            allow_plaintext: bool = False, allow_unauthenticated: bool = False) -> dict:
     """
     Importuje stan BubbleFS do instancji KarmazynOS.
 
@@ -212,6 +263,9 @@ def import_(karmazyn_os, path: str, shared_secret: Optional[bytes] = None,
         merge:             True = dołącz do istniejącego stanu
                            False = wyczyść store przed importem
         verify_integrity:  sprawdź hash manifestu
+        allow_plaintext:   True = przyjmij bąble zapisane jawnie (bez MAC)
+        allow_unauthenticated: True = przyjmij zaszyfrowane bąble bez MAC
+                           (eksport BubbleFS 1.0.0)
 
     Returns:
         dict z metadanymi importu
@@ -270,6 +324,10 @@ def import_(karmazyn_os, path: str, shared_secret: Optional[bytes] = None,
             label   = bbl["label"]
             revoked = bbl.get("revoked", False)
 
+            if _is_identity(label, bbl.get("metadata")):
+                skipped.append(f"{bid}: bąbel tożsamości nie jest importowany")
+                continue
+
             # Bez klucza nie xorujemy szyfrogramu drugim kluczem.
             if bbl.get("content_encrypted") and shared_secret is None:
                 skipped.append(f"{bid}: encrypted without shared_secret")
@@ -277,6 +335,22 @@ def import_(karmazyn_os, path: str, shared_secret: Optional[bytes] = None,
 
             # re-decrypt zawartość
             raw_content_enc = _ub64(bbl["content_b64"])
+            if bbl.get("content_encrypted"):
+                mac_b64 = bbl.get("content_mac_b64")
+                if mac_b64 is None:
+                    if not allow_unauthenticated:
+                        skipped.append(f"{bid}: brak MAC (eksport 1.0.0)")
+                        continue
+                elif not _hmac.compare_digest(
+                    _ub64(mac_b64),
+                    _content_mac(shared_secret, bid, label, raw_content_enc),
+                ):
+                    skipped.append(f"{bid}: MAC niezgodny (zły klucz albo podmiana)")
+                    continue
+            elif not allow_plaintext and not revoked:
+                # unieważniony bąbel nie ma treści do ochrony
+                skipped.append(f"{bid}: jawna treść bez allow_plaintext")
+                continue
             if bbl.get("content_encrypted"):
                 exp_key = _export_key(shared_secret, bid)
                 raw_content = _xor_crypt(raw_content_enc, exp_key)
@@ -290,8 +364,11 @@ def import_(karmazyn_os, path: str, shared_secret: Optional[bytes] = None,
             S_sem    = np.array(bbl["S_sem"],    dtype=np.float32)
             fp       = _ub64(bbl["fingerprint_b64"])
 
-            # re-encrypt nowym kluczem instancji
+            # re-encrypt nowym kluczem instancji. Odcisk liczony tym kluczem,
+            # inaczej decrypt_content uznałby treść za podmienioną.
             new_encrypted = _xor_crypt(raw_content, new_key) if new_key else raw_content
+            if new_key:
+                fp = _fingerprint(raw_content, new_key, label)
 
             if BubbleClass is not None:
                 import dataclasses
@@ -452,7 +529,8 @@ def inspect(path: str) -> dict:
 
 
 def export_single_bubble(karmazyn_os, label: str, path: str,
-                         shared_secret: Optional[bytes] = None) -> Optional[str]:
+                         shared_secret: Optional[bytes] = None,
+                         allow_plaintext: bool = False) -> Optional[str]:
     """
     Eksportuje pojedynczy Bubble do pliku .bbl.
     Przydatne do przesyłania konkretnych informacji między instancjami.
@@ -463,36 +541,12 @@ def export_single_bubble(karmazyn_os, label: str, path: str,
         print(f"[BubbleFS] Bąbel '{label}' nie istnieje")
         return None
 
+    _need_secret(shared_secret, allow_plaintext, "eksport bąbla")
+    bbl = _bubble_record(ko, b.id, b, shared_secret)
+    if bbl is None:
+        print(f"[BubbleFS] Bąbel '{label}' nie podlega eksportowi")
+        return None
     os.makedirs(path, exist_ok=True)
-    revoked    = b.id in ko.bubbles._rev
-    raw_content = b.decrypt_content()
-
-    if shared_secret is not None and not revoked:
-        exp_key           = _export_key(shared_secret, b.id)
-        exported_content  = _xor_crypt(raw_content, exp_key)
-        content_encrypted = True
-    else:
-        exported_content  = raw_content
-        content_encrypted = False
-
-    bbl = {
-        "id":                 b.id,
-        "label":              b.label,
-        "inode":              b.inode,
-        "epoch_born":         b.epoch_born,
-        "recall_count":       b.recall_count,
-        "consolidated_from":  b.consolidated_from,
-        "metadata":           b.metadata,
-        "revoked":            revoked,
-        "content_encrypted":  content_encrypted,
-        "content_b64":        _b64(exported_content),
-        "fingerprint_b64":    _b64(b.fingerprint),
-        "S_struct":           b.S_struct.tolist(),
-        "S_sem":              b.S_sem.tolist(),
-    }
-    if b.decay_start_epoch is not None:
-        bbl["decay_start_epoch"] = b.decay_start_epoch
-        bbl["decay_rate"]        = b.decay_rate
 
     fpath = os.path.join(path, b.id + BBL_EXT)
     with open(fpath, 'w', encoding='utf-8') as f:
