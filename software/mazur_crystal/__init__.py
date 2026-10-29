@@ -4,6 +4,7 @@ from .tracer import Tracer, d_E, get_tracer, set_tracer, tracer_energy
 from .lorentz import R, content_similarity, resonance_score
 from .crystal import MazurCrystal, ResonanceTrace
 from .bridge import LorentzBridge, attach_lorentz_bridge, mazur_enabled
+from .neural_lambda import neural_lambda_enabled  # PhiMost E; default off
 
 __all__ = [
     "Tracer",
@@ -19,4 +20,5 @@ __all__ = [
     "LorentzBridge",
     "attach_lorentz_bridge",
     "mazur_enabled",
+    "neural_lambda_enabled",
 ]

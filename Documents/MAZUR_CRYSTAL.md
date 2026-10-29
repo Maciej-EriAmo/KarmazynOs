@@ -47,8 +47,18 @@ $env:PYTHONPATH = "archiwum\kernel_python;software;native;."
 python -m mazur_crystal.test_bridge
 ```
 
+## PhiMost λ_neural (opcjonalnie, OFF)
+
+Faza E modelu AI (katalog PhiMost poza repo):
+
+- Moduł: `software/mazur_crystal/neural_lambda.py`
+- Hook: `LorentzBridge.relevance()` miesza N tylko gdy `PHIMOST_NEURAL_LAMBDA=1`
+- `PHIMOST_ROOT` → katalog PhiMost. Bez tej zmiennej N nie jest liczone i nic nie jest importowane spoza repo
+- **Domyślnie wyłączone** — ranking = klasyczne Λ; GC slab nietknięte
+
 ## Powiązania
 
 - DBase: ten sam pakiet `mazur_crystal/`, ranking peerów w `karmazyn_hsl.py`
 - Docs sieci: DBase `docs/SESSION_L0_KPC.md` (Faza 6)
 - `tools_lua.md` — surface hosta
+- PhiMost: `docs/FAZA_E.md`

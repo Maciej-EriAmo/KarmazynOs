@@ -192,6 +192,23 @@ class LorentzBridge:
         r = self.score(atom, probe=probe)
         if self.mrc is None:
             return r
+        # PhiMost Faza E: opcjonalny λ_neural (PHIMOST_NEURAL_LAMBDA, domyślnie off)
+        try:
+            from .neural_lambda import blend_relevance, neural_lambda_enabled
+
+            if neural_lambda_enabled():
+                probe = probe if probe is not None else self._probe()
+                if probe is not None:
+                    return blend_relevance(
+                        r,
+                        self.mrc.M(str(atom.id)),
+                        atom,
+                        probe,
+                        lambda_R=self.mrc.lambda_R,
+                        lambda_M=self.mrc.lambda_M,
+                    )
+        except Exception:
+            pass
         return self.mrc.Lambda_of(str(atom.id), r)
 
     def _probe(self) -> Any:
