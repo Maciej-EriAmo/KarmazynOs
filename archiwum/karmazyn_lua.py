@@ -412,7 +412,8 @@ class LuaExecutor:
 
     def _lua_get_tvac(self):
         with self.lock:
-            return self.rt.phi.t_vacuum()
+            _tv = self.rt.phi.t_vacuum
+            return _tv() if callable(_tv) else _tv
 
     def _lua_clear_screen(self):
         print("\033[H\033[J", end="")

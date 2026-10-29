@@ -87,7 +87,7 @@ def save_soul(karmazyn_os, path: str = "") -> bool:
                 "karmazyn_version": getattr(ko, 'VERSION', '?'),
                 "epoch":       ko.phi.epoch,
                 "temperature": ko.phi.temperature(),
-                "t_vacuum()":    ko.phi.t_vacuum(),
+                "t_vacuum()":    (ko.phi.t_vacuum() if callable(ko.phi.t_vacuum) else ko.phi.t_vacuum),
                 "pid":         ko._pid,
                 "p2s":         ko.phi._p2s.hex(),   # ← klucz sesji
                 "dim":         ko.phi.dim,

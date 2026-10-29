@@ -222,7 +222,8 @@ class SystemLog:
             try:
                 s = runtime.status_summary()
                 epoch = runtime.phi.epoch
-                t_vac = runtime.phi.t_vacuum()
+                _tv = runtime.phi.t_vacuum
+                t_vac = _tv() if callable(_tv) else _tv
                 total = sum(s.values())
                 lines.append(
                     f"  Φ Epoka        : {epoch}   "

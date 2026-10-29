@@ -174,7 +174,9 @@ class KarmazynComm:
         self._running = False
         self._lock = threading.Lock()
         print(f"\n  KarmazynComm v{VERSION} — Termodynamiczny Menadżer Komunikacji")
-        print(f"  T_vacuum = {self.ko.phi.t_vacuum():.4f} bit\n")
+        _tv = self.ko.phi.t_vacuum
+        _tv = _tv() if callable(_tv) else _tv
+        print(f"  T_vacuum = {_tv:.4f} bit\n")
 
     # ── Fix #9: Uniwersalne gettery / settery temperatury atomów ──────────
 

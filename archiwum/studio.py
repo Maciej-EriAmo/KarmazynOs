@@ -921,7 +921,9 @@ def main():
     print(f"\n  KarmazynOS Studio v{STUDIO_VERSION}")
     print(f"  ──────────────────────────────")
     print(f"  URL:   {url}")
-    print(f"  Φ dim: {_ko.phi.dim}  T_vacuum: {_ko.phi.t_vacuum():.4f}")
+    _tv = _ko.phi.t_vacuum
+    _tv = _tv() if callable(_tv) else _tv
+    print(f"  Φ dim: {_ko.phi.dim}  T_vacuum: {_tv:.4f}")
     print(f"\n  Na Termux: termux-open-url {url}")
     print(f"  Ctrl+C aby zatrzymać\n")
 
