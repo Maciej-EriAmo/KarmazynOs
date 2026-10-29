@@ -44,12 +44,16 @@ def progress_bar(value: float, max_val: float, width: int = 20, fg: str = "phi_e
 
 def status_dot(state: str) -> str:
     """Kropka stanu systemu."""
+    stable = ansi_fg("phi_stable") + "●" + RESET
     mapping = {
-        "active": ansi_fg("phi_stable") + "●" + RESET,
+        "active": stable,
+        "stable": stable,
         "signal": ansi_fg("phi_signal") + "●" + RESET,
         "thermal": ansi_fg("phi_thermal") + "●" + RESET,
         "decay": ansi_fg("phi_decay") + "●" + RESET,
         "ghost": ansi_fg("phi_ghost") + "●" + RESET,
+        "phi": ansi_fg("phi_core") + "●" + RESET,
+        "ember": ansi_fg("phi_ember") + "●" + RESET,
     }
     return mapping.get(state, " ")
 

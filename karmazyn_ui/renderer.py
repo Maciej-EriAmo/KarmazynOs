@@ -196,6 +196,7 @@ class BubbleRenderer:
 
         # RGB z hex dla rgba()
         r, g, b = self._hex_to_rgb(color_hex)
+        br, bgc, bb = self._hex_to_rgb(border_hex)
 
         style = (
             f"display:inline-flex;align-items:center;gap:6px;"
@@ -204,7 +205,7 @@ class BubbleRenderer:
             f"font-size:10px;letter-spacing:1px;"
             f"color:{color_hex};"
             f"background:rgba({r},{g},{b},{bg_alpha});"
-            f"border:1px solid rgba({r},{g},{b},0.35);"
+            f"border:1px solid rgba({br},{bgc},{bb},0.35);"
             f"box-shadow:{glow};"
             f"opacity:{opacity};"
             f"{anim}"
@@ -220,7 +221,9 @@ class BubbleRenderer:
                 f'flex-shrink:0"></span>'
             )
 
-        temp_str = f"{bubble.temperature:.2f}°" if bubble.temperature else ""
+        temp_str = (
+            f"{bubble.temperature:.2f}°" if bubble.temperature is not None else ""
+        )
         label_html = f"{bubble.label}"
         if temp_str:
             label_html += (

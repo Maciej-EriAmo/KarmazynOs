@@ -31,11 +31,11 @@ class LevelEmbedder:
         if not words:
             return np.zeros(self.dim)
         vecs = [self._word_to_vec(w) for w in words]
-        result = np.zeros(self.dim)
-        for v in vecs:
+        result = vecs[0].copy()
+        for v in vecs[1:]:
             result = np.fft.ifft(np.fft.fft(result) * np.fft.fft(v)).real
             n = np.linalg.norm(result)
-            result = result / (n + 1e-9) if n > 1e-12 else result
+            result = result / n if n > 1e-12 else result
         return result
 
     def _light_embed(self, words: list[str]) -> np.ndarray:
@@ -54,7 +54,8 @@ class LevelEmbedder:
     def generate_mission(self, words: list[str], system_temp: float = 0.8) -> dict:
         words = list(words) if words else ["pustka"]
         vec = self._hrr_embed(words) if self.mode == "hrr" else self._light_embed(words)
-        rng = np.random.default_rng(int(np.sum(np.abs(vec)) * 1e5) % 2**31)
+        seed = (int(np.sum(np.abs(vec)) * 1e5) + int(self.seed)) % (2**31)
+        rng = np.random.default_rng(seed)
         # Generujemy 3–5 relikwii
         symbols = ["Δ", "Ω", "Ψ", "Σ", "Φ", "Θ", "Λ"]
         num_relikwii = 3 + int(rng.integers(0, 3))
@@ -63,7 +64,8 @@ class LevelEmbedder:
             widoczny = bool(rng.choice([True, False], p=[0.7, 0.3]))
             s = f"{symbols[int(rng.integers(0, len(symbols)))]}-{int(rng.integers(1, 9))}"
             e = str(rng.choice(["Brama", "Klucz", "Cień", "Prawda", "Pustka"]))
-            t_start = int(40 + rng.integers(0, 60))
+            t_start = int(round((40 + int(rng.integers(0, 60))) * float(system_temp)))
+            t_start = max(0, min(100, t_start))
             relikwie.append({
                 "id": f"rel_{i}",
                 "S": s,
@@ -72,7 +74,9 @@ class LevelEmbedder:
                 "widoczny": widoczny,
                 "wymaga_pryzmatu": "UMBRA" if not widoczny else None
             })
-        cele = ["ustabilizuj_rel_0"]  # przykład
+        cele = [f"ustabilizuj_{r['id']}" for r in relikwie if r["widoczny"]] or [
+            "ustabilizuj_rel_0"
+        ]
         return {
             "nazwa": " ".join(words).title(),
             "relikwie": relikwie,

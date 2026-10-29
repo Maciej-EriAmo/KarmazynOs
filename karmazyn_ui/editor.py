@@ -8,6 +8,7 @@ class EmanationEditor:
     def __init__(self, target_name="PLAZMA Φ (Niezapisane)", initial_content=""):
         self.target_name = target_name
         self.lines = initial_content.split('\n') if initial_content else []
+        self._status = ""
 
     def _clear_screen(self):
         os.system('cls' if os.name == 'nt' else 'clear')
@@ -25,6 +26,8 @@ class EmanationEditor:
         print(" TRYB PLAZMY: Wpisz kod, aby dodać nową linię na koniec.")
         print(" KOMENDY: :wq (Konsoliduj), :q! (Zniszcz), ")
         print("          :e <nr> (Edytuj linię), :d <nr> (Usuń linię), :i <nr> (Wstaw)")
+        if self._status:
+            print(f" {self._status}")
         print("=" * 60)
 
     def run(self):
@@ -45,29 +48,35 @@ class EmanationEditor:
                     if 0 <= idx < len(self.lines):
                         print(f" Stara treść: {self.lines[idx]}")
                         self.lines[idx] = input(" Nowa treść: ")
+                        self._status = ""
                     else:
-                        print(f" Błąd: Linia {idx+1} nie istnieje (zakres: 1-{len(self.lines)}).")
+                        self._status = (
+                            f"Błąd: Linia {idx+1} nie istnieje "
+                            f"(zakres: 1-{len(self.lines)})."
+                        )
                 except (ValueError, IndexError):
-                    print(" Błąd składni. Prawidłowe użycie: :e <numer_linii>")
+                    self._status = "Błąd składni. Prawidłowe użycie: :e <numer_linii>"
             elif cmd.startswith(":d "):
                 try:
                     idx = int(cmd.split(' ')[1]) - 1
                     if 0 <= idx < len(self.lines):
                         removed = self.lines.pop(idx)
-                        print(f" Usunięto: {removed}")
+                        self._status = f"Usunięto: {removed}"
                     else:
-                        print(f" Błąd: Brak linii {idx+1}.")
+                        self._status = f"Błąd: Brak linii {idx+1}."
                 except (ValueError, IndexError):
-                    print(" Błąd składni. Prawidłowe użycie: :d <numer_linii>")
+                    self._status = "Błąd składni. Prawidłowe użycie: :d <numer_linii>"
             elif cmd.startswith(":i "):
                 try:
                     idx = int(cmd.split(' ')[1]) - 1
                     if 0 <= idx <= len(self.lines):
                         new_line = input(f" Wstaw przed linią {idx+1}: ")
                         self.lines.insert(idx, new_line)
+                        self._status = ""
                     else:
-                        print(f" Błąd: Indeks poza zakresem.")
+                        self._status = "Błąd: Indeks poza zakresem."
                 except (ValueError, IndexError):
-                    print(" Błąd składni. Prawidłowe użycie: :i <numer_linii>")
+                    self._status = "Błąd składni. Prawidłowe użycie: :i <numer_linii>"
             else:
                 self.lines.append(cmd)
+                self._status = ""
