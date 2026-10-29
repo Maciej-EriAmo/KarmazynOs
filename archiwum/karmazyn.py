@@ -315,7 +315,7 @@ class KarmazynOS:
         return rng.standard_normal(length).astype(np.float32)
 
     def crimson_handshake(self, peer_blinded_bytes: bytes, is_initiator: bool,
-                          K: bytes, peer_phi2_bytes_hex: str) -> Tuple[bool, Optional[bytes]]:
+                          K: bytes, peer_phi2_bytes_hex: str = "") -> Tuple[bool, Optional[bytes]]:
         dim = len(peer_blinded_bytes) // 4
         peer_blinded = np.frombuffer(peer_blinded_bytes, dtype=np.float32)
         peer_tag = "blind-B" if is_initiator else "blind-A"
@@ -329,7 +329,13 @@ class KarmazynOS:
         rez = float(np.dot(my_phi2, peer_phi2) / (norm_self * norm_peer))
         if rez >= 0.8:
             my_phi2_bytes = self.phi.phi2_bytes()
-            peer_phi2_bytes = bytes.fromhex(peer_phi2_bytes_hex)
+            if peer_phi2_bytes_hex:
+                peer_phi2_bytes = bytes.fromhex(peer_phi2_bytes_hex)
+            elif self._peer_phi2_bytes:
+                peer_phi2_bytes = self._peer_phi2_bytes
+            else:
+                self.crimson_key = None
+                return False, None
             self._peer_phi2_bytes = peer_phi2_bytes
             phi_a, phi_b = sorted([my_phi2_bytes, peer_phi2_bytes])
             self.crimson_key = hashlib.sha256(

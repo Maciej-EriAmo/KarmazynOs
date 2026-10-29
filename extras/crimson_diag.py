@@ -602,7 +602,7 @@ class CrimsonDiag:
         try:
             self.karmazyn._peer_phi2_bytes = peer_frame["phi2_bytes"]
             ok_rez, confirm = self.karmazyn.crimson_handshake(
-                peer_blinded, is_initiator, K
+                peer_blinded, is_initiator, K, peer_frame["phi2_hex"]
             )
             if not ok_rez or self.karmazyn.crimson_key is None:
                 s5.fail("crimson_handshake() zwróciło False")

@@ -32,6 +32,13 @@ except (ImportError, RuntimeError) as e:
 
 from karmazyn import KarmazynOS
 
+
+def _ecdh_modules():
+    """cryptography.ec — także gdy oqs się załadował, a Kyber padł."""
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.hazmat.primitives import serialization
+    return ec, serialization
+
 # Rozmiar nagłówka Φ-ID: phi_id(32) + nonce(16) + commitment(32) + phi2_bytes_hex(64) = 144 bajtów
 _HANDSHAKE_HEADER_SIZE = 32 + 16 + 32 + 64
 
@@ -45,12 +52,11 @@ class NodeRegistry:
     def __init__(self, path=""):
         if not path:
             try:
-                from karmazyn_paths import relocate_legacy, runtime_data_dir
+                from karmazyn_paths import runtime_data_dir
 
-                relocate_legacy()
                 path = str(runtime_data_dir() / "known_nodes.json")
             except Exception:
-                path = "./karmazyn_data/known_nodes.json"
+                path = os.path.join(".", "karmazyn_data", "known_nodes.json")
         self._path = path
         self._nodes: Dict[str, dict] = {}
         self._load()
@@ -121,7 +127,8 @@ class KeyExchange:
             except Exception as e:
                 print(f"[!] Kyber init error: {e}, fallback to ECDH")
 
-        self._ecdh_private = ec.generate_private_key(ec.SECP256R1())
+        ec_mod, _ser = _ecdh_modules()
+        self._ecdh_private = ec_mod.generate_private_key(ec_mod.SECP256R1())
         self._mode = "ecdh"
 
     @property
@@ -131,35 +138,39 @@ class KeyExchange:
     def get_public_key_bytes(self) -> bytes:
         if self._mode == "kyber":
             return self._kem.generate_keypair()
-        else:
-            pub = self._ecdh_private.public_key()
-            return pub.public_bytes(
-                serialization.Encoding.X962,
-                serialization.PublicFormat.UncompressedPoint
-            )
+        _ec_mod, ser = _ecdh_modules()
+        pub = self._ecdh_private.public_key()
+        return pub.public_bytes(
+            ser.Encoding.X962,
+            ser.PublicFormat.UncompressedPoint
+        )
 
     def encapsulate(self, peer_pk: bytes) -> tuple:
-        """Zwraca (ciphertext, shared_secret)."""
+        """Zwraca (ciphertext, shared_secret).
+
+        ECDH: ciphertext to własny klucz publiczny, shared = ECDH(peer_pk).
+        """
         if self._mode == "kyber":
             return self._kem.encap_secret(peer_pk)
-        else:
-            peer_key = ec.EllipticCurvePublicKey.from_encoded_point(
-                ec.SECP256R1(), peer_pk
-            )
-            shared = self._ecdh_private.exchange(ec.ECDH(), peer_key)
-            self._shared_secret = shared
-            ct = hashlib.sha256(shared).digest()
-            return ct, shared
+        ec_mod, _ser = _ecdh_modules()
+        peer_key = ec_mod.EllipticCurvePublicKey.from_encoded_point(
+            ec_mod.SECP256R1(), peer_pk
+        )
+        shared = self._ecdh_private.exchange(ec_mod.ECDH(), peer_key)
+        self._shared_secret = shared
+        return self.get_public_key_bytes(), shared
 
     def decapsulate(self, ct: bytes) -> bytes:
         if self._mode == "kyber":
             return self._kem.decap_secret(ct)
-        else:
-            if self._shared_secret is None:
-                raise RuntimeError(
-                    "Brak shared_secret w ECDH – encapsulate() musi poprzedzać decapsulate()."
-                )
-            return self._shared_secret
+        # ECDH: odebrany „szyfrogram” jest kluczem publicznym peera.
+        ec_mod, _ser = _ecdh_modules()
+        peer_key = ec_mod.EllipticCurvePublicKey.from_encoded_point(
+            ec_mod.SECP256R1(), ct
+        )
+        shared = self._ecdh_private.exchange(ec_mod.ECDH(), peer_key)
+        self._shared_secret = shared
+        return shared
 
 
 class CrimsonNetwork:
@@ -257,6 +268,10 @@ class CrimsonNetwork:
         peer_nonce      = peer_frame["nonce_bytes"]
         peer_commitment = peer_frame["commitment_bytes"]
         peer_phi2_bytes = peer_frame["phi2_bytes"]  # sha256(_p2s+'phi2-v1') – jawne
+        # phi2_bytes nie jest hashem wektora. Wektor z rezonansu tylko odrzuca śmieci.
+        recovered = np.asarray(peer_phi2_recovered, dtype=np.float64).ravel()
+        if recovered.size == 0 or not np.all(np.isfinite(recovered)):
+            return False
 
         # Odtworzenie bubble_key peera z jego phi2_bytes i bubble_id
         # bubble_id przesłany jawnie w ramce tożsamości (krok 0)
@@ -457,7 +472,7 @@ class CrimsonNetwork:
             # do karmazyn, żeby crimson_key był wyprowadzony z hasha (nie float32)
             self.karmazyn._peer_phi2_bytes = peer_frame["phi2_bytes"]
             ok, confirm = self.karmazyn.crimson_handshake(
-                peer_blinded, is_initiator, K
+                peer_blinded, is_initiator, K, peer_frame["phi2_hex"]
             )
 
             if not ok:
