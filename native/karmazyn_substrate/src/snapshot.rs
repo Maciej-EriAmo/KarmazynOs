@@ -120,6 +120,7 @@ impl Store {
     /// Replace store content from snapshot (hooks cleared / kept empty).
     pub fn import_snapshot(&self, snap: &StoreSnapshot) {
         let mut g = self.lock();
+        g.touch_reach();
         g.atoms.clear();
         g.bubbles.clear();
         g.roots.clear();
@@ -155,6 +156,10 @@ impl Store {
             if b.id >= g.next_bubble {
                 g.next_bubble = b.id.saturating_add(1);
             }
+        }
+        // 0 zostaje wartownikiem env_of. Nie przepisujemy id już zapisanych.
+        if g.next_bubble == 0 {
+            g.next_bubble = 1;
         }
 
         for bind in &snap.binds {

@@ -403,7 +403,7 @@ class _CtypesCore:
         return int(self._lib.ksub_atom_is_dead(self._h, int(aid)))
 
     def atom_ids(self) -> List[int]:
-        # first call with null/0 may not return total; grow buffer
+        # ksub_atom_ids zwraca pełną liczbę id, zapisuje co najwyżej max_out.
         buf = (c_uint32 * 64)()
         n = int(self._lib.ksub_atom_ids(self._h, buf, 64))
         if n < 0:
@@ -411,7 +411,9 @@ class _CtypesCore:
         if n > 64:
             buf = (c_uint32 * n)()
             n = int(self._lib.ksub_atom_ids(self._h, buf, n))
-        return [int(buf[i]) for i in range(max(0, n))]
+            if n < 0:
+                return []
+        return [int(buf[i]) for i in range(max(0, min(n, len(buf))))]
 
     def atom_upsert(self, aid: int, s: str, e: str, t: float, token: int) -> bool:
         return bool(
@@ -621,9 +623,31 @@ class NativeAtom:
     def T(self) -> float:
         return float(self._store._core.atom_t(self.id))
 
+    @T.setter
+    def T(self, value: float) -> None:
+        t = float(value)
+        if t != t:
+            t = T_INIT
+        self._store._core.atom_set_t(self.id, t)
+
     @property
     def state(self) -> str:
         return state_for_t(self.T)
+
+    @state.setter
+    def state(self, name: str) -> None:
+        want = str(name).strip().upper()
+        if want == state_for_t(self.T):
+            return
+        canon = {
+            "HOT": T_HOT,
+            "WARM": T_WARM,
+            "COLD": T_TOMB + 3.0,
+            "TOMB": max(0.001, T_TOMB * 0.5),
+        }.get(want)
+        if canon is None:
+            return
+        self.T = canon
 
     def is_dead(self) -> bool:
         return self._store._core.atom_is_dead(self.id) == 1
@@ -713,6 +737,8 @@ class NativeStore:
         self.bubbles: List[NativeBubble] = []
         self.roots: List[NativeBubble] = []
         self._atoms: Dict[int, NativeAtom] = {}
+        # logiczne id ("sat:25544") → u32 nadane przez core
+        self._logical: Dict[str, int] = {}
         self._bubbles_by_id: Dict[int, NativeBubble] = {}
         self._pin: Dict[int, Any] = {}
         self._env_hooks: List[Tuple[str, Callable]] = []
@@ -738,6 +764,49 @@ class NativeStore:
 
     def _aid(self, aid) -> int:
         return int(getattr(aid, "id", aid))
+
+    def _logical_real_locked(self, aid):
+        """u32 albo None. Wołać pod self.lock (RLock)."""
+        if isinstance(aid, bool):
+            return None
+        if isinstance(aid, int):
+            return int(aid)
+        if not isinstance(aid, (str, bytes)):
+            obj_id = getattr(aid, "id", None)
+            if obj_id is not None:
+                try:
+                    return int(obj_id)
+                except (TypeError, ValueError):
+                    return None
+        if isinstance(aid, str):
+            s = aid.strip()
+            if not s:
+                return None
+            if s.isdigit():
+                return int(s)
+            hit = self._logical.get(s)
+            if hit is not None:
+                return int(hit)
+            for atom in self._atoms.values():
+                meta = getattr(atom, "metadata", None)
+                req = meta.get("_requested_id") if hasattr(meta, "get") else None
+                if req == s or (req is not None and str(req) == s):
+                    self._logical[s] = int(atom.id)
+                    return int(atom.id)
+            return None
+        try:
+            return int(aid)
+        except (TypeError, ValueError):
+            return None
+
+    def _logical_real(self, aid):
+        with self.lock:
+            return self._logical_real_locked(aid)
+
+    def _drop_logical_locked(self, real: int) -> None:
+        stale = [k for k, v in self._logical.items() if v == real]
+        for k in stale:
+            del self._logical[k]
 
     def _token_for(self, value) -> int:
         if value is None:
@@ -767,10 +836,13 @@ class NativeStore:
         return atom
 
     def get_atom(self, aid) -> Optional[NativeAtom]:
-        a = self._aid(aid)
         with self.lock:
+            a = self._logical_real_locked(aid)
+            if a is None:
+                return None
             if not self._core.has_atom(a):
                 self._atoms.pop(a, None)
+                self._drop_logical_locked(a)
                 return None
             atom = self._atoms.get(a)
             if atom is None:
@@ -779,7 +851,11 @@ class NativeStore:
             return atom
 
     def has_atom(self, aid) -> bool:
-        return bool(self._core.has_atom(self._aid(aid)))
+        with self.lock:
+            a = self._logical_real_locked(aid)
+        if a is None:
+            return False
+        return bool(self._core.has_atom(a))
 
     def atoms(self, state=None):
         with self.lock:
@@ -792,6 +868,7 @@ class NativeStore:
                     dead_keys.append(aid)
             for k in dead_keys:
                 self._atoms.pop(k, None)
+                self._drop_logical_locked(k)
         if state is None:
             return live
         s = str(state).upper()
@@ -801,14 +878,17 @@ class NativeStore:
         self._core.heat(self._aid(atom))
 
     def delete_atom(self, aid) -> bool:
-        a = self._aid(aid)
         with self.lock:
+            a = self._logical_real_locked(aid)
+            if a is None:
+                return False
             atom = self.get_atom(a)
             if atom is None:
                 return False
             ok = bool(self._core.delete_atom(a))
             if ok:
                 self._atoms.pop(a, None)
+                self._drop_logical_locked(a)
                 self._purge_py_bindings(a)
         if ok:
             self.events.emit("atom_deleted", atom)
@@ -831,6 +911,7 @@ class NativeStore:
             ]
             for aid in dead:
                 self._atoms.pop(aid, None)
+                self._drop_logical_locked(aid)
                 self._purge_py_bindings(aid)
                 if self.reaped > reaped_before:
                     self.events.emit("vacuum_decay", None)
@@ -967,6 +1048,9 @@ class NativeStore:
         if kwargs:
             atom.metadata.update(kwargs)
         atom.metadata["_requested_id"] = req
+        if isinstance(req, str) and req and not req.isdigit():
+            with self.lock:
+                self._logical[req] = int(atom.id)
         return atom.id
 
     def create_bubble(self, label, atom_ids=None, root=False):

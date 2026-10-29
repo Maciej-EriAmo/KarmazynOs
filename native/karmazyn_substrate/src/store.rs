@@ -47,6 +47,9 @@ pub(crate) struct Inner {
     pub(crate) reaped: u64,
     pub(crate) retained_tomb: HashSet<AtomId>,
     pub(crate) ticking: bool,
+    /// Rośnie przy każdej zmianie, która może DODAĆ osiągalność (bind, root,
+    /// token, upsert, haki, import). Tick nie zbiera, gdy zmienił się od migawki.
+    pub(crate) reach_gen: u64,
     env_of_hooks: Vec<(String, EnvOfFn)>,
     extra_reach_hooks: Vec<(String, ExtraReachFn)>,
 }
@@ -58,64 +61,21 @@ impl Inner {
             bubbles: HashMap::new(),
             roots: Vec::new(),
             next_atom: 0,
-            next_bubble: 0,
+            // 0 jest wartownikiem „brak bąbla” w haku env_of (C ABI i PyO3).
+            next_bubble: 1,
             thermal,
             decay,
             reaped: 0,
             retained_tomb: HashSet::new(),
             ticking: false,
+            reach_gen: 0,
             env_of_hooks: Vec::new(),
             extra_reach_hooks: Vec::new(),
         }
     }
 
-    fn dispatch_env_of(&self, token: u64) -> Option<BubbleId> {
-        for (_name, f) in &self.env_of_hooks {
-            if let Some(b) = f(token) {
-                return Some(b);
-            }
-        }
-        None
-    }
-
-    fn dispatch_extra_reach(&self) -> Vec<AtomId> {
-        let mut ids = Vec::new();
-        for (_name, f) in &self.extra_reach_hooks {
-            ids.extend(f());
-        }
-        ids
-    }
-
-    fn walk_reach(&self) -> (HashSet<AtomId>, HashSet<BubbleId>) {
-        let mut reach = HashSet::new();
-        let mut seen = HashSet::new();
-        let mut stack: Vec<BubbleId> = self.roots.clone();
-
-        while let Some(bid) = stack.pop() {
-            if !seen.insert(bid) {
-                continue;
-            }
-            let Some(b) = self.bubbles.get(&bid) else {
-                continue;
-            };
-            for (_name, aid) in &b.bindings {
-                if self.atoms.contains_key(aid) {
-                    reach.insert(*aid);
-                    if let Some(atom) = self.atoms.get(aid) {
-                        if let Some(env_b) = self.dispatch_env_of(atom.value_token) {
-                            stack.push(env_b);
-                        }
-                    }
-                }
-            }
-            if let Some(p) = b.parent {
-                stack.push(p);
-            }
-        }
-        for aid in self.dispatch_extra_reach() {
-            reach.insert(aid);
-        }
-        (reach, seen)
+    pub(crate) fn touch_reach(&mut self) {
+        self.reach_gen = self.reach_gen.wrapping_add(1);
     }
 
     fn purge_bindings(&mut self, aid: AtomId) {
@@ -124,8 +84,28 @@ impl Inner {
         }
     }
 
-    fn tick_body(&mut self) {
-        let (reach, _seen) = self.walk_reach();
+    fn reach_snap(&self) -> ReachSnap {
+        let mut bubbles = HashMap::new();
+        for (id, b) in &self.bubbles {
+            let binds: Vec<AtomId> = b.bindings.values().copied().collect();
+            bubbles.insert(*id, (b.parent, binds));
+        }
+        ReachSnap {
+            gen: self.reach_gen,
+            roots: self.roots.clone(),
+            bubbles,
+            tokens: self
+                .atoms
+                .iter()
+                .map(|(id, a)| (*id, a.value_token))
+                .collect(),
+            env_hooks: self.env_of_hooks.iter().map(|(_, f)| f.clone()).collect(),
+            extra_hooks: self.extra_reach_hooks.iter().map(|(_, f)| f.clone()).collect(),
+        }
+    }
+
+    /// `reap == false`: tylko chłodzenie. Martwe atomy czekają na następny tick.
+    fn apply_reach(&mut self, reach: &HashSet<AtomId>, reap: bool) {
         let aids: Vec<AtomId> = self.atoms.keys().copied().collect();
         for aid in &aids {
             if let Some(a) = self.atoms.get_mut(aid) {
@@ -138,6 +118,9 @@ impl Inner {
                 self.retained_tomb.remove(&aid);
                 continue;
             }
+            if !reap {
+                continue;
+            }
             if reach.contains(&aid) {
                 self.retained_tomb.insert(aid);
             } else {
@@ -147,6 +130,62 @@ impl Inner {
                     self.reaped += 1;
                 }
             }
+        }
+    }
+}
+
+struct ReachSnap {
+    gen: u64,
+    roots: Vec<BubbleId>,
+    bubbles: HashMap<BubbleId, (Option<BubbleId>, Vec<AtomId>)>,
+    tokens: HashMap<AtomId, u64>,
+    env_hooks: Vec<EnvOfFn>,
+    extra_hooks: Vec<ExtraReachFn>,
+}
+
+impl ReachSnap {
+    fn reach(&self) -> HashSet<AtomId> {
+        let mut reach = HashSet::new();
+        let mut seen = HashSet::new();
+        let mut stack: Vec<BubbleId> = self.roots.clone();
+        while let Some(bid) = stack.pop() {
+            if !seen.insert(bid) {
+                continue;
+            }
+            let Some((parent, binds)) = self.bubbles.get(&bid) else {
+                continue;
+            };
+            for aid in binds {
+                if let Some(tok) = self.tokens.get(aid) {
+                    reach.insert(*aid);
+                    for f in &self.env_hooks {
+                        if let Some(env_b) = f(*tok) {
+                            stack.push(env_b);
+                            break;
+                        }
+                    }
+                }
+            }
+            if let Some(p) = parent {
+                stack.push(*p);
+            }
+        }
+        for f in &self.extra_hooks {
+            for aid in f() {
+                reach.insert(aid);
+            }
+        }
+        reach
+    }
+}
+
+/// Czyści `ticking` także gdy hak albo apply spanikuje.
+struct TickEnd<'a>(&'a Store);
+
+impl Drop for TickEnd<'_> {
+    fn drop(&mut self) {
+        if let Ok(mut g) = self.0.inner.lock() {
+            g.ticking = false;
         }
     }
 }
@@ -185,6 +224,7 @@ impl Store {
     pub fn atom_set_guest(&self, aid: AtomId, token: u64, payload: Option<Vec<u8>>) -> bool {
         let mut g = self.lock();
         let thermal = g.thermal;
+        g.touch_reach();
         if let Some(a) = g.atoms.get_mut(&aid) {
             a.value_token = token;
             a.payload = payload;
@@ -250,6 +290,7 @@ impl Store {
     ) -> bool {
         use crate::atom::clamp_t;
         let mut g = self.lock();
+        g.touch_reach();
         let tt = clamp_t(if t.is_nan() { T_INIT } else { t });
         if let Some(a) = g.atoms.get_mut(&aid) {
             a.s = s.to_string();
@@ -274,6 +315,7 @@ impl Store {
     pub fn restore_atoms(&self, entries: &[(AtomId, String, String, f64, u64)]) {
         use crate::atom::clamp_t;
         let mut g = self.lock();
+        g.touch_reach();
         let keep: HashSet<AtomId> = entries.iter().map(|e| e.0).collect();
         let remove: Vec<AtomId> = g
             .atoms
@@ -330,6 +372,9 @@ impl Store {
 
     pub fn bubble_new(&self, label: &str, parent: Option<BubbleId>) -> BubbleId {
         let mut g = self.lock();
+        if g.next_bubble == 0 {
+            g.next_bubble = 1;
+        }
         let id = g.next_bubble;
         g.next_bubble = g.next_bubble.saturating_add(1);
         g.bubbles.insert(
@@ -351,6 +396,7 @@ impl Store {
         }
         let b = g.bubbles.get_mut(&bid).ok_or("bind: bubble missing")?;
         b.bindings.insert(name.to_string(), aid);
+        g.touch_reach();
         Ok(())
     }
 
@@ -385,6 +431,7 @@ impl Store {
         let mut g = self.lock();
         if g.bubbles.contains_key(&bid) && !g.roots.contains(&bid) {
             g.roots.push(bid);
+            g.touch_reach();
         }
     }
 
@@ -400,6 +447,7 @@ impl Store {
         let mut g = self.lock();
         g.env_of_hooks.retain(|(n, _)| n != name);
         g.env_of_hooks.insert(0, (name.to_string(), Arc::new(f)));
+        g.touch_reach();
     }
 
     pub fn unregister_env_of(&self, name: &str) {
@@ -413,6 +461,7 @@ impl Store {
         let mut g = self.lock();
         g.extra_reach_hooks.retain(|(n, _)| n != name);
         g.extra_reach_hooks.insert(0, (name.to_string(), Arc::new(f)));
+        g.touch_reach();
     }
 
     pub fn unregister_extra_reach(&self, name: &str) {
@@ -422,13 +471,22 @@ impl Store {
     }
 
     pub fn tick(&self) {
+        let snap = {
+            let mut g = self.lock();
+            if !g.thermal || g.ticking {
+                return;
+            }
+            g.ticking = true;
+            g.reach_snap()
+        };
+        // Haki env_of / extra_reach poza mutexem: callback może wejść
+        // z powrotem w has_atom / get (std::Mutex nie jest reentrantny).
+        let _end = TickEnd(self);
+        let reach = snap.reach();
         let mut g = self.lock();
-        if !g.thermal || g.ticking {
-            return;
-        }
-        g.ticking = true;
-        g.tick_body();
-        g.ticking = false;
+        // Coś mogło stać się osiągalne po migawce: nie zbieraj w tym ticku.
+        let reap = g.reach_gen == snap.gen;
+        g.apply_reach(&reach, reap);
     }
 
     pub fn settle(&self, n: u32) {
@@ -630,6 +688,34 @@ mod tests {
         HELD.store(u32::MAX, Ordering::SeqCst);
         s.settle(2);
         assert!(!s.has_atom(a));
+    }
+
+    #[test]
+    fn bind_during_tick_is_not_reaped() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let s = Store::new(true);
+        let root = s.bubble_new("root", None);
+        s.set_root(root);
+        let a = s.atom_new("var", "late", 0.0);
+        assert_eq!(s.atom_is_dead(a), Some(true));
+        let fired = Arc::new(AtomicBool::new(false));
+        let (s2, f2) = (s.clone(), fired.clone());
+        // hak chodzi po migawce, przed apply: tu "inny wątek" przypina martwy atom
+        s.register_extra_reach("late_bind", move || {
+            if !f2.swap(true, Ordering::SeqCst) {
+                s2.bind(root, "late", a).unwrap();
+            }
+            vec![]
+        });
+        s.tick();
+        assert!(s.has_atom(a), "atom przypięty w trakcie ticka zniknął");
+        assert_eq!(s.bubble_bindings(root), Some(vec![("late".to_string(), a)]));
+        assert_eq!(s.stats().reaped, 0);
+        // następny tick widzi powiązanie: martwy, ale osiągalny
+        s.tick();
+        assert!(s.has_atom(a));
+        assert_eq!(s.stats().retained_tomb, 1);
+        s.unregister_extra_reach("late_bind");
     }
 
     #[test]

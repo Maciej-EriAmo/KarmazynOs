@@ -10,6 +10,8 @@ extern "C" {
 
 const char *ksub_version(void);
 
+/* Opaque handle, 0 = failure. After ksub_store_free the handle is dead for good:
+ * a later store never gets the same value, and a stale or double free is a no-op. */
 uint64_t ksub_store_new(int thermal);
 void     ksub_store_free(uint64_t handle);
 
@@ -23,6 +25,7 @@ double   ksub_atom_t(uint64_t handle, uint32_t aid);
 int      ksub_atom_set_t(uint64_t handle, uint32_t aid, double t);
 int      ksub_atom_is_dead(uint64_t handle, uint32_t aid);
 int      ksub_atom_upsert(uint64_t handle, uint32_t aid, const char *s, const char *e, double t, uint64_t token);
+/* Returns total id count (may exceed max_out). Writes min(total, max_out). -1 on error. */
 int32_t  ksub_atom_ids(uint64_t handle, uint32_t *out, uint32_t max_out);
 
 uint32_t ksub_bubble_new(uint64_t handle, const char *label, int64_t parent /* -1 = none */);

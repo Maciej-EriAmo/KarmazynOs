@@ -10,13 +10,46 @@ use std::os::raw::c_int;
 use std::ptr;
 use std::sync::Mutex;
 
-/// Global table: store_handle → Store (handle = non-zero index).
-static STORES: Mutex<Vec<Option<Store>>> = Mutex::new(Vec::new());
+/// Slot tablicy uchwytów. `gen` rośnie przy każdym ponownym użyciu slotu.
+struct Slot {
+    gen: u32,
+    store: Option<Store>,
+}
+
+/// Global table: store_handle → Store.
+/// Handle = `(gen << 32) | (index + 1)`: never 0. A freed slot is reused with
+/// gen + 1, so a stale handle no longer resolves to the new store (no ABA).
+/// The first store in a slot has gen 0, so its handle is just `index + 1`.
+static STORES: Mutex<Vec<Slot>> = Mutex::new(Vec::new());
+
+fn encode_handle(idx: usize, gen: u32) -> u64 {
+    (u64::from(gen) << 32) | (idx as u64 + 1)
+}
+
+/// Slot index of a live handle (index and generation match).
+fn slot_of(slots: &[Slot], handle: u64) -> Option<usize> {
+    let low = handle & 0xFFFF_FFFF;
+    let idx = usize::try_from(low.checked_sub(1)?).ok()?;
+    let gen = (handle >> 32) as u32;
+    let slot = slots.get(idx)?;
+    (slot.gen == gen && slot.store.is_some()).then_some(idx)
+}
 
 fn with_store<R>(handle: u64, f: impl FnOnce(&Store) -> R) -> Option<R> {
+    // Klon Arc i puszczenie zamka STORES zanim wejdziemy w callback.
+    // Hak env_of/extra_reach wołany z tick może znów wejść w ksub_*.
+    let store = {
+        let g = STORES.lock().ok()?;
+        let idx = slot_of(&g, handle)?;
+        g[idx].store.clone()?
+    };
+    Some(f(&store))
+}
+
+/// Slot index for a live handle, or None (0, freed, stale).
+fn live_index(handle: u64) -> Option<usize> {
     let g = STORES.lock().ok()?;
-    let idx = handle.checked_sub(1)? as usize;
-    g.get(idx)?.as_ref().map(f)
+    slot_of(&g, handle)
 }
 
 fn with_store_mut<R>(handle: u64, f: impl FnOnce(&Store) -> R) -> Option<R> {
@@ -35,19 +68,34 @@ pub extern "C" fn ksub_store_new(thermal: c_int) -> u64 {
     let Ok(mut g) = STORES.lock() else {
         return 0;
     };
-    g.push(Some(Store::new(thermal != 0)));
-    g.len() as u64 // 1-based handle
+    let store = Some(Store::new(thermal != 0));
+    if let Some(i) = g.iter().position(|s| s.store.is_none()) {
+        let gen = g[i].gen.wrapping_add(1);
+        g[i] = Slot { gen, store };
+        return encode_handle(i, gen);
+    }
+    if g.len() >= u32::MAX as usize {
+        return 0;
+    }
+    g.push(Slot { gen: 0, store });
+    encode_handle(g.len() - 1, 0)
 }
 
 #[no_mangle]
 pub extern "C" fn ksub_store_free(handle: u64) {
-    if handle == 0 {
+    // Nieaktualny albo podwójnie zwolniony uchwyt nic nie robi.
+    let Some(idx) = live_index(handle) else {
         return;
+    };
+    // Ta sama kolejność co ksub_register_*: HOOKS, potem STORES.
+    if let Ok(mut hooks) = HOOKS.lock() {
+        if idx < hooks.len() {
+            hooks[idx] = None;
+        }
     }
     if let Ok(mut g) = STORES.lock() {
-        let idx = (handle - 1) as usize;
-        if idx < g.len() {
-            g[idx] = None;
+        if slot_of(&g, handle) == Some(idx) {
+            g[idx].store = None;
         }
     }
 }
@@ -124,7 +172,9 @@ pub extern "C" fn ksub_atom_upsert(
     with_store(handle, |st| st.atom_upsert(aid, &s, &e, t, token) as c_int).unwrap_or(0)
 }
 
-/// Fill `out` with up to `max_out` atom ids. Returns count written (or -1 on error).
+/// Fill `out` with up to `max_out` atom ids.
+/// Returns the total number of ids (may be larger than `max_out`), or -1.
+/// `max_out == 0` returns the total without writing.
 #[no_mangle]
 pub extern "C" fn ksub_atom_ids(handle: u64, out: *mut u32, max_out: u32) -> i32 {
     if out.is_null() && max_out > 0 {
@@ -132,13 +182,14 @@ pub extern "C" fn ksub_atom_ids(handle: u64, out: *mut u32, max_out: u32) -> i32
     }
     with_store(handle, |st| {
         let ids = st.atom_ids();
-        let n = ids.len().min(max_out as usize);
+        let total = ids.len();
+        let n = total.min(max_out as usize);
         if n > 0 && !out.is_null() {
             unsafe {
                 std::ptr::copy_nonoverlapping(ids.as_ptr(), out, n);
             }
         }
-        n as i32
+        total as i32
     })
     .unwrap_or(-1)
 }
@@ -273,14 +324,13 @@ pub extern "C" fn ksub_register_env_of(
     cb: EnvOfC,
     userdata: *mut std::ffi::c_void,
 ) -> c_int {
-    if handle == 0 {
+    let Some(idx) = live_index(handle) else {
         return 0;
-    }
+    };
     let ud = userdata as usize;
     let Ok(mut hooks) = HOOKS.lock() else {
         return 0;
     };
-    let idx = (handle - 1) as usize;
     while hooks.len() <= idx {
         hooks.push(None);
     }
@@ -317,14 +367,13 @@ pub extern "C" fn ksub_register_extra_reach(
     cb: ExtraReachC,
     userdata: *mut std::ffi::c_void,
 ) -> c_int {
-    if handle == 0 {
+    let Some(idx) = live_index(handle) else {
         return 0;
-    }
+    };
     let ud = userdata as usize;
     let Ok(mut hooks) = HOOKS.lock() else {
         return 0;
     };
-    let idx = (handle - 1) as usize;
     while hooks.len() <= idx {
         hooks.push(None);
     }
@@ -343,14 +392,20 @@ pub extern "C" fn ksub_register_extra_reach(
         st.unregister_extra_reach("c_abi");
         if let Some(f) = extra {
             st.register_extra_reach("c_abi", move || {
-                let mut buf = vec![0u32; 256];
-                let n = f(
-                    buf.as_mut_ptr(),
-                    buf.len() as u32,
-                    extra_ud as *mut std::ffi::c_void,
-                ) as usize;
-                buf.truncate(n.min(256));
-                buf
+                let mut cap = 256usize;
+                loop {
+                    let mut buf = vec![0u32; cap];
+                    let n = f(
+                        buf.as_mut_ptr(),
+                        buf.len() as u32,
+                        extra_ud as *mut std::ffi::c_void,
+                    ) as usize;
+                    if n < cap || cap >= (1 << 20) {
+                        buf.truncate(n.min(buf.len()));
+                        return buf;
+                    }
+                    cap = cap.saturating_mul(2);
+                }
             });
         }
     });
@@ -390,5 +445,57 @@ pub extern "C" fn ksub_string_free(p: *mut c_char) {
         unsafe {
             let _ = CString::from_raw(p);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn atom(h: u64) -> u32 {
+        ksub_atom_new(h, c"var".as_ptr(), c"x".as_ptr(), 50.0)
+    }
+
+    #[test]
+    fn stale_handle_does_not_reach_reused_slot() {
+        let h1 = ksub_store_new(1);
+        assert_ne!(h1, 0);
+        let a = atom(h1);
+        assert_eq!(ksub_has_atom(h1, a), 1);
+        ksub_store_free(h1);
+        assert_eq!(ksub_has_atom(h1, a), 0);
+        // nowy store może dostać ten sam slot, ale nie ten sam uchwyt
+        let h2 = ksub_store_new(1);
+        assert_ne!(h2, h1);
+        let b = atom(h2);
+        assert_eq!(ksub_has_atom(h2, b), 1);
+        assert_eq!(ksub_has_atom(h1, b), 0, "stary uchwyt trafił w nowy store");
+        // podwójne free starego uchwytu nie zabija nowego store
+        ksub_store_free(h1);
+        assert_eq!(ksub_has_atom(h2, b), 1);
+        ksub_store_free(h2);
+    }
+
+    #[test]
+    fn hooks_refuse_stale_handle() {
+        let h = ksub_store_new(1);
+        ksub_store_free(h);
+        assert_eq!(ksub_register_env_of(h, None, ptr::null_mut()), 0);
+        assert_eq!(ksub_register_extra_reach(h, None, ptr::null_mut()), 0);
+        assert_eq!(ksub_register_env_of(0, None, ptr::null_mut()), 0);
+    }
+
+    #[test]
+    fn handle_encodes_index_and_generation() {
+        assert_eq!(encode_handle(0, 0), 1);
+        assert_eq!(encode_handle(4, 3), (3u64 << 32) | 5);
+        let slots = vec![
+            Slot { gen: 0, store: None },
+            Slot { gen: 2, store: Some(Store::new(false)) },
+        ];
+        assert_eq!(slot_of(&slots, encode_handle(1, 2)), Some(1));
+        assert_eq!(slot_of(&slots, encode_handle(1, 1)), None);
+        assert_eq!(slot_of(&slots, encode_handle(0, 0)), None);
+        assert_eq!(slot_of(&slots, 0), None);
     }
 }
