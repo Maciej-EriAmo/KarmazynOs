@@ -1,8 +1,7 @@
-print("Termodynamiczny podgląd systemowy (naciśnij Ctrl+C aby przerwać)")
-karmazyn.sleep(1)
-
-while true do
-    karmazyn.clear_screen()
+local function frame()
+    if karmazyn.interactive() then
+        karmazyn.clear_screen()
+    end
     local atoms = karmazyn.list_atoms()
     local lines = {}
 
@@ -22,5 +21,15 @@ while true do
     for _, l in ipairs(lines) do table.insert(stats, l) end
 
     print(karmazyn.ui.draw_frame("KARMAZYN TOP", stats, "phi_thermal"))
+end
+
+if not karmazyn.interactive() then
+    frame()
+    return
+end
+
+print("Termodynamiczny podgląd systemowy (naciśnij Ctrl+C aby przerwać)")
+while true do
+    frame()
     karmazyn.sleep(2)
 end

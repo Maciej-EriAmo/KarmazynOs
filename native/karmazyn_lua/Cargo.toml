@@ -1,0 +1,16 @@
+[package]
+name = "karmazyn_lua"
+version = "0.1.0"
+edition = "2021"
+authors = ["Maciej Mazur"]
+description = "KarmazynOS Lua guest — mlua on the Store seam (eval_line / session bubble)"
+license = "MIT"
+repository = "https://github.com/Maciej-EriAmo/KarmazynOs"
+
+[dependencies]
+karmazyn_substrate = { path = "../karmazyn_substrate" }
+mlua = { version = "0.10", features = ["lua54", "vendored"] }
+
+[lib]
+name = "karmazyn_lua"
+path = "src/lib.rs"

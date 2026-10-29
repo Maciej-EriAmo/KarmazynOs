@@ -1,7 +1,7 @@
-local src = karmazyn.read_line("ID Źródłowe: ")
+local src = karmazyn.read_line("ID Źródłowe: ") or ""
 if src == "" then return end
 
-local dst = karmazyn.read_line("ID Docelowe: ")
+local dst = karmazyn.read_line("ID Docelowe: ") or ""
 if dst == "" then return end
 
 local res = karmazyn.clone_atom(src, dst)

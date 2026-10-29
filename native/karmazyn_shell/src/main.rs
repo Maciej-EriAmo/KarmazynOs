@@ -9,10 +9,11 @@
 //! Lisp guest: line starting with `(` → karmazyn_lisp::Evaluator::eval_line.
 
 use karmazyn_lisp::Evaluator;
+use karmazyn_lua::Evaluator as LuaEvaluator;
 
 use karmazyn_substrate::{state_for_t, Store, T_INIT};
 use std::env;
-use std::io::{self, BufRead, Write};
+use std::io::{self, BufRead, IsTerminal, Write};
 use std::process;
 use std::thread;
 use std::time::Duration;
@@ -41,13 +42,16 @@ enum Outcome {
 struct App {
     store: Store,
     lisp: Evaluator,
+    lua: LuaEvaluator,
 }
 
 fn main() {
     let thermal = true;
     let store = Store::new(thermal);
     let lisp = Evaluator::new(&store);
-    let app = App { store, lisp };
+    let lua = LuaEvaluator::new(&store);
+    let tools = preload_lua_bin(&lua);
+    let app = App { store, lisp, lua };
     let args: Vec<String> = env::args().skip(1).collect();
 
     // batch: -e "cmd" ...  and/or trailing script file of commands
@@ -112,8 +116,10 @@ fn main() {
         return;
     }
 
+    app.lua.enable_stdin(true);
+    print_boot(tools);
     println!("karmazyn_shell {VERSION} — Stage 2 (native, no Python)");
-    println!("thermal={thermal}  lisp: lines starting with (   type `help`");
+    println!("thermal={thermal}  lisp: (   lua: `lua <chunk>`   tool: `tool <name> [args]`   type `help`");
 
     let stdin = io::stdin();
     let mut stdout = io::stdout();
@@ -160,8 +166,27 @@ fn dispatch(app: &App, line: &str) -> Outcome {
     if let Some(rest) = t.strip_prefix("lisp ").or_else(|| t.strip_prefix("lisp\t")) {
         return eval_lisp(app, rest.trim());
     }
+    if t == "lua" {
+        println!("usage: lua <chunk>");
+        return Outcome::Err;
+    }
+    if let Some(rest) = t.strip_prefix("lua ").or_else(|| t.strip_prefix("lua\t")) {
+        return eval_lua(app, rest.trim());
+    }
+    if t == "tool" || t == ":tool" || t == ":tools" {
+        return run_tool(app, "");
+    }
+    if let Some(rest) = t
+        .strip_prefix(":tool ")
+        .or_else(|| t.strip_prefix(":tool\t"))
+        .or_else(|| t.strip_prefix("tool "))
+        .or_else(|| t.strip_prefix("tool\t"))
+    {
+        return run_tool(app, rest.trim());
+    }
     let parts: Vec<&str> = t.split_whitespace().collect();
-    if parts.first().copied() == Some("load") {
+    let head = parts.first().copied().unwrap_or("");
+    if head.eq_ignore_ascii_case("load") {
         if parts.len() < 2 {
             println!("usage: load <path>");
             return Outcome::Err;
@@ -169,6 +194,7 @@ fn dispatch(app: &App, line: &str) -> Outcome {
         match app.store.load_snapshot_file(parts[1]) {
             Ok(()) => {
                 app.lisp.remount_repl(&app.store);
+                app.lua.remount_session(&app.store);
                 let st = app.store.stats();
                 println!(
                     "loaded {}  atoms={} bubbles={} reaped={}",
@@ -181,14 +207,130 @@ fn dispatch(app: &App, line: &str) -> Outcome {
                 Outcome::Err
             }
         }
+    } else if head.eq_ignore_ascii_case("tick") {
+        shell_tick(app, &parts)
+    } else if head.eq_ignore_ascii_case("settle") {
+        shell_settle(app, &parts)
     } else {
         dispatch_cmd(&app.store, line)
     }
 }
 
+/// Store ticks and the Lua session epoch stay on the same count.
+fn shell_tick(app: &App, parts: &[&str]) -> Outcome {
+    let n = parts.get(1).and_then(|x| x.parse::<u32>().ok()).unwrap_or(1);
+    let steps = if n <= 1 { 1 } else { n };
+    if steps == 1 {
+        app.store.tick();
+    } else {
+        app.store.settle(steps);
+    }
+    app.lua.add_epoch(u64::from(steps));
+    println!("tick x{n}");
+    Outcome::Ok
+}
+
+fn shell_settle(app: &App, parts: &[&str]) -> Outcome {
+    let Some(n) = parts.get(1).and_then(|x| x.parse::<u32>().ok()) else {
+        println!("usage: settle <n>");
+        return Outcome::Err;
+    };
+    app.store.settle(n);
+    app.lua.add_epoch(u64::from(n));
+    println!("settle {n}");
+    Outcome::Ok
+}
+
 fn eval_lisp(app: &App, src: &str) -> Outcome {
     // eval_line always returns a string (blad:… is language output, not a shell fail).
     let s = app.lisp.eval_line(&app.store, src);
+    if !s.is_empty() {
+        println!("{s}");
+    }
+    Outcome::Ok
+}
+
+fn preload_lua_bin(lua: &LuaEvaluator) -> usize {
+    if let Ok(dir) = env::var("KARMAZYN_LUA_BIN") {
+        return lua.install_preload_dir(dir).unwrap_or(0);
+    }
+    let Ok(exe) = env::current_exe() else {
+        return 0;
+    };
+    let mut dir = exe.parent().map(|p| p.to_path_buf());
+    for _ in 0..8 {
+        let Some(d) = dir else {
+            return 0;
+        };
+        let candidate = d.join("lua_bin");
+        if candidate.is_dir() {
+            return lua.install_preload_dir(&candidate).unwrap_or(0);
+        }
+        dir = d.parent().map(|p| p.to_path_buf());
+    }
+    0
+}
+
+fn print_boot(tools: usize) {
+    let color = io::stdout().is_terminal();
+    boot_line(color, "ok", "store", "");
+    boot_line(color, "ok", "lisp", "");
+    boot_line(color, "ok", "lua", "");
+    if tools > 0 {
+        boot_line(color, "ok", "lua_bin", &format!("{tools} narzędzi"));
+    } else {
+        boot_line(color, "warn", "lua_bin", "brak katalogu");
+    }
+}
+
+fn boot_line(color: bool, code: &str, name: &str, detail: &str) {
+    let tag = match (color, code) {
+        (true, "ok") => "[\x1b[1;32m OK \x1b[0m]",
+        (false, "ok") => "[ OK ]",
+        (true, _) => "[\x1b[1;33mWARN\x1b[0m]",
+        (false, _) => "[WARN]",
+    };
+    if detail.is_empty() {
+        println!("  {tag} {name}");
+    } else {
+        println!("  {tag} {name} — {detail}");
+    }
+}
+
+fn run_tool(app: &App, name: &str) -> Outcome {
+    if name.is_empty() {
+        let names = app.lua.tool_names();
+        if names.is_empty() {
+            println!("usage: tool <name>  (brak lua_bin)");
+            return Outcome::Err;
+        }
+        println!("lua_bin:");
+        for n in names {
+            println!("  {n}");
+        }
+        println!("uzycie: tool ls");
+        return Outcome::Ok;
+    }
+    match app.lua.run_tool(&app.store, name) {
+        Ok(s) if s.starts_with("blad:") => {
+            println!("{s}");
+            Outcome::Err
+        }
+        Ok(s) => {
+            if !s.is_empty() {
+                println!("{s}");
+            }
+            Outcome::Ok
+        }
+        Err(e) => {
+            println!("{e}");
+            Outcome::Err
+        }
+    }
+}
+
+fn eval_lua(app: &App, src: &str) -> Outcome {
+    let s = app.lua.eval_line(&app.store, src);
     if !s.is_empty() {
         println!("{s}");
     }
@@ -232,25 +374,6 @@ fn dispatch_cmd(s: &Store, line: &str) -> Outcome {
                 Ok(()) => println!("saved {path}"),
                 Err(e) => {
                     println!("save err: {e}");
-                    return Outcome::Err;
-                }
-            }
-        }
-        "load" => {
-            let Some(path) = parts.get(1) else {
-                println!("usage: load <path>");
-                return Outcome::Err;
-            };
-            match s.load_snapshot_file(path) {
-                Ok(()) => {
-                    let st = s.stats();
-                    println!(
-                        "loaded {path}  atoms={} bubbles={} reaped={}",
-                        st.total, st.bubbles, st.reaped
-                    );
-                }
-                Err(e) => {
-                    println!("load err: {e}");
                     return Outcome::Err;
                 }
             }
@@ -335,26 +458,6 @@ fn dispatch_cmd(s: &Store, line: &str) -> Outcome {
                 println!("no atom {id}");
                 return Outcome::Err;
             }
-        }
-        "tick" => {
-            let n = parts
-                .get(1)
-                .and_then(|x| x.parse::<u32>().ok())
-                .unwrap_or(1);
-            if n <= 1 {
-                s.tick();
-            } else {
-                s.settle(n);
-            }
-            println!("tick x{n}");
-        }
-        "settle" => {
-            let Some(n) = parts.get(1).and_then(|x| x.parse::<u32>().ok()) else {
-                println!("usage: settle <n>");
-                return Outcome::Err;
-            };
-            s.settle(n);
-            println!("settle {n}");
         }
         "bubble" => {
             // bubble [label] [parent_bid]
@@ -814,8 +917,8 @@ fn print_help() {
   upsert <aid> <s> <e> [t] [tok]  create/update fixed id
   heat <aid>                    +HEAT_READ (same as touch / read)
   set_t <aid> <t>               absolute T (no heat counters)
-  tick [n]                      one tick or settle n
-  settle <n>                    n ticks
+  tick [n]                      n store ticks and the same lua epoch
+  settle <n>                    n ticks and the same lua epoch
   bubble [label] [parent]       new bubble (optional parent)
   root <bid> / unroot <bid>     root set
   bind <bid> <name> <aid>       bind name → atom
@@ -827,8 +930,10 @@ fn print_help() {
   setval <aid> <u64>            write token (+HEAT_WRITE if thermal)
   assert has|nohas|dead|nodead|lookup|t|val|stats|root|noroot …
   echo <text>
-  save <path> / load <path>     KSUB_SNAP v1 (no Python)
+  save <path> / load <path>     KSUB_SNAP v1. load remounts lisp and lua
   (define x 10) / lisp <expr>   mini-Lisp guest (atoms = vars)
+  lua <chunk>                   Lua guest (mlua). return karmazyn._VERSION
+  tool <name> [args] | :tool    lua_bin tool (uptime, ls, df, nano, …). bare tool lists names
   help | quit
 
 batch: non-zero exit if a command fails (assert/save/bind/…)"

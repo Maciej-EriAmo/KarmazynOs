@@ -32,15 +32,15 @@ Python boot to nie tylko REPL na Store. To też:
 | H | Co | Stan |
 |---|----|------|
 | **H0** | Launcher = native shell | ✅ ta sesja |
-| **H1** | Raport startu `[ OK ]` usług po stronie shell | native ma `version`/`stats`, nie sekwencję boot |
+| **H1** | Raport startu `[ OK ]` usług po stronie shell | ✅ interaktywny shell: `store`, `lisp`, `lua`, `lua_bin`. Batch (`-e`, skrypt) milczy |
 | **H2a** | Gość **mini-Lisp** na szwach Store | ✅ crate `karmazyn_lisp` (jak `karmazyn_exec.py`) |
-| **H2** | Gość Lua **bez** CPythona | `LUA/` nadal CPython — mlua **albo** Lua zostaje `--python` |
-| **H3** | `lua_bin/*` jako narzędzia native | dziś `karmazyn.*` host API w Pythonie |
+| **H2** | Gość Lua **bez** CPythona | częściowy: `native/karmazyn_lua` (mlua), `lua <chunk>`, host `karmazyn.*` pod `lua_bin`. Lorentz, HRR, `debug`, snapshot sterty Lua i pełny 1.1.2 zostają na `--python` |
+| **H3** | `lua_bin/*` jako narzędzia native | ✅ `tool <name> [arg...]` / `:tool` woła skrypt na gościu mlua. Brak narzędzia i zła nazwa kończą batch błędem. Seed katalogu Starlink i Studio zostają na Pythonie |
 | **H4** | Studio SDL | zostaje ministrem na hoście z Pythonem **albo** osobny crate |
 | **H5** | Kubity / φ | minister Python — na żądanie, nie warunek startu |
 
-**Pełny odpowiednik dzisiejszego boot.py** = H0+H1+H2.  
-**Uczciwy „system wstaje bez Pythona”** = H0 (już): Store + shell + save/load.
+**Pełny odpowiednik dzisiejszego boot.py** = H0+H1+H2. H2 nie jest domknięte (Lorentz, HRR, `debug`, sterta Lua w snapshotcie).  
+**Uczciwy „system wstaje bez Pythona”** = H0+H1+H3: shell, zapis, i codzienne `tool` (`uptime`, `ls`, `df`, `free`, `touch`, `rm`, …). Studio, φ i `--python` zostają obok.
 
 Nie portujemy CPythona do Rusta. Portujemy **szew startu**. Lua to osobna decyzja (mlua), nie warunek króla.
 

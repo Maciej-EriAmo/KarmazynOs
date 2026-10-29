@@ -1,4 +1,4 @@
-local id = karmazyn.read_line("ID Atomu do usunięcia: ")
+local id = karmazyn.read_line("ID Atomu do usunięcia: ") or ""
 if id == "" then return end
 
 local ok = karmazyn.delete_atom(id)

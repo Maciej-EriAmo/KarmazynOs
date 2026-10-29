@@ -1,5 +1,8 @@
-local layer = string.upper(karmazyn.read_line("Warstwa (HOT/WARM/COLD/TOMB) [ALL]: "))
+local layer_raw = karmazyn.read_line("Warstwa (HOT/WARM/COLD/TOMB) [ALL]: ")
+if layer_raw == nil then return end
+local layer = string.upper(layer_raw)
 local min_t_str = karmazyn.read_line("Minimalna temperatura (0-100) [0]: ")
+if min_t_str == nil then return end
 local min_t = tonumber(min_t_str) or 0
 
 local atoms = karmazyn.list_atoms()

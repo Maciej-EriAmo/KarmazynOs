@@ -1,4 +1,4 @@
-local pid_str = karmazyn.read_line("PID Agenta do usunięcia: ")
+local pid_str = karmazyn.read_line("PID Agenta do usunięcia: ") or ""
 local pid = tonumber(pid_str)
 
 if pid then

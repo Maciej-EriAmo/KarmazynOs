@@ -31,7 +31,7 @@ local tools = {
     top = "[DEPRECATED w smoke] Podgląd w pętli — tylko ręcznie (Ctrl+C).",
 }
 
-local tool = karmazyn.read_line("Podaj nazwę narzędzia (puste = lista): ")
+local tool = karmazyn.read_line("Podaj nazwę narzędzia (puste = lista): ") or ""
 if tool == "" then
     local list = {}
     for k, _ in pairs(tools) do table.insert(list, k) end

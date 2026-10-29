@@ -1,4 +1,4 @@
-local pattern = karmazyn.read_line("Wzór do wyszukania: ")
+local pattern = karmazyn.read_line("Wzór do wyszukania: ") or ""
 if pattern == "" then return end
 
 local atoms = karmazyn.list_atoms()

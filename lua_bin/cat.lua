@@ -1,4 +1,4 @@
-local id = karmazyn.read_line("ID Atomu/Bąbla: ")
+local id = karmazyn.read_line("ID Atomu/Bąbla: ") or ""
 if id == "" then return end
 
 local atom = karmazyn.get_atom(id)

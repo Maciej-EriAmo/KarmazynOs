@@ -1,5 +1,5 @@
 -- Recall — rezonans Lorentza (R); pasek znormalizowany min(R,1)
-local query = karmazyn.read_line("Zapytanie asocjacyjne: ")
+local query = karmazyn.read_line("Zapytanie asocjacyjne: ") or ""
 if query == "" then return end
 
 local results = karmazyn.recall(query, 5)

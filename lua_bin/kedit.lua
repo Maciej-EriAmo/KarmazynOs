@@ -1,5 +1,5 @@
 -- kedit.lua — edycja atomu w Φ (host API karmazyn.*)
-local id = karmazyn.read_line("ID Atomu do edycji: ")
+local id = karmazyn.read_line("ID Atomu do edycji: ") or ""
 if id == "" then return end
 
 local atom = karmazyn.get_atom(id)
@@ -17,11 +17,11 @@ while true do
     }
     print(karmazyn.ui.draw_frame("KEDIT: " .. atom.id, menu, "phi_core"))
 
-    local choice = karmazyn.read_line("Wybór: ")
+    local choice = karmazyn.read_line("Wybór: ") or ""
 
     if choice == "1" then
         print("Aktualna E: " .. tostring(atom.E))
-        local new_e = karmazyn.read_line("Nowa Emanacja: ")
+        local new_e = karmazyn.read_line("Nowa Emanacja: ") or ""
         if new_e ~= "" then
             atom.set_E(new_e)
             print("✓ Zaktualizowano w pamięci operacyjnej Φ.")

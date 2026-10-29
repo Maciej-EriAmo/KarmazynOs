@@ -1,8 +1,8 @@
 -- Semantic ping — rezonans Lorentza R(a,b) przez karmazyn.get_similarity
-local id1 = karmazyn.read_line("Atom A: ")
+local id1 = karmazyn.read_line("Atom A: ") or ""
 if id1 == "" then return end
 
-local id2 = karmazyn.read_line("Atom B: ")
+local id2 = karmazyn.read_line("Atom B: ") or ""
 if id2 == "" then return end
 
 local a = karmazyn.get_atom(id1)

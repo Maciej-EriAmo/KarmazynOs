@@ -1,10 +1,10 @@
 -- Tworzy atom Φ. Opcjonalnie energia tracer (Enter = 1.0).
-local id = karmazyn.read_line("ID Atomu: ")
+local id = karmazyn.read_line("ID Atomu: ") or ""
 if id == "" then return end
 
-local s = karmazyn.read_line("Sygnatura (S): ")
-local e = karmazyn.read_line("Emanacja (E): ")
-local tr = karmazyn.read_line("Tracer energy [1.0]: ")
+local s = karmazyn.read_line("Sygnatura (S): ") or ""
+local e = karmazyn.read_line("Emanacja (E): ") or ""
+local tr = karmazyn.read_line("Tracer energy [1.0]: ") or ""
 local energy = 1.0
 if tr ~= nil and tr ~= "" then
     energy = tonumber(tr) or 1.0
