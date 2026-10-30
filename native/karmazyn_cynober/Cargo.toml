@@ -1,0 +1,24 @@
+[package]
+name = "karmazyn_cynober"
+version = "0.1.0"
+edition = "2021"
+authors = ["Maciej Mazur"]
+description = "Klient Cynober-Secure-1.2 (HSS/ECDH + HSL-1.1 + KarminQL-RPC), zgodny z DBase cynober_client.py"
+license = "MIT"
+repository = "https://github.com/Maciej-EriAmo/KarmazynOs"
+
+[lib]
+name = "karmazyn_cynober"
+
+[dependencies]
+sha2 = "0.10"
+hmac = "0.12"
+hkdf = "0.12"
+aes-gcm = "0.10"
+x25519-dalek = { version = "2", features = ["static_secrets"] }
+getrandom = "0.2"
+flate2 = "1"
+serde_json = "1"
+
+[profile.release]
+opt-level = 3
