@@ -60,6 +60,7 @@ Most Lorentza: [MAZUR_CRYSTAL.md](MAZUR_CRYSTAL.md) · `KARMAZYN_MAZUR=0` wyłą
 | `ui.draw_frame(title, lines)` | ramka tekstowa |
 | `fs.read/write/list/delete` | pliki w Store (bąbel `fs`), przechodzą przez `save` i `sync` |
 | `fs bin/<nazwa>` | własne narzędzie: `tool <nazwa>` szuka tu przed `lua_bin` |
+| `fs lib/<nazwa>` | własna biblioteka: `require('<nazwa>')` szuka tu przed preload i projektem; zapis do lib/ odświeża `require` |
 | `cache.read/write` | mini cache w pamięci sesji |
 
 ### Proxy atomu

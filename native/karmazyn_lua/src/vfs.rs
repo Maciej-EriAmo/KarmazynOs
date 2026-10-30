@@ -14,6 +14,8 @@ use karmazyn_substrate::{AtomId, BubbleId, Store, T_INIT};
 pub const ROOT_LABEL: &str = "fs";
 /// Katalog narzędzi: `tool <nazwa>` szuka tu przed `lua_bin`.
 pub const BIN_DIR: &str = "bin";
+/// Katalog bibliotek: `require('x')` szuka lib/x przed preload i projektem.
+pub const LIB_DIR: &str = "lib";
 
 fn root(store: &Store, create: bool) -> Option<BubbleId> {
     let found = store.bubble_ids().into_iter().find(|b| {

@@ -102,7 +102,7 @@ impl Evaluator {
         let tools = Rc::new(RefCell::new(Vec::new()));
         install_sandbox(&lua).expect("lua sandbox");
         install_print(&lua, prints.clone()).expect("lua print");
-        install_searchers(&lua, project.clone()).expect("lua searchers");
+        install_searchers(&lua, store, project.clone()).expect("lua searchers");
         install_karmazyn(&lua, store.clone(), guest.clone()).expect("karmazyn host");
         let arm_budget = install_budget(&lua, Some(DEFAULT_BUDGET)).expect("lua budget");
         Self {
@@ -445,7 +445,21 @@ fn install_print(lua: &Lua, prints: Rc<RefCell<String>>) -> LuaResult<()> {
     Ok(())
 }
 
-fn install_searchers(lua: &Lua, project: Rc<RefCell<Option<PathBuf>>>) -> LuaResult<()> {
+/// Kolejność: `fs` lib/<nazwa> (pisane w sesji, wygrywa jak przy `tool`),
+/// potem `package.preload` (lua_bin), potem katalog projektu.
+fn install_searchers(
+    lua: &Lua,
+    store: &Store,
+    project: Rc<RefCell<Option<PathBuf>>>,
+) -> LuaResult<()> {
+    let store_fs = store.clone();
+    let fs_searcher = lua.create_function(move |lua, name: String| -> LuaResult<MultiValue> {
+        let Some(src) = vfs::read(&store_fs, vfs::LIB_DIR, &name) else {
+            return Ok(MultiValue::new());
+        };
+        let func = lua.load(src).set_name(&name).into_function()?;
+        Ok(MultiValue::from_vec(vec![Value::Function(func)]))
+    })?;
     let package: mlua::Table = lua.globals().get("package")?;
     let preload_searcher = lua.create_function(|lua, name: String| -> LuaResult<MultiValue> {
         let package: mlua::Table = lua.globals().get("package")?;
@@ -473,8 +487,9 @@ fn install_searchers(lua: &Lua, project: Rc<RefCell<Option<PathBuf>>>) -> LuaRes
         Ok(MultiValue::from_vec(vec![Value::Function(func)]))
     })?;
     let searchers = lua.create_table()?;
-    searchers.set(1, preload_searcher)?;
-    searchers.set(2, project_searcher)?;
+    searchers.set(1, fs_searcher)?;
+    searchers.set(2, preload_searcher)?;
+    searchers.set(3, project_searcher)?;
     package.set("searchers", searchers)?;
     Ok(())
 }
@@ -681,8 +696,10 @@ fn install_karmazyn(lua: &Lua, store: Store, guest: Rc<Guest>) -> LuaResult<()> 
     })?;
     fs_tbl.set("read", fs_read)?;
     let store_fw = store.clone();
-    let fs_write = lua.create_function(move |_, args: MultiValue| -> LuaResult<Value> {
-        fs_write(&store_fw, &args)
+    let fs_write = lua.create_function(move |lua, args: MultiValue| -> LuaResult<Value> {
+        let out = fs_write(&store_fw, &args)?;
+        forget_lib(lua, &args)?;
+        Ok(out)
     })?;
     fs_tbl.set("write", fs_write)?;
     let store_fl = store.clone();
@@ -695,9 +712,11 @@ fn install_karmazyn(lua: &Lua, store: Store, guest: Rc<Guest>) -> LuaResult<()> 
     })?;
     fs_tbl.set("list", fs_list)?;
     let store_fd = store.clone();
-    let fs_delete = lua.create_function(move |_, args: MultiValue| -> LuaResult<bool> {
+    let fs_delete = lua.create_function(move |lua, args: MultiValue| -> LuaResult<bool> {
         let (d, f) = pair_key(&args);
-        Ok(vfs::delete(&store_fd, &d, &f))
+        let gone = vfs::delete(&store_fd, &d, &f);
+        forget_lib(lua, &args)?;
+        Ok(gone)
     })?;
     fs_tbl.set("delete", fs_delete)?;
     k.set("fs", fs_tbl)?;
@@ -1255,6 +1274,17 @@ fn pair_key(args: &MultiValue) -> (String, String) {
     (arg_string(it.next()), arg_string(it.next()))
 }
 
+/// Po zmianie pliku w lib/ następny `require` czyta go od nowa.
+fn forget_lib(lua: &Lua, args: &MultiValue) -> LuaResult<()> {
+    let (d, f) = pair_key(args);
+    if d == vfs::LIB_DIR {
+        let package: mlua::Table = lua.globals().get("package")?;
+        let loaded: mlua::Table = package.get("loaded")?;
+        loaded.set(f, Value::Nil)?;
+    }
+    Ok(())
+}
+
 /// `fs.write(katalog, plik, rodzaj, treść)`. Treść idzie bajt w bajt.
 /// Zwraca true albo tekst błędu.
 fn fs_write(store: &Store, args: &MultiValue) -> LuaResult<Value> {
@@ -1743,6 +1773,37 @@ mod tests {
         let (store, ev) = guest();
         assert_eq!(store.bubble_label(ev.env()).as_deref(), Some("lua"));
         assert!(store.is_root(ev.env()));
+    }
+
+    #[test]
+    fn require_reads_fs_lib_first() {
+        let (store, ev) = guest();
+        ev.install_preload("mat", "return { kto = 'preload' }").unwrap();
+        assert_eq!(ev.eval_line(&store, "return require('mat').kto"), "preload");
+
+        // lib/ wygrywa z preload; zapis do lib/ zapomina wynik poprzedniego require
+        ev.eval_line(
+            &store,
+            "karmazyn.fs.write('lib','mat','lua',\"return { kto = 'fs', dodaj = function(a,b) return a+b end }\")",
+        );
+        assert_eq!(ev.eval_line(&store, "return require('mat').kto"), "fs");
+        assert_eq!(
+            ev.eval_line(&store, "return require('mat') == require('mat')"),
+            "true"
+        );
+
+        // narzędzie z bin/ korzysta z biblioteki z lib/
+        ev.eval_line(
+            &store,
+            "karmazyn.fs.write('bin','suma','lua',\"local a,b = ...; return require('mat').dodaj(tonumber(a), tonumber(b))\")",
+        );
+        assert_eq!(ev.run_tool(&store, "suma 40 2").unwrap(), "42");
+
+        ev.eval_line(&store, "karmazyn.fs.delete('lib','mat')");
+        assert_eq!(ev.eval_line(&store, "return require('mat').kto"), "preload");
+
+        ev.eval_line(&store, "karmazyn.fs.write('lib','zly','lua','return (')");
+        assert!(ev.eval_line(&store, "return require('zly')").starts_with("blad:"));
     }
 
     #[test]
