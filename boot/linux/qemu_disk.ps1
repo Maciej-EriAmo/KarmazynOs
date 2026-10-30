@@ -152,6 +152,12 @@ $checks = [ordered]@{
     'tool z nano'          = ($two -match '(?m)^54\s*$') -and ($two -match 'local a, b = \.\.\.\r?\n\r?\nreturn')
     'tool z edit'          = $two -match '(?m)^Hej kursor'
     'autosync po sync'     = $two -match '(?m)^autosync ok'
+    # rozruch 2 tylko czyta i uruchamia narzędzia: autosync nie pisze (heat to nie treść)
+    'odczyt bez zapisu'    = $(
+        $g0 = [int][regex]::Match($two, 'disk — /dev/vda gen=(\d+)').Groups[1].Value
+        $gens = [regex]::Matches($two, 'gen=(\d+) bytes') | ForEach-Object { [int]$_.Groups[1].Value }
+        $g0 -gt 0 -and ($gens | Measure-Object -Maximum).Maximum -eq $g0
+    )
 }
 $checks.GetEnumerator() | Where-Object { -not $_.Value } | ForEach-Object { Write-Host "BRAK: $($_.Key)" }
 $pass = -not ($checks.Values -contains $false)

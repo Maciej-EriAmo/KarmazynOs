@@ -370,26 +370,42 @@ fn open_disk(app: &mut App) -> Option<(bool, String)> {
     };
     app.disk = Some(d);
     // stan po starcie (wczytany albo pusty) liczy się jako zapisany
-    app.synced.set(snapshot_hash(&app.store.export_snapshot().to_text()));
+    app.synced.set(content_hash(&app.store.export_snapshot()));
     Some(line)
 }
 
-fn snapshot_hash(text: &str) -> u64 {
+/// Skrót treści Store dla autosync: atomy (S, E, token, payload), bąble,
+/// powiązania, korzenie. Bez T i liczników META, więc odczyt, który tylko
+/// grzeje atom, nie pisze na dysk. Temperaturę zapisuje `sync` albo
+/// następna zmiana treści.
+fn content_hash(snap: &StoreSnapshot) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
-    text.hash(&mut h);
+    for a in &snap.atoms {
+        (a.id, &a.s, &a.e, a.value_token, &a.payload).hash(&mut h);
+    }
+    for b in &snap.bubbles {
+        (b.id, &b.label, b.parent).hash(&mut h);
+    }
+    let mut binds: Vec<_> = snap.binds.iter().map(|b| (b.bid, &b.name, b.aid)).collect();
+    binds.sort();
+    binds.hash(&mut h);
+    let mut roots = snap.roots.clone();
+    roots.sort();
+    roots.hash(&mut h);
     h.finish()
 }
 
-/// Zapis na dysk, gdy snapshot różni się od ostatnio zapisanego.
+/// Zapis na dysk, gdy treść różni się od ostatnio zapisanej (`content_hash`).
 /// `None` = nic do zrobienia (brak dysku, autosync wyłączony, bez zmian).
 fn write_if_changed(app: &App) -> Option<Result<disk::Slot, String>> {
     let d = app.disk.as_ref()?;
-    let text = app.store.export_snapshot().to_text();
-    let h = snapshot_hash(&text);
+    let snap = app.store.export_snapshot();
+    let h = content_hash(&snap);
     if h == app.synced.get() {
         return None;
     }
+    let text = snap.to_text();
     let r = d.write_next(text.as_bytes());
     if r.is_ok() {
         app.synced.set(h);
@@ -459,10 +475,11 @@ fn disk_sync(app: &App) -> Outcome {
         println!("sync: brak dysku (KARMAZYN_DISK)");
         return Outcome::Err;
     };
-    let text = app.store.export_snapshot().to_text();
+    let snap = app.store.export_snapshot();
+    let text = snap.to_text();
     match d.write_next(text.as_bytes()) {
         Ok(s) => {
-            app.synced.set(snapshot_hash(&text));
+            app.synced.set(content_hash(&snap));
             println!("sync {} gen={} bytes={}", d.path().display(), s.gen, s.len);
             Outcome::Ok
         }
@@ -1149,7 +1166,7 @@ fn print_help() {
   echo <text>
   save <path> / load <path>     KSUB_SNAP v1. load remounts lisp and lua
   sync                          snapshot na dysk (KARMAZYN_DISK, slot A/B)
-                                po każdym poleceniu sam, gdy coś się zmieniło
+                                po każdym poleceniu sam, gdy zmieniła się treść
                                 (KARMAZYN_AUTOSYNC=0 wyłącza)
   edit <katalog>/<plik>         edytor z kursorem (^S zapis, ^Q wyjście, ^K linia)
   disk                          stan dysku i slotów
@@ -1161,4 +1178,32 @@ fn print_help() {
 
 batch: non-zero exit if a command fails (assert/save/bind/…)"
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn content_hash_ignores_heat_not_content() {
+        let s = Store::new(true);
+        let a = s.atom_new("x", "y", 50.0);
+        let b = s.bubble_new("dir", None);
+        s.set_root(b);
+        s.bind(b, "x", a).unwrap();
+        let h0 = content_hash(&s.export_snapshot());
+
+        s.heat(a);
+        s.settle(3);
+        assert!(s.has_atom(a));
+        assert_eq!(content_hash(&s.export_snapshot()), h0);
+
+        s.atom_set_value_token(a, 7);
+        let h1 = content_hash(&s.export_snapshot());
+        assert_ne!(h1, h0);
+        s.atom_set_guest(a, 7, Some(b"kod".to_vec()));
+        assert_ne!(content_hash(&s.export_snapshot()), h1);
+        s.unbind(b, "x");
+        assert_ne!(content_hash(&s.export_snapshot()), h1);
+    }
 }
