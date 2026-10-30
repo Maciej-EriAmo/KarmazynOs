@@ -4,11 +4,12 @@
 //! Ramka: `[type:1][size:4 = len(body)+4][body][crc32(body):4]`, big-endian.
 //! Nagłówek strumienia: `KAFS` + wersja 0x0200 + flagi.
 
+use crate::cipher::{self, infer_world_from_path, is_kx1, plain_requested};
 use crate::json;
 use crate::seek::{Layout, Writer};
 use crate::{
-    crc32, err, peek_thermal_header, Atom, Error, Result, F_PHI_NATIVE,
-    F_STREAMING, KX1_MAGIC, VERSION,
+    crc32, err, peek_thermal_header, Atom, Error, Result, F_ENCRYPTED, F_PHI_NATIVE,
+    F_STREAMING, VERSION,
 };
 use serde_json::{Map, Value};
 use std::fs::{self, File, OpenOptions};
@@ -132,14 +133,49 @@ fn decode_checkpoint(b: &[u8]) -> Option<Checkpoint> {
     })
 }
 
-fn refuse_kx1(a: &Atom) -> Result<()> {
-    if a.data.starts_with(KX1_MAGIC) {
-        return err(format!(
-            "KAFS: atom {:?} zaszyfrowany (KX1) — odszyfrowanie jeszcze nie jest natywne",
-            a.id
-        ));
+/// Ustawienia szyfrowania dziennika i compact (jak argumenty `world=`,
+/// `encrypt=` w Pythonie). Domyślnie: świat z nazwy pliku, szyfruj chyba że
+/// `KARMAZYN_KAFD_PLAIN`, master z env / pliku.
+#[derive(Debug, Clone, Default)]
+pub struct Crypt {
+    pub world: Option<String>,
+    pub encrypt: Option<bool>,
+    pub master: Option<Vec<u8>>,
+}
+
+impl Crypt {
+    /// Jawnie, bez kopert (debug, testy).
+    pub fn plain() -> Self {
+        Crypt { encrypt: Some(false), ..Crypt::default() }
     }
-    Ok(())
+
+    /// Szyfrowanie podanym kluczem węzła.
+    pub fn with_master(master: &[u8]) -> Self {
+        Crypt { encrypt: Some(true), master: Some(master.to_vec()), ..Crypt::default() }
+    }
+
+    fn encrypt(&self) -> bool {
+        self.encrypt.unwrap_or_else(|| !plain_requested())
+    }
+
+    fn world_for(&self, path: &Path) -> String {
+        self.world.clone().unwrap_or_else(|| infer_world_from_path(path))
+    }
+
+    fn master(&self) -> Option<&[u8]> {
+        self.master.as_deref()
+    }
+}
+
+/// KX1 → dane jawne (AAD = id). Atom jawny bez zmian.
+fn unwrap_atom(a: Atom, world: &str, master: Option<&[u8]>) -> Result<Atom> {
+    if !is_kx1(&a.data) {
+        return Ok(a);
+    }
+    let plain = cipher::unwrap_payload(&a.data, world, a.id.as_bytes(), master)?;
+    let mut out = Atom::new(a.id, plain, a.mime, a.t, a.t_max, a.atype);
+    out.state = a.state;
+    Ok(out)
 }
 
 /// `KAFDFlowWriter`: META, atomy malejąco po T (stabilnie), END.
@@ -298,11 +334,15 @@ pub struct Recovery {
 }
 
 /// `KAFDJournal`: append-only KAFS z flagą F_STREAMING, checkpointy,
-/// obcięcie urwanej ramki przy otwarciu. Zapis jawny (bez KX1).
+/// obcięcie urwanej ramki przy otwarciu. Dane atomów w kopercie KX1, gdy
+/// szyfrowanie włączone (`Crypt`).
 pub struct Journal {
     path: PathBuf,
     file: Option<File>,
     fsync: bool,
+    world: String,
+    encrypt: bool,
+    master: Option<Vec<u8>>,
     pub n_frames: u64,
     pub last_tick: u64,
     pub last_checkpoint: Option<Checkpoint>,
@@ -310,14 +350,26 @@ pub struct Journal {
 }
 
 impl Journal {
+    /// Otwarcie z domyślnym szyfrowaniem (`Crypt::default()`).
     pub fn open(path: impl AsRef<Path>, fsync: bool, meta: &Map<String, Value>) -> Result<Self> {
+        Journal::open_with(path, fsync, meta, &Crypt::default())
+    }
+
+    pub fn open_with(
+        path: impl AsRef<Path>,
+        fsync: bool,
+        meta: &Map<String, Value>,
+        crypt: &Crypt,
+    ) -> Result<Self> {
         let path = path.as_ref().to_path_buf();
+        let world = crypt.world_for(&path);
+        let master = crypt.master.clone();
         if let Some(d) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
             fs::create_dir_all(d)?;
         }
         let existing = fs::metadata(&path).map(|m| m.len() >= 8).unwrap_or(false);
         let (file, recovered) = if existing {
-            let rec = recover(&path)?;
+            let rec = recover_with(&path, &world, master.as_deref())?;
             let mut f = OpenOptions::new().read(true).write(true).open(&path)?;
             f.seek(SeekFrom::End(0))?;
             (f, rec)
@@ -355,6 +407,9 @@ impl Journal {
             path,
             file: Some(file),
             fsync,
+            world,
+            encrypt: crypt.encrypt(),
+            master,
             n_frames: recovered.frames,
             last_tick: if recovered.last_tick != 0 {
                 recovered.last_tick
@@ -384,8 +439,20 @@ impl Journal {
         self.file.as_mut().ok_or_else(|| Error("KAFDJournal zamknięty".into()))
     }
 
+    pub fn world(&self) -> &str {
+        &self.world
+    }
+
     pub fn append_atom(&mut self, a: &Atom) -> Result<u64> {
-        let n = write_frame(self.file()?, FT_ATOM, &encode_atom(a))?;
+        let body = if self.encrypt && !is_kx1(&a.data) {
+            let data = cipher::wrap_payload(&a.data, &self.world, a.id.as_bytes(), self.master.as_deref())?;
+            let mut stored = Atom::new(a.id.clone(), data, a.mime.clone(), a.t, a.t_max, a.atype);
+            stored.state = a.state;
+            encode_atom(&stored)
+        } else {
+            encode_atom(a)
+        };
+        let n = write_frame(self.file()?, FT_ATOM, &body)?;
         self.n_frames += 1;
         if let Some(h) = peek_thermal_header(&a.data) {
             self.last_tick = h.tick;
@@ -403,15 +470,14 @@ impl Journal {
         Ok(n)
     }
 
-    /// Atomy od początku pliku (osobny uchwyt).
+    /// Atomy od początku pliku (osobny uchwyt), KX1 odszyfrowane.
     pub fn atoms(&self, min_t: f64) -> Result<Vec<Atom>> {
         let mut r = FlowReader::new(std::io::BufReader::new(File::open(&self.path)?), false);
         r.read_header()?;
-        let atoms = r.atoms(min_t)?;
-        for a in &atoms {
-            refuse_kx1(a)?;
-        }
-        Ok(atoms)
+        r.atoms(min_t)?
+            .into_iter()
+            .map(|a| unwrap_atom(a, &self.world, self.master.as_deref()))
+            .collect()
     }
 
     pub fn close(&mut self, write_end: bool) -> Result<()> {
@@ -429,8 +495,9 @@ impl Journal {
     }
 }
 
-/// `recover`: skan ramek, obcięcie po ostatnim dobrym CRC.
-pub fn recover(path: &Path) -> Result<Recovery> {
+/// `recover`: skan ramek, obcięcie po ostatnim dobrym CRC. Klatka termiczna
+/// w KX1 jest odszyfrowywana, żeby odczytać tick (jak w Pythonie).
+fn recover_with(path: &Path, world: &str, master: Option<&[u8]>) -> Result<Recovery> {
     let size = fs::metadata(path).map(|m| m.len()).unwrap_or(0);
     let mut rec = Recovery {
         truncated: false,
@@ -488,8 +555,11 @@ pub fn recover(path: &Path) -> Result<Recovery> {
         match kind {
             FT_ATOM => {
                 rec.frames += 1;
-                if let Some(h) = decode_atom(body).and_then(|a| peek_thermal_header(&a.data)) {
-                    rec.last_tick = h.tick;
+                if let Some(a) = decode_atom(body) {
+                    let a = unwrap_atom(a, world, master)?;
+                    if let Some(h) = peek_thermal_header(&a.data) {
+                        rec.last_tick = h.tick;
+                    }
                 }
             }
             FT_CHECKPOINT => rec.last_checkpoint = decode_checkpoint(body),
@@ -514,19 +584,22 @@ pub struct CompactReport {
 }
 
 /// `compact_journal`: dziennik KAFS → KAFD (domyślnie v2.1 footer), zapis
-/// tmp + fsync + rename, opcjonalnie wyzerowanie dziennika. Bez koperty KAFX.
+/// tmp + fsync + rename, opcjonalnie wyzerowanie dziennika. Przy szyfrowaniu:
+/// atomy z KX1 odszyfrowane, KAFD z flagą F_ENCRYPTED w kopercie KAFX
+/// (świat = `crypt.world` albo nazwa pliku .kafd).
 pub fn compact_journal(
     journal: &Path,
     kafd: &Path,
     layout: Layout,
     reset_journal: bool,
     meta: Option<Map<String, Value>>,
+    crypt: &Crypt,
 ) -> Result<CompactReport> {
     let size = fs::metadata(journal).map(|m| m.len()).unwrap_or(0);
     if size < 8 {
         return Ok(CompactReport { atoms: 0, bytes: 0, empty: true, recovered_frames: 0 });
     }
-    let mut j = Journal::open(journal, false, &Map::new())?;
+    let mut j = Journal::open_with(journal, false, &Map::new(), crypt)?;
     let recovered_frames = j.n_frames;
     let atoms = j.atoms(0.0)?;
     j.close(false)?;
@@ -537,11 +610,17 @@ pub fn compact_journal(
         m.insert("frames".into(), Value::from(atoms.len()));
         m
     });
-    let mut w = Writer::new(layout).with_meta(meta);
+    let mark = crypt.encrypt();
+    let flags = F_PHI_NATIVE | if mark { F_ENCRYPTED } else { 0 };
+    let mut w = Writer::new(layout).with_meta(meta).with_flags(flags);
     for a in &atoms {
         w.add(a.clone());
     }
-    let blob = w.build();
+    let mut blob = w.build();
+    if mark {
+        let world = crypt.world.clone().unwrap_or_else(|| infer_world_from_path(kafd));
+        blob = cipher::wrap_kafx(&blob, &world, crypt.master())?;
+    }
     atomic_replace(kafd, &blob)?;
 
     if reset_journal {
@@ -623,7 +702,7 @@ mod tests {
         let jp = d.join("world.kafs");
         let mut meta = Map::new();
         meta.insert("world".into(), Value::from("w"));
-        let mut j = Journal::open(&jp, true, &meta).unwrap();
+        let mut j = Journal::open_with(&jp, true, &meta, &Crypt::plain()).unwrap();
         for t in 1..=3 {
             j.append_atom(&Atom::new(format!("tick.{t}"), thermal(t), MIME_THERMAL, 50.0, 100.0, A_THERMAL)).unwrap();
         }
@@ -633,7 +712,7 @@ mod tests {
         let mut f = OpenOptions::new().append(true).open(&jp).unwrap();
         f.write_all(&[FT_ATOM, 0, 0, 0, 99, 1, 2, 3]).unwrap();
         drop(f);
-        let j = Journal::open(&jp, false, &Map::new()).unwrap();
+        let j = Journal::open_with(&jp, false, &Map::new(), &Crypt::plain()).unwrap();
         assert!(j.recovered.truncated);
         assert_eq!(j.recovered.reason, "short_payload");
         assert_eq!((j.n_frames, j.last_tick), (3, 3));
@@ -641,7 +720,7 @@ mod tests {
         drop(j);
 
         let kp = d.join("world.kafd");
-        let rep = compact_journal(&jp, &kp, Layout::Footer, true, None).unwrap();
+        let rep = compact_journal(&jp, &kp, Layout::Footer, true, None, &Crypt::plain()).unwrap();
         assert_eq!(rep.atoms, 3);
         let r = Reader::from_path(&kp).unwrap();
         assert_eq!(r.tick_index().len(), 3);
@@ -651,14 +730,36 @@ mod tests {
     }
 
     #[test]
-    fn kx1_atoms_are_refused() {
+    fn encrypted_journal_and_compact() {
         let d = tmp("kx1");
-        let jp = d.join("e.kafs");
-        let mut j = Journal::open(&jp, false, &Map::new()).unwrap();
-        let mut data = KX1_MAGIC.to_vec();
-        data.extend([0u8; 40]);
-        j.append_atom(&Atom::raw("x", data, "application/octet-stream")).unwrap();
-        assert!(j.atoms(0.0).unwrap_err().0.contains("KX1"));
+        let jp = d.join("swiat.kafs");
+        let crypt = Crypt::with_master(&[9u8; 32]);
+        let mut j = Journal::open_with(&jp, false, &Map::new(), &crypt).unwrap();
+        assert_eq!(j.world(), "swiat");
+        j.append_atom(&Atom::new("tick.5", thermal(5), MIME_THERMAL, 50.0, 100.0, A_THERMAL)).unwrap();
+        j.append_atom(&Atom::raw("tajne", b"sekret".to_vec(), "text/plain")).unwrap();
+        j.close(false).unwrap();
+        let raw = fs::read(&jp).unwrap();
+        assert!(!raw.windows(6).any(|w| w == b"sekret"), "dane jawne w dzienniku");
+
+        // ponowne otwarcie: tick z odszyfrowanej klatki, atomy jawne
+        let j = Journal::open_with(&jp, false, &Map::new(), &crypt).unwrap();
+        assert_eq!((j.n_frames, j.last_tick), (2, 5));
+        let a = j.atoms(0.0).unwrap();
+        assert_eq!(a[1].data, b"sekret");
+        drop(j);
+        // zły klucz: odmowa, nie śmieci
+        let bad = Crypt::with_master(&[1u8; 32]);
+        assert!(Journal::open_with(&jp, false, &Map::new(), &bad).is_err());
+
+        let kp = d.join("mapa.kafd");
+        compact_journal(&jp, &kp, Layout::Footer, true, None, &crypt).unwrap();
+        let blob = fs::read(&kp).unwrap();
+        assert!(crate::cipher::is_kafx(&blob));
+        let r = Reader::from_path_with(&kp, Some("mapa"), Some(&[9u8; 32])).unwrap();
+        assert!(r.is_encrypted_mark());
+        assert_eq!(r.get_atom("tajne").unwrap().unwrap().data, b"sekret");
+        assert!(Reader::from_path_with(&kp, Some("inny"), Some(&[9u8; 32])).is_err());
         let _ = fs::remove_dir_all(&d);
     }
 }

@@ -2,13 +2,16 @@
 //!
 //!   kafd_cross write <dir>   rust_v20.kafd rust_v21.kafd rust_flow.kafs
 //!                            rust_journal.kafs rust_compact.kafd
+//!                            rust_kafx.kafd (nonce 05×12) rust_enc_journal.kafs
+//!                            rust_enc_compact.kafd (master z CYNOBER_MASTER_KEY)
 //!   kafd_cross read <dir>    opis plików py_* jako JSON (stdout)
 //!
 //! Dane wejściowe i czas (1700000000, "2023-11-14 22:13") są te same co w skrypcie.
 
+use karmazyn_kafd::cipher::wrap_kafx_with_nonce;
 use karmazyn_kafd::{
-    compact_journal, Atom, FlowReader, FlowWriter, Journal, Layout, Reader, Writer, A_PHI_ATOM,
-    A_RAW, A_THERMAL, MIME_THERMAL,
+    compact_journal, Atom, Crypt, FlowReader, FlowWriter, Journal, Layout, Reader, Writer,
+    A_PHI_ATOM, A_RAW, A_THERMAL, MIME_THERMAL,
 };
 use serde_json::{json, Map, Value};
 use std::path::Path;
@@ -68,7 +71,7 @@ fn write(dir: &Path) -> karmazyn_kafd::Result<()> {
     let jp = dir.join("rust_journal.kafs");
     let _ = std::fs::remove_file(&jp);
     let Value::Object(jm) = json!({"world": "cross"}) else { unreachable!() };
-    let mut j = Journal::open(&jp, false, &jm)?;
+    let mut j = Journal::open_with(&jp, false, &jm, &Crypt::plain())?;
     let all = atoms();
     j.append_atom(&all[3])?;
     j.append_atom(&all[0])?;
@@ -80,14 +83,30 @@ fn write(dir: &Path) -> karmazyn_kafd::Result<()> {
     std::fs::copy(&jp, &cj)?;
     let Value::Object(cm) = json!({"source": "kafs-journal", "frames": 2}) else { unreachable!() };
     // Writer w compact bierze czas „teraz”; do porównania bajtów piszemy ręcznie tak samo
-    let rep = compact_journal(&cj, &dir.join("rust_compact_now.kafd"), Layout::Footer, true, Some(cm.clone()))?;
+    let rep = compact_journal(&cj, &dir.join("rust_compact_now.kafd"), Layout::Footer, true, Some(cm.clone()), &Crypt::plain())?;
     assert_eq!(rep.atoms, 2);
-    let j2 = Journal::open(&jp, false, &Map::new())?;
+    let j2 = Journal::open_with(&jp, false, &Map::new(), &Crypt::plain())?;
     let mut w = Writer::new(Layout::Footer).with_meta(cm).with_created(UNIX, CREATED);
     for a in j2.atoms(0.0)? {
         w.add(a);
     }
     std::fs::write(dir.join("rust_compact.kafd"), w.build())?;
+
+    // szyfrowanie: master z CYNOBER_MASTER_KEY (jak w Pythonie)
+    let v21 = std::fs::read(dir.join("rust_v21.kafd"))?;
+    std::fs::write(dir.join("rust_kafx.kafd"), wrap_kafx_with_nonce(&v21, "cross", None, &[5u8; 12])?)?;
+    let enc = Crypt { world: Some("cross_enc".into()), encrypt: Some(true), master: None };
+    let ep = dir.join("rust_enc_journal.kafs");
+    let _ = std::fs::remove_file(&ep);
+    let mut j = Journal::open_with(&ep, false, &jm, &enc)?;
+    j.append_atom(&all[3])?;
+    j.append_atom(&all[0])?;
+    j.checkpoint(417, "seal", 40.0, 70.0, 0)?;
+    j.close(false)?;
+    let ec = dir.join("rust_enc_compact_src.kafs");
+    std::fs::copy(&ep, &ec)?;
+    let Value::Object(em) = json!({"source": "kafs-journal", "frames": 2}) else { unreachable!() };
+    compact_journal(&ec, &dir.join("rust_enc_compact.kafd"), Layout::Footer, true, Some(em), &enc)?;
     Ok(())
 }
 
@@ -101,7 +120,7 @@ fn describe(a: &Atom) -> Value {
 
 fn read(dir: &Path) -> karmazyn_kafd::Result<Value> {
     let mut out = Map::new();
-    for name in ["py_v20.kafd", "py_v21.kafd", "py_compact.kafd"] {
+    for name in ["py_v20.kafd", "py_v21.kafd", "py_compact.kafd", "py_kafx.kafd", "py_enc_compact.kafd"] {
         let r = Reader::from_path(dir.join(name))?;
         let mut ids: Vec<&str> = r.atom_ids();
         ids.sort();
@@ -125,15 +144,18 @@ fn read(dir: &Path) -> karmazyn_kafd::Result<Value> {
     let flow: Vec<Value> = fr.atoms(0.0)?.iter().map(describe).collect();
     out.insert("py_flow.kafs".into(), json!({"meta": fr.meta(), "atoms": flow}));
 
-    let j = Journal::open(dir.join("py_journal.kafs"), false, &Map::new())?;
-    let ck = j.last_checkpoint.clone().unwrap();
-    let ja: Vec<Value> = j.atoms(0.0)?.iter().map(describe).collect();
-    out.insert(
-        "py_journal.kafs".into(),
-        json!({"frames": j.n_frames, "last_tick": j.last_tick,
-               "checkpoint": {"tick": ck.tick, "n_frames": ck.n_frames, "causality": ck.causality},
-               "atoms": ja}),
-    );
+    let enc = Crypt { world: Some("cross_enc".into()), encrypt: Some(true), master: None };
+    for (name, crypt) in [("py_journal.kafs", Crypt::plain()), ("py_enc_journal.kafs", enc)] {
+        let j = Journal::open_with(dir.join(name), false, &Map::new(), &crypt)?;
+        let ck = j.last_checkpoint.clone().unwrap();
+        let ja: Vec<Value> = j.atoms(0.0)?.iter().map(describe).collect();
+        out.insert(
+            name.into(),
+            json!({"frames": j.n_frames, "last_tick": j.last_tick,
+                   "checkpoint": {"tick": ck.tick, "n_frames": ck.n_frames, "causality": ck.causality},
+                   "atoms": ja}),
+        );
+    }
     Ok(Value::Object(out))
 }
 

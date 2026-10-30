@@ -11,16 +11,18 @@
 //! Wszystkie liczby big-endian. T zapisywane jako f32. `id_hash` = pierwsze 8 B
 //! SHA-256 identyfikatora, CAS = pierwsze 12 B SHA-256 danych.
 //!
-//! Poza zakresem (następny krok): koperta KAFX i ramki KX1 (AES-256-GCM, klucz świata).
-//! Zaszyfrowany plik albo atom daje jawny błąd, nie śmieci.
+//! Szyfrowanie jak `karmazyn_cipher.py` (moduł [`cipher`]): koperta pliku KAFX
+//! i koperta danych atomu w dzienniku KX1, AES-256-GCM z kluczem świata
+//! (HKDF-SHA256 z klucza węzła). Stary XOR tylko do odczytu.
 
+pub mod cipher;
 mod flow;
 mod json;
 mod seek;
 
 pub use flow::{
-    compact_journal, CompactReport, FlowReader, FlowWriter, Journal, Recovery, FT_ATOM,
-    FT_CHECKPOINT, FT_END, FT_META, KAFS_MAGIC,
+    atomic_replace, compact_journal, Checkpoint, CompactReport, Crypt, FlowReader, FlowWriter,
+    Journal, Recovery, FT_ATOM, FT_CHECKPOINT, FT_END, FT_META, KAFS_MAGIC,
 };
 pub use seek::{Entry, Layout, Reader, TickRecord, Writer};
 

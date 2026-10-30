@@ -319,13 +319,33 @@ impl Reader {
         Reader::parse_with(data, true)
     }
 
+    /// Jak `KAFDReader.from_path`: KAFD jawnie, KAFX odszyfrowany kluczem
+    /// świata zapisanego w kopercie (master z env / pliku), stary XOR.
     pub fn from_path(path: impl AsRef<std::path::Path>) -> Result<Self> {
-        Reader::parse(std::fs::read(path)?)
+        Reader::from_path_with(path, None, None)
+    }
+
+    /// `world`: gdy podany, musi zgadzać się ze światem w kopercie KAFX.
+    pub fn from_path_with(
+        path: impl AsRef<std::path::Path>,
+        world: Option<&str>,
+        master: Option<&[u8]>,
+    ) -> Result<Self> {
+        Reader::open_stored(std::fs::read(path)?, world, master)
+    }
+
+    /// Blob z dysku w dowolnej postaci (KAFD, KAFX, stary XOR).
+    pub fn open_stored(data: Vec<u8>, world: Option<&str>, master: Option<&[u8]>) -> Result<Self> {
+        if data.starts_with(MAGIC) {
+            return Reader::parse(data);
+        }
+        let (plain, _mode) = crate::cipher::open_stored_bytes(&data, world, master)?;
+        Reader::parse(plain)
     }
 
     pub fn parse_with(data: Vec<u8>, verify_cas: bool) -> Result<Self> {
         if data.starts_with(KAFX_MAGIC) {
-            return err("KAFD: koperta KAFX (AES-GCM) — odszyfrowanie jeszcze nie jest natywne");
+            return err("KAFD: koperta KAFX — użyj Reader::open_stored albo from_path");
         }
         if data.len() < HEADER_SIZE || &data[..4] != MAGIC {
             return err("KAFD: brak magii KAFD");
