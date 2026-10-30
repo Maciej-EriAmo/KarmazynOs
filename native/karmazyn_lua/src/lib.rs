@@ -6,6 +6,8 @@
 //! closures stay on that heap. Only atoms created through `karmazyn.*`
 //! live in the Store. This guest does not register `env_of("guest")`.
 
+mod vfs;
+
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, VecDeque};
 use std::fs;
@@ -53,7 +55,6 @@ struct Guest {
     input: RefCell<VecDeque<String>>,
     /// Interactive shell reads stdin when the queue is empty. Tests leave this off.
     stdin_on: Cell<bool>,
-    fs: RefCell<HashMap<(String, String), String>>,
     cache: RefCell<HashMap<String, (String, String)>>,
     agents: RefCell<HashMap<i64, AgentRec>>,
     holograms: RefCell<HashMap<String, HoloRec>>,
@@ -94,7 +95,6 @@ impl Evaluator {
             epoch: Cell::new(0),
             input: RefCell::new(VecDeque::new()),
             stdin_on: Cell::new(false),
-            fs: RefCell::new(HashMap::new()),
             cache: RefCell::new(HashMap::new()),
             agents: RefCell::new(HashMap::new()),
             holograms: RefCell::new(HashMap::new()),
@@ -647,18 +647,37 @@ fn install_karmazyn(lua: &Lua, store: Store, guest: Rc<Guest>) -> LuaResult<()> 
     ui.set("draw_frame", frame)?;
     k.set("ui", ui)?;
 
-    let guest_fs = guest.clone();
+    // fs żyje w Store (bąbel "fs"), więc przechodzi przez snapshot i dysk.
     let fs_tbl = lua.create_table()?;
+    let store_fr = store.clone();
     let fs_read = lua.create_function(move |lua, args: MultiValue| -> LuaResult<Value> {
-        fs_read(lua, &guest_fs, &args)
+        let (d, f) = pair_key(&args);
+        match vfs::read(&store_fr, &d, &f) {
+            Some(bytes) => Ok(Value::String(lua.create_string(bytes)?)),
+            None => Ok(Value::Nil),
+        }
     })?;
     fs_tbl.set("read", fs_read)?;
-    let guest_fw = guest.clone();
-    let fs_write = lua.create_function(move |_, args: MultiValue| -> LuaResult<bool> {
-        fs_write(&guest_fw, &args);
-        Ok(true)
+    let store_fw = store.clone();
+    let fs_write = lua.create_function(move |_, args: MultiValue| -> LuaResult<Value> {
+        fs_write(&store_fw, &args)
     })?;
     fs_tbl.set("write", fs_write)?;
+    let store_fl = store.clone();
+    let fs_list = lua.create_function(move |lua, dir: Option<String>| -> LuaResult<mlua::Table> {
+        let names = match dir {
+            Some(d) => vfs::files(&store_fl, &d),
+            None => vfs::dirs(&store_fl),
+        };
+        lua.create_sequence_from(names)
+    })?;
+    fs_tbl.set("list", fs_list)?;
+    let store_fd = store.clone();
+    let fs_delete = lua.create_function(move |_, args: MultiValue| -> LuaResult<bool> {
+        let (d, f) = pair_key(&args);
+        Ok(vfs::delete(&store_fd, &d, &f))
+    })?;
+    fs_tbl.set("delete", fs_delete)?;
     k.set("fs", fs_tbl)?;
 
     let guest_cr = guest.clone();
@@ -1214,21 +1233,21 @@ fn pair_key(args: &MultiValue) -> (String, String) {
     (arg_string(it.next()), arg_string(it.next()))
 }
 
-fn fs_read(lua: &Lua, guest: &Guest, args: &MultiValue) -> LuaResult<Value> {
-    let key = pair_key(args);
-    match guest.fs.borrow().get(&key).cloned() {
-        Some(text) => lua_text(lua, &text),
-        None => Ok(Value::Nil),
-    }
-}
-
-fn fs_write(guest: &Guest, args: &MultiValue) {
+/// `fs.write(katalog, plik, rodzaj, treść)`. Treść idzie bajt w bajt.
+/// Zwraca true albo tekst błędu.
+fn fs_write(store: &Store, args: &MultiValue) -> LuaResult<Value> {
     let mut it = args.iter();
-    let bubble = arg_string(it.next());
+    let dir = arg_string(it.next());
     let file_id = arg_string(it.next());
-    let _kind = it.next();
-    let content = arg_string(it.next());
-    guest.fs.borrow_mut().insert((bubble, file_id), content);
+    let kind = arg_string(it.next());
+    let content = match it.next() {
+        Some(Value::String(s)) => s.as_bytes().to_vec(),
+        other => arg_string(other).into_bytes(),
+    };
+    match vfs::write(store, &dir, &file_id, &kind, &content) {
+        Ok(()) => Ok(Value::Boolean(true)),
+        Err(e) => Err(mlua::Error::external(e)),
+    }
 }
 
 fn cache_read(lua: &Lua, guest: &Guest, args: &MultiValue) -> LuaResult<Value> {

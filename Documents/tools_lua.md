@@ -58,7 +58,8 @@ Most Lorentza: [MAZUR_CRYSTAL.md](MAZUR_CRYSTAL.md) · `KARMAZYN_MAZUR=0` wyłą
 | `clear_screen()` / `sleep(sec)` | UI terminala |
 | `ui.progress_bar(v, max, width)` | pasek tekstowy |
 | `ui.draw_frame(title, lines)` | ramka tekstowa |
-| `fs.read/write`, `cache.read/write` | mini VFS w pamięci sesji |
+| `fs.read/write/list/delete` | pliki w Store (bąbel `fs`), przechodzą przez `save` i `sync` |
+| `cache.read/write` | mini cache w pamięci sesji |
 
 ### Proxy atomu
 

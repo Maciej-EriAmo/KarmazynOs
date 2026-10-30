@@ -7,7 +7,8 @@ Te przypadki zostają na `karmazyn.cmd --python`. Porównanie z wyrocznią je po
 - `karmazyn.create_atom` i `clone_atom` zwracają proxy (id, S, E, state, get_T, get_T_frac, set_E, set_state) albo tekst błędu. Piąty argument (energia tracera) jest ignorowany: natywny Store nie ma tracera.
 - `list_atoms` zwraca proxy aliasów sesji. Filtr `HOT|WARM|COLD|TOMB` działa. `ALL` to te same aliasy, nie atomy silnika spoza `karmazyn.*`.
 - `age` to epoki sesji od `create_atom`. Liczy je `karmazyn.step` oraz polecenia powłoki `tick` i `settle` (tyle ticków, ile zaszło w magazynie). To nie są sekundy zegara ściennego z Pythona.
-- `fs`, `cache`, agenci i hologramy są mapami sesji. Giną z procesem. Nie wchodzą w snapshot.
+- `cache`, agenci i hologramy są mapami sesji. Giną z procesem. Nie wchodzą w snapshot.
+- `fs` żyje w Store: katalog to bąbel pod korzeniem `fs`, plik to atom z treścią w payload. Wchodzi w snapshot i w `sync`. Dochodzą `fs.list([katalog])` i `fs.delete(katalog, plik)`, których Python nie ma.
 - Tabela Lua nie jest bąblem. `collectgarbage` czyści stertę PUC. Atomy `karmazyn.*` trzyma korzeń sesji i zbiera je `karmazyn.step`.
 - `recall` i `get_similarity` liczą warstwę `substr` (tekst S/E/id). Most Lorentza i HRR zostają na Pythonie.
 - `debug.*` z kontraktu 1.1 zostaje na Pythonie. W tym gościu `debug` jest wyłączone.
