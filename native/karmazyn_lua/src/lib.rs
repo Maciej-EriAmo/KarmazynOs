@@ -284,6 +284,44 @@ impl Evaluator {
         names
     }
 
+    /// `karmazyn.fs.read` for host code (the shell editor).
+    pub fn fs_read(&self, store: &Store, dir: &str, file: &str) -> Option<Vec<u8>> {
+        vfs::read(store, dir, file)
+    }
+
+    /// `karmazyn.fs.write` for host code. A file in lib/ is dropped from
+    /// `package.loaded`, so the next `require` reads the new text.
+    pub fn fs_write(
+        &self,
+        store: &Store,
+        dir: &str,
+        file: &str,
+        kind: &str,
+        data: &[u8],
+    ) -> Result<(), String> {
+        vfs::write(store, dir, file, kind, data)?;
+        if dir == vfs::LIB_DIR {
+            let loaded = self
+                .lua
+                .globals()
+                .get::<mlua::Table>("package")
+                .and_then(|p| p.get::<mlua::Table>("loaded"))
+                .map_err(|e| e.to_string())?;
+            loaded.set(file, Value::Nil).map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    }
+
+    /// Compiles without running. `Err` carries the parser message.
+    pub fn check_syntax(&self, name: &str, src: &str) -> Result<(), String> {
+        self.lua
+            .load(src)
+            .set_name(format!("={name}"))
+            .into_function()
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
+
     pub fn set_project_root(&self, root: impl Into<PathBuf>) {
         *self.project.borrow_mut() = Some(root.into());
     }

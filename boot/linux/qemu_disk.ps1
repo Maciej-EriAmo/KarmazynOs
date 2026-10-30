@@ -28,8 +28,10 @@ $f = [IO.File]::Create($disk)
 $f.SetLength(16MB)
 $f.Close()
 
-# Jeden rozruch: każda komenda idzie po kolejnym prompcie k$.
-function Invoke-Boot([string[]]$cmds, [int]$port) {
+# Jeden rozruch. Napis idzie po kolejnym prompcie k$. Tabela @{ after = 'regex';
+# send = 'bajty' } idzie bez Entera, gdy od ostatniej wysyłki pojawi się `after`
+# (klawisze dla edytora, który nie pokazuje k$).
+function Invoke-Boot([object[]]$cmds, [int]$port) {
     $args = @(
         "-machine", "pc,accel=tcg",
         "-m", "256",
@@ -66,6 +68,7 @@ function Invoke-Boot([string[]]$cmds, [int]$port) {
         $end = (Get-Date).AddSeconds(70)
         $i = 0
         $seen = 0
+        $mark = 0
         $done = $null
         while ((Get-Date) -lt $end) {
             if ($stream.DataAvailable) {
@@ -76,12 +79,21 @@ function Invoke-Boot([string[]]$cmds, [int]$port) {
                 Start-Sleep -Milliseconds 100
             }
             $prompts = ([regex]::Matches($text, 'k\$ ')).Count
-            if ($prompts -gt $seen) {
-                $seen = $prompts
-                if ($i -lt $cmds.Count) {
-                    $p = [Text.Encoding]::UTF8.GetBytes($cmds[$i] + "`n")
+            $next = if ($i -lt $cmds.Count) { $cmds[$i] } else { $null }
+            if ($next -is [hashtable]) {
+                if ($text.Substring($mark) -match $next.after) {
+                    $p = [Text.Encoding]::UTF8.GetBytes($next.send)
                     $stream.Write($p, 0, $p.Length)
                     $i++
+                    $mark = $text.Length
+                }
+            } elseif ($prompts -gt $seen) {
+                $seen = $prompts
+                if ($null -ne $next) {
+                    $p = [Text.Encoding]::UTF8.GetBytes($next + "`n")
+                    $stream.Write($p, 0, $p.Length)
+                    $i++
+                    $mark = $text.Length
                 } elseif (-not $done) {
                     $done = (Get-Date).AddSeconds(1)
                 }
@@ -111,18 +123,38 @@ $lib = "lua karmazyn.fs.write('lib','mat','lua',""return { dodaj = function(a,b)
 $suma = "lua karmazyn.fs.write('bin','suma','lua',""local a,b = ...; return require('mat').dodaj(tonumber(a), tonumber(b))"")"
 # nano przez serial: wszystkie linie edycji idą naraz, nano czyta je z tego samego stdin
 $nano = "tool nano bin/razy`nlocal a, b = ...`n`nreturn tonumber(a) * tonumber(b)`n.save"
-$one = Invoke-Boot @("disk", "atom trwaly hej 80", $prog, $tool, $lib, $suma, $nano, "sync", "disk") 45471
+# edytor z kursorem: pusty plik, "return a", Home, wstaw linię nad, End, dopisz, ^S, ^Q
+$keys = "return a`e[Hlocal a = ...`r`e[F..' kursor'" + [char]0x13 + [char]0x11
+$one = Invoke-Boot @("disk", "atom trwaly hej 80", $prog, $tool, $lib, $suma, $nano,
+    "edit bin/kursor", @{ after = 'L1:1'; send = $keys },
+    "lua return karmazyn.fs.read('bin','kursor')", "sync",
+    "lua karmazyn.fs.write('dev','po_sync','txt','autosync ok')", "disk") 45471
 Write-Host "--- rozruch 1 ---"
 Write-Host (Tail $one)
-$two = Invoke-Boot @("info 0", "assert has 0", "lua return load(karmazyn.fs.read('bin','hello'))()('swiat')", "tool powitanie Karmazyn", "tool suma 40 2", "tool razy 6 9", "lua return karmazyn.fs.read('bin','razy')", "disk") 45472
+$two = Invoke-Boot @("info 0", "assert has 0", "lua return load(karmazyn.fs.read('bin','hello'))()('swiat')",
+    "tool powitanie Karmazyn", "tool suma 40 2", "tool razy 6 9", "lua return karmazyn.fs.read('bin','razy')",
+    "tool kursor Hej", "lua return karmazyn.fs.read('dev','po_sync')", "disk") 45472
 Write-Host "--- rozruch 2 ---"
 Write-Host (Tail $two)
 
-$pass = ($one -match 'disk — /dev/vda pusty') -and ($one -match 'sync /dev/vda gen=1') `
-    -and ($two -match 'disk — /dev/vda gen=1 atoms=6') -and ($two -match 's=trwaly e=hej') `
-    -and ($two -match 'assert ok') -and ($two -match '(?m)^hej swiat') -and ($two -match '(?m)^witaj Karmazyn') `
-    -and ($two -match '(?m)^42\s*$') -and ($one -match 'Zapisano bin/razy \(3 linii\)') -and ($one -match '===== bin/razy =====\s+Komendy:[^\n]*\n> ') `
-    -and ($two -match '(?m)^54\s*$') -and ($two -match 'local a, b = \.\.\.\r?\n\r?\nreturn')
+$checks = [ordered]@{
+    'pusty dysk, autosync' = $one -match 'disk — /dev/vda pusty, autosync'
+    'sync'                 = $one -match 'sync /dev/vda gen=\d+'
+    'nano bin/razy'        = $one -match 'Zapisano bin/razy \(3 linii\)'
+    'nano bufor przed >'   = $one -match '===== bin/razy =====\s+Komendy:[^\n]*\n> '
+    'edit zamknięty'       = $one -match 'edit: zamknięto bin/kursor'
+    'edit treść'           = $one -match "local a = \.\.\.\r?\nreturn a\.\.' kursor'"
+    'restore'              = $two -match 'disk — /dev/vda gen=\d+ atoms=8'
+    'atom'                 = ($two -match 's=trwaly e=hej') -and ($two -match 'assert ok')
+    'program fs'           = $two -match '(?m)^hej swiat'
+    'tool fs bin'          = $two -match '(?m)^witaj Karmazyn'
+    'require fs lib'       = $two -match '(?m)^42\s*$'
+    'tool z nano'          = ($two -match '(?m)^54\s*$') -and ($two -match 'local a, b = \.\.\.\r?\n\r?\nreturn')
+    'tool z edit'          = $two -match '(?m)^Hej kursor'
+    'autosync po sync'     = $two -match '(?m)^autosync ok'
+}
+$checks.GetEnumerator() | Where-Object { -not $_.Value } | ForEach-Object { Write-Host "BRAK: $($_.Key)" }
+$pass = -not ($checks.Values -contains $false)
 Remove-Item $disk -Force -ErrorAction SilentlyContinue
 if ($pass) {
     Write-Host "LINUX DISK PASS"

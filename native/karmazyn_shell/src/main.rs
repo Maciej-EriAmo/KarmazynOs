@@ -9,6 +9,7 @@
 //! Lisp guest: line starting with `(` → karmazyn_lisp::Evaluator::eval_line.
 
 mod disk;
+mod editor;
 
 use disk::Disk;
 use karmazyn_lisp::Evaluator;
@@ -47,6 +48,10 @@ struct App {
     lisp: Evaluator,
     lua: LuaEvaluator,
     disk: Option<Disk>,
+    /// Po każdym poleceniu zapis na dysk, jeśli Store się zmienił.
+    autosync: bool,
+    /// Skrót ostatniego snapshotu na dysku (albo wczytanego z dysku).
+    synced: std::cell::Cell<u64>,
 }
 
 fn main() {
@@ -62,7 +67,15 @@ fn main() {
         lua.set_budget((n > 0).then_some(n));
     }
     let tools = preload_lua_bin(&lua);
-    let mut app = App { store, lisp, lua, disk: None };
+    let autosync_on = env::var("KARMAZYN_AUTOSYNC").map_or(true, |v| v.trim() != "0");
+    let mut app = App {
+        store,
+        lisp,
+        lua,
+        disk: None,
+        autosync: autosync_on,
+        synced: std::cell::Cell::new(0),
+    };
     let disk_line = open_disk(&mut app);
     let args: Vec<String> = env::args().skip(1).collect();
 
@@ -113,7 +126,9 @@ fn main() {
         let mut failed = false;
         for cmd in batch {
             println!("k$ {cmd}");
-            match dispatch(&app, &cmd) {
+            let outcome = dispatch(&app, &cmd);
+            autosync(&app);
+            match outcome {
                 Outcome::Ok => {}
                 Outcome::Quit => break,
                 Outcome::Err => {
@@ -153,7 +168,9 @@ fn main() {
         if line.is_empty() {
             continue;
         }
-        match dispatch(&app, line) {
+        let outcome = dispatch(&app, line);
+        autosync(&app);
+        match outcome {
             Outcome::Ok => {}
             Outcome::Quit => {
                 if is_pid1() {
@@ -219,6 +236,8 @@ fn dispatch(app: &App, line: &str) -> Outcome {
                 Outcome::Err
             }
         }
+    } else if head.eq_ignore_ascii_case("edit") {
+        edit_file(app, &parts)
     } else if head.eq_ignore_ascii_case("sync") {
         disk_sync(app)
     } else if head.eq_ignore_ascii_case("disk") {
@@ -325,7 +344,13 @@ fn open_disk(app: &mut App) -> Option<(bool, String)> {
             }
             return Some((false, msg));
         }
-        Ok(None) => (true, format!("{path} pusty, `sync` zapisze stan")),
+        Ok(None) => (
+            true,
+            format!(
+                "{path} pusty{}",
+                if app.autosync { ", autosync" } else { ", `sync` zapisze stan" }
+            ),
+        ),
         Ok(Some((slot, data))) => match String::from_utf8(data)
             .map_err(|e| e.to_string())
             .and_then(|t| StoreSnapshot::from_text(&t))
@@ -344,7 +369,89 @@ fn open_disk(app: &mut App) -> Option<(bool, String)> {
         },
     };
     app.disk = Some(d);
+    // stan po starcie (wczytany albo pusty) liczy się jako zapisany
+    app.synced.set(snapshot_hash(&app.store.export_snapshot().to_text()));
     Some(line)
+}
+
+fn snapshot_hash(text: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    text.hash(&mut h);
+    h.finish()
+}
+
+/// Zapis na dysk, gdy snapshot różni się od ostatnio zapisanego.
+/// `None` = nic do zrobienia (brak dysku, autosync wyłączony, bez zmian).
+fn write_if_changed(app: &App) -> Option<Result<disk::Slot, String>> {
+    let d = app.disk.as_ref()?;
+    let text = app.store.export_snapshot().to_text();
+    let h = snapshot_hash(&text);
+    if h == app.synced.get() {
+        return None;
+    }
+    let r = d.write_next(text.as_bytes());
+    if r.is_ok() {
+        app.synced.set(h);
+    }
+    Some(r)
+}
+
+/// Po każdym poleceniu. Cicho, gdy się udało; błąd idzie na ekran.
+fn autosync(app: &App) {
+    if !app.autosync {
+        return;
+    }
+    if let Some(Err(e)) = write_if_changed(app) {
+        println!("autosync err: {e}");
+    }
+}
+
+/// `edit <katalog>/<plik>`: edytor z kursorem na pliku fs. W bin/ i lib/
+/// sprawdza składnię przy zapisie (ostrzega, zapisuje mimo to).
+fn edit_file(app: &App, parts: &[&str]) -> Outcome {
+    let target = parts.get(1).copied().unwrap_or("");
+    let Some((dir, file)) = target
+        .split_once('/')
+        .filter(|(d, f)| !d.is_empty() && !f.is_empty() && !f.contains('/'))
+    else {
+        println!("usage: edit <katalog>/<plik>   np. edit bin/hej, edit lib/mat");
+        return Outcome::Err;
+    };
+    let code = dir == "bin" || dir == "lib";
+    let text = app
+        .lua
+        .fs_read(&app.store, dir, file)
+        .map(|b| String::from_utf8_lossy(&b).into_owned())
+        .unwrap_or_default();
+    let mut save = |text: &str| -> Result<String, String> {
+        let warn = if code {
+            app.lua.check_syntax(target, text).err()
+        } else {
+            None
+        };
+        let kind = if code { "lua" } else { "text" };
+        app.lua.fs_write(&app.store, dir, file, kind, text.as_bytes())?;
+        let disk = match (app.autosync, write_if_changed(app)) {
+            (true, Some(Ok(s))) => format!(", dysk gen={}", s.gen),
+            (true, Some(Err(e))) => format!(", dysk: {e}"),
+            _ => String::new(),
+        };
+        Ok(match warn {
+            Some(e) => format!("Zapisano{disk}, ale błąd składni: {e}"),
+            None => format!("Zapisano {target}{disk}"),
+        })
+    };
+    match editor::run(target, &text, &mut save) {
+        Ok(()) => {
+            println!("edit: zamknięto {target}");
+            Outcome::Ok
+        }
+        Err(e) => {
+            println!("{e}");
+            Outcome::Err
+        }
+    }
 }
 
 fn disk_sync(app: &App) -> Outcome {
@@ -355,6 +462,7 @@ fn disk_sync(app: &App) -> Outcome {
     let text = app.store.export_snapshot().to_text();
     match d.write_next(text.as_bytes()) {
         Ok(s) => {
+            app.synced.set(snapshot_hash(&text));
             println!("sync {} gen={} bytes={}", d.path().display(), s.gen, s.len);
             Outcome::Ok
         }
@@ -372,7 +480,11 @@ fn disk_status(app: &App) -> Outcome {
     };
     match (d.size(), d.slots()) {
         (Ok(size), Ok(slots)) => {
-            println!("disk {} size={size}", d.path().display());
+            println!(
+                "disk {} size={size} autosync={}",
+                d.path().display(),
+                if app.autosync { "on" } else { "off" }
+            );
             for (name, s) in ["A", "B"].iter().zip(slots) {
                 match s {
                     Some(s) => println!("  {name} gen={} bytes={}", s.gen, s.len),
@@ -1037,6 +1149,9 @@ fn print_help() {
   echo <text>
   save <path> / load <path>     KSUB_SNAP v1. load remounts lisp and lua
   sync                          snapshot na dysk (KARMAZYN_DISK, slot A/B)
+                                po każdym poleceniu sam, gdy coś się zmieniło
+                                (KARMAZYN_AUTOSYNC=0 wyłącza)
+  edit <katalog>/<plik>         edytor z kursorem (^S zapis, ^Q wyjście, ^K linia)
   disk                          stan dysku i slotów
   (define x 10) / lisp <expr>   mini-Lisp guest (atoms = vars)
   lua <chunk>                   Lua guest (mlua). return karmazyn._VERSION
