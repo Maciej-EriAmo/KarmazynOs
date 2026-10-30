@@ -62,7 +62,7 @@ Most Lorentza: [MAZUR_CRYSTAL.md](MAZUR_CRYSTAL.md) · `KARMAZYN_MAZUR=0` wyłą
 | `fs bin/<nazwa>` | własne narzędzie: `tool <nazwa>` szuka tu przed `lua_bin` |
 | `fs lib/<nazwa>` | własna biblioteka: `require('<nazwa>')` szuka tu przed preload i projektem; zapis do lib/ odświeża `require` |
 | `nano bin/<plik>`, `nano lib/<plik>` | edycja pliku w fs: puste linie zostają, przed zapisem sprawdzenie składni, `.set N tekst` podmienia linię |
-| `edit <katalog>/<plik>` (polecenie shella) | edytor z kursorem na płycie: strzałki, Home/End, PgUp/PgDn, ^S zapis, ^Q wyjście, ^K usuń linię; w bin/ i lib/ sprawdza składnię |
+| `edit <katalog>/<plik>` (polecenie shella) | edytor z kursorem na płycie: strzałki, Home/End, PgUp/PgDn, ^S zapis, ^Q wyjście, ^K usuń linię, ^L odśwież; rysuje tylko zmienione wiersze; w bin/ i lib/ sprawdza składnię |
 | autosync | shell sam zapisuje Store na dysk po każdym poleceniu, które zmieniło treść (atomy S/E/token/payload, bąble, powiązania); samo grzanie odczytem nie pisze, temperaturę zapisuje `sync`; `KARMAZYN_AUTOSYNC=0` wyłącza |
 | `cache.read/write` | mini cache w pamięci sesji |
 
