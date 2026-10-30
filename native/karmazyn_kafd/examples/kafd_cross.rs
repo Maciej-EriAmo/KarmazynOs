@@ -4,15 +4,17 @@
 //!                            rust_journal.kafs rust_compact.kafd
 //!                            rust_kafx.kafd (nonce 05×12) rust_enc_journal.kafs
 //!                            rust_enc_compact.kafd (master z CYNOBER_MASTER_KEY)
+//!                            rust_vfs.kafd (vfs_pack) rust_world.kafd (save_store)
 //!   kafd_cross read <dir>    opis plików py_* jako JSON (stdout)
 //!
 //! Dane wejściowe i czas (1700000000, "2023-11-14 22:13") są te same co w skrypcie.
 
 use karmazyn_kafd::cipher::wrap_kafx_with_nonce;
 use karmazyn_kafd::{
-    compact_journal, Atom, Crypt, FlowReader, FlowWriter, Journal, Layout, Reader, Writer,
+    compact_journal, world, Atom, Crypt, FlowReader, FlowWriter, Journal, Layout, Reader, Writer,
     A_PHI_ATOM, A_RAW, A_THERMAL, MIME_THERMAL,
 };
+use karmazyn_substrate::Store;
 use serde_json::{json, Map, Value};
 use std::path::Path;
 
@@ -107,7 +109,55 @@ fn write(dir: &Path) -> karmazyn_kafd::Result<()> {
     std::fs::copy(&ep, &ec)?;
     let Value::Object(em) = json!({"source": "kafs-journal", "frames": 2}) else { unreachable!() };
     compact_journal(&ec, &dir.join("rust_enc_compact.kafd"), Layout::Footer, true, Some(em), &enc)?;
+
+    // świat DBase: vfs_pack bajt w bajt + zapis natywnego Store
+    std::fs::write(dir.join("rust_vfs.kafd"), vfs_docs_blob())?;
+    let s = Store::new(true);
+    let a = s.atom_new("var", "x", 80.0);
+    let b = s.atom_new("plik", "kod", 50.0);
+    s.atom_set_guest(b, 3, Some(b"return 1".to_vec()));
+    let fs_root = s.bubble_new("fs", None);
+    s.set_root(fs_root);
+    let bin = s.bubble_new("bin", Some(fs_root));
+    s.bind(bin, "hej", b).map_err(|e| karmazyn_kafd::Error(e.into()))?;
+    s.bind(fs_root, "x", a).map_err(|e| karmazyn_kafd::Error(e.into()))?;
+    let crypt = Crypt { world: None, encrypt: Some(true), master: None };
+    world::save_store(&s, &dir.join("rust_world.kafd"), &crypt)?;
     Ok(())
+}
+
+fn png() -> Vec<u8> {
+    let mut p = b"\x89PNG\r\n\x1a\n".to_vec();
+    p.extend([0u8; 16]);
+    p
+}
+
+/// Te same dokumenty co `vfs_docs()` w skrypcie Pythona.
+fn vfs_docs_blob() -> Vec<u8> {
+    let obj = |v: Value| match v {
+        Value::Object(m) => m,
+        _ => unreachable!(),
+    };
+    let docs = vec![
+        ("a0".to_string(), world::encode_doc("document", "tekst", 60.0, Map::new(), b"")),
+        (
+            "a1".to_string(),
+            world::encode_doc("media", "obraz.png", 42.5, obj(json!({"mime": "image/png"})), &png()),
+        ),
+        (
+            "b1".to_string(),
+            world::encode_doc(
+                "__bubble__",
+                "docs",
+                50.0,
+                obj(json!({"v": {"label": "docs", "bindings": {"tekst": "a0"}}})),
+                b"",
+            ),
+        ),
+        ("notatka.txt".to_string(), b"zwykly tekst".to_vec()),
+    ];
+    let meta = obj(json!({"format": world::STORE_META, "saved": 1_700_000_000.0, "count": 4}));
+    world::vfs_pack(&docs, meta, karmazyn_kafd::F_PHI_NATIVE, Some((UNIX, CREATED)))
 }
 
 fn describe(a: &Atom) -> Value {
@@ -156,6 +206,32 @@ fn read(dir: &Path) -> karmazyn_kafd::Result<Value> {
                    "atoms": ja}),
         );
     }
+
+    // świat zapisany przez Python (save_documents, KAFX) → snapshot Store
+    let w = world::World::read(&dir.join("py_world.kafd"), None, None)?;
+    let snap = world::snapshot_from_world(&w);
+    let se = |aid: u32| {
+        let a = snap.atoms.iter().find(|a| a.id == aid).unwrap();
+        format!("{}/{}", a.s, a.e)
+    };
+    let atoms: Vec<Value> = snap
+        .atoms
+        .iter()
+        .map(|a| json!({"S": a.s, "E": a.e, "T": a.t,
+                        "data": a.payload.clone().unwrap_or_default().iter().map(|b| format!("{b:02x}")).collect::<String>()}))
+        .collect();
+    let bubbles: Vec<Value> = snap
+        .bubbles
+        .iter()
+        .map(|b| {
+            let mut binds = Map::new();
+            for x in snap.binds.iter().filter(|x| x.bid == b.id) {
+                binds.insert(x.name.clone(), Value::from(se(x.aid)));
+            }
+            json!({"label": b.label, "root": snap.roots.contains(&b.id), "bindings": binds})
+        })
+        .collect();
+    out.insert("py_world.kafd".into(), json!({"format": w.meta["format"], "atoms": atoms, "bubbles": bubbles}));
     Ok(Value::Object(out))
 }
 

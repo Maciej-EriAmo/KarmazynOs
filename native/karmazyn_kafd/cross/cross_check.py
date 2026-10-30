@@ -26,8 +26,13 @@ os.environ["KARMAZYN_KAFD_PLAIN"] = "1"   # część jawna; szyfrowanie jawnie e
 # klucz węzła dla obu stron (Rust bierze go z tej samej zmiennej)
 os.environ["CYNOBER_MASTER_KEY"] = "07" * 32
 
+os.environ["KARMAZYN_SUBSTRATE"] = "python"   # Store referencyjny do świata
+
 import karmazyn_cipher as C  # noqa: E402
 import karmazyn_kafd as K  # noqa: E402
+import karmazyn_kernel  # noqa: E402
+import karmazyn_media  # noqa: E402
+import karmazyn_store  # noqa: E402
 
 UNIX = 1700000000
 CREATED = "2023-11-14 22:13"
@@ -110,6 +115,57 @@ def write_py(d):
                       world="cross_enc", encrypt=True)
 
 
+class _Doc:
+    def __init__(self, S, E, T, metadata):
+        self.S, self.E, self.T, self.metadata = S, E, T, metadata
+
+
+def png():
+    return b"\x89PNG\r\n\x1a\n" + b"\x00" * 16
+
+
+def vfs_docs():
+    """Te same dokumenty co vfs_docs_blob() w kafd_cross.rs."""
+    enc = karmazyn_store._encode_atom
+    return {
+        "a0": enc(_Doc("document", "tekst", 60.0, {})),
+        "a1": enc(_Doc("media", "obraz.png", 42.5, {"mime": "image/png", "data": png()})),
+        "b1": enc(_Doc("__bubble__", "docs", 50.0,
+                       {"v": {"label": "docs", "bindings": {"tekst": "a0"}}})),
+        "notatka.txt": b"zwykly tekst",
+    }
+
+
+def write_py_world(d):
+    meta = {"format": karmazyn_store.STORE_META, "saved": 1700000000.0, "count": 4}
+    open(os.path.join(d, "py_vfs.kafd"), "wb").write(
+        K.vfs_pack(vfs_docs(), meta, flags=K.F_PHI_NATIVE))
+    st = karmazyn_kernel.Store(thermal=True)
+    a = st.atom_new(S="document", E="tekst", T=60.0)
+    m = st.atom_new(S="media", E="obraz.png", T=42.5)
+    m.metadata["data"] = png()
+    b = st.bubble_new(label="docs")
+    st.set_root(b)
+    b.bind("tekst", a)
+    b.bind("obraz", m)
+    karmazyn_media.sync_bubble_record(st, b)
+    karmazyn_store.save_documents(st, os.path.join(d, "py_world.kafd"),
+                                  world="cross_world", encrypt=True)
+
+
+PY_WORLD_EXPECTED = {
+    "format": "karmazyn_store_v1.4_kafx",
+    "atoms": [
+        {"S": "document", "E": "tekst", "T": 60.0, "data": ""},
+        {"S": "media", "E": "obraz.png", "T": 42.5, "data": None},
+    ],
+    "bubbles": [
+        {"label": "docs", "root": True,
+         "bindings": {"tekst": "document/tekst", "obraz": "media/obraz.png"}},
+    ],
+}
+
+
 def describe(a):
     return {"id": a.id, "mime": a.mime, "T": a.T, "T_max": a.T_max,
             "state": a.state_byte, "atype": a.atype, "data": a.data.hex()}
@@ -150,9 +206,12 @@ def py_view(d):
 
 def cargo(*args):
     env = dict(os.environ)
-    if os.name == "nt" and not shutil.which("link.exe") and "RUSTUP_TOOLCHAIN" not in env:
+    # link.exe z MSYS/Git (coreutils) to nie linker MSVC
+    link = (shutil.which("link.exe") or "").lower()
+    msvc_link = link and not any(x in link for x in ("msys", "\\git\\", "usr\\bin"))
+    if os.name == "nt" and not msvc_link and "RUSTUP_TOOLCHAIN" not in env:
         env["RUSTUP_TOOLCHAIN"] = "stable-x86_64-pc-windows-gnu"
-    r = subprocess.run(["cargo", "run", "--quiet", "--release", "--example", "kafd_cross", "--", *args],
+    r = subprocess.run(["cargo", "run", "--quiet", "--release", "--features", "substrate", "--example", "kafd_cross", "--", *args],
                        cwd=CRATE, env=env, capture_output=True, text=True, encoding="utf-8")
     if r.returncode != 0:
         print(r.stdout, r.stderr)
@@ -165,12 +224,14 @@ def main():
     fails = []
     try:
         write_py(d)
+        write_py_world(d)
         cargo("write", d)
 
         for py, rs in (("py_v20.kafd", "rust_v20.kafd"), ("py_v21.kafd", "rust_v21.kafd"),
                        ("py_flow.kafs", "rust_flow.kafs"), ("py_journal.kafs", "rust_journal.kafs"),
                        ("py_compact.kafd", "rust_compact.kafd"),
-                       ("py_kafx.kafd", "rust_kafx.kafd")):
+                       ("py_kafx.kafd", "rust_kafx.kafd"),
+                       ("py_vfs.kafd", "rust_vfs.kafd")):
             a = open(os.path.join(d, py), "rb").read()
             b = open(os.path.join(d, rs), "rb").read()
             ok = a == b
@@ -214,9 +275,27 @@ def main():
         if not ok:
             fails.append("python czyta rust_enc_compact")
 
+        # świat natywnego Store (Rust save_store) → Python load_documents + restore_bubbles
+        st = karmazyn_kernel.Store(thermal=True)
+        n = karmazyn_store.load_documents(st, os.path.join(d, "rust_world.kafd"))
+        bubbles = karmazyn_media.restore_bubbles(st)
+        kod = st.get_atom("a1")
+        hej = bubbles.get("bin").bindings.get("hej") if "bin" in bubbles else None
+        ok = (n == 4 and kod is not None and kod.S == "plik"
+              and kod.metadata.get("data") == b"return 1"
+              and str(getattr(hej, "id", hej)) == "a1"
+              and set(bubbles) == {"fs", "bin"})
+        print(f"{'OK  ' if ok else 'BŁĄD'} Python wczytuje świat Rusta: {n} dokumentów, "
+              f"bąble {sorted(bubbles)}, bin/hej → {getattr(hej, 'id', hej)}")
+        if not ok:
+            fails.append("python czyta rust_world")
+
         # Rust czyta pliki Pythona — opis jak u Pythona
         rust = json.loads(cargo("read", d))
         py = py_view(d)
+        exp = json.loads(json.dumps(PY_WORLD_EXPECTED))
+        exp["atoms"][1]["data"] = png().hex()
+        py["py_world.kafd"] = exp
         for name in py:
             ok = rust.get(name) == py[name]
             print(f"{'OK  ' if ok else 'BŁĄD'} Rust czyta {name} jak Python")

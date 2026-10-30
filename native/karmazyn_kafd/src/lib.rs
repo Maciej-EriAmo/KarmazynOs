@@ -14,11 +14,15 @@
 //! Szyfrowanie jak `karmazyn_cipher.py` (moduł [`cipher`]): koperta pliku KAFX
 //! i koperta danych atomu w dzienniku KX1, AES-256-GCM z kluczem świata
 //! (HKDF-SHA256 z klucza węzła). Stary XOR tylko do odczytu.
+//!
+//! Moduł [`world`]: świat DBase (`karmazyn_store.py`, bąble jako atomy `__bubble__`);
+//! z cechą `substrate` zapis i odczyt natywnego Store.
 
 pub mod cipher;
 mod flow;
 mod json;
 mod seek;
+pub mod world;
 
 pub use flow::{
     atomic_replace, compact_journal, Checkpoint, CompactReport, Crypt, FlowReader, FlowWriter,
