@@ -1,0 +1,20 @@
+[package]
+name = "karmazyn_kafd"
+version = "0.1.0"
+edition = "2021"
+authors = ["Maciej Mazur"]
+description = "KAFD (Karmazyn Atom Flow Datum) v2.0/v2.1 + KAFS journal, byte-compatible with DBase karmazyn_kafd.py"
+license = "MIT"
+repository = "https://github.com/Maciej-EriAmo/KarmazynOs"
+
+[lib]
+name = "karmazyn_kafd"
+
+[dependencies]
+sha2 = "0.10"
+serde = "1"
+# preserve_order: META JSON keeps insertion order like Python dicts
+serde_json = { version = "1", features = ["preserve_order"] }
+
+[profile.release]
+opt-level = 3
