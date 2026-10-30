@@ -1168,7 +1168,7 @@ fn print_help() {
   sync                          snapshot na dysk (KARMAZYN_DISK, slot A/B)
                                 po każdym poleceniu sam, gdy zmieniła się treść
                                 (KARMAZYN_AUTOSYNC=0 wyłącza)
-  edit <katalog>/<plik>         edytor z kursorem (^S zapis, ^Q wyjście, ^K linia)
+  edit <katalog>/<plik>         edytor z kursorem (^S zapis, ^Q wyjście, ^K linia, ^L odśwież)
   disk                          stan dysku i slotów
   (define x 10) / lisp <expr>   mini-Lisp guest (atoms = vars)
   lua <chunk>                   Lua guest (mlua). return karmazyn._VERSION

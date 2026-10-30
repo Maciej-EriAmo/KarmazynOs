@@ -124,9 +124,10 @@ $suma = "lua karmazyn.fs.write('bin','suma','lua',""local a,b = ...; return requ
 # nano przez serial: wszystkie linie edycji idą naraz, nano czyta je z tego samego stdin
 $nano = "tool nano bin/razy`nlocal a, b = ...`n`nreturn tonumber(a) * tonumber(b)`n.save"
 # edytor z kursorem: pusty plik, "return a", Home, wstaw linię nad, End, dopisz, ^S, ^Q
-$keys = "return a`e[Hlocal a = ...`r`e[F..' kursor'" + [char]0x13 + [char]0x11
+# dwie porcje: po pierwszej edytor rysuje tylko zmienione wiersze (linia 1 + pasek)
+$keys = "`e[Hlocal a = ...`r`e[F..' kursor'" + [char]0x13 + [char]0x11
 $one = Invoke-Boot @("disk", "atom trwaly hej 80", $prog, $tool, $lib, $suma, $nano,
-    "edit bin/kursor", @{ after = 'L1:1'; send = $keys },
+    "edit bin/kursor", @{ after = 'L1:1'; send = "return a" }, @{ after = 'L1:9'; send = $keys },
     "lua return karmazyn.fs.read('bin','kursor')", "sync",
     "lua karmazyn.fs.write('dev','po_sync','txt','autosync ok')", "disk") 45471
 Write-Host "--- rozruch 1 ---"
@@ -141,9 +142,11 @@ $checks = [ordered]@{
     'pusty dysk, autosync' = $one -match 'disk — /dev/vda pusty, autosync'
     'sync'                 = $one -match 'sync /dev/vda gen=\d+'
     'nano bin/razy'        = $one -match 'Zapisano bin/razy \(3 linii\)'
-    'nano bufor przed >'   = $one -match '===== bin/razy =====\s+Komendy:[^\n]*\n> '
+    # echo terminala może wstawić pustą linię przed pierwszym "> "
+    'nano bufor przed >'   = $one -match '===== bin/razy =====\s+Komendy:[^\n]*\n\s*> '
     'edit zamknięty'       = $one -match 'edit: zamknięto bin/kursor'
-    'edit treść'           = $one -match "local a = \.\.\.\r?\nreturn a\.\.' kursor'"
+    'edit rysuje przyrost' = $one -match '\x1b\[1;1Hreturn a\x1b\[K\x1b\[23;1H\x1b\[7m[^\x1b]*L1:9'
+    'edit treść'           =$one -match "local a = \.\.\.\r?\nreturn a\.\.' kursor'"
     'restore'              = $two -match 'disk — /dev/vda gen=\d+ atoms=8'
     'atom'                 = ($two -match 's=trwaly e=hej') -and ($two -match 'assert ok')
     'program fs'           = $two -match '(?m)^hej swiat'

@@ -5,7 +5,8 @@
 //! tylko na Linuksie (płyta, serial albo konsola).
 //!
 //! Klawisze: strzałki, Home/End, PgUp/PgDn, Backspace, Delete, Enter, Tab
-//! (4 spacje), ^S zapis, ^Q wyjście (przy zmianach drugi raz), ^K usuń linię.
+//! (4 spacje), ^S zapis, ^Q wyjście (przy zmianach drugi raz), ^K usuń linię,
+//! ^L odśwież cały ekran (np. po komunikatach jądra na serialu).
 
 // Na hoście bez Linuksa działa tylko logika (testy); pętla terminala jest wyłączona.
 #![cfg_attr(not(target_os = "linux"), allow(dead_code))]
@@ -28,6 +29,7 @@ pub enum Key {
     Save,
     Quit,
     KillLine,
+    Redraw,
     Ignore,
 }
 
@@ -105,6 +107,10 @@ pub fn parse_keys(chunk: &[u8], pending: &mut Vec<u8>) -> Vec<Key> {
                 keys.push(Key::Quit);
                 i += 1;
             }
+            0x0c => {
+                keys.push(Key::Redraw);
+                i += 1;
+            }
             0x0b => {
                 keys.push(Key::KillLine);
                 i += 1;
@@ -154,6 +160,8 @@ pub struct Editor {
     dirty: bool,
     quit_armed: bool,
     message: String,
+    /// Ostatnio narysowane wiersze ekranu; None = nieznany, rysuj.
+    drawn: Vec<Option<String>>,
 }
 
 impl Editor {
@@ -178,7 +186,8 @@ impl Editor {
             title: title.to_string(),
             dirty: false,
             quit_armed: false,
-            message: "^S zapisz  ^Q wyjdź  ^K usuń linię".into(),
+            message: "^S zapisz  ^Q wyjdź  ^K usuń linię  ^L odśwież".into(),
+            drawn: Vec::new(),
         }
     }
 
@@ -327,6 +336,7 @@ impl Editor {
                 self.quit_armed = true;
                 self.message = "Niezapisane zmiany. ^Q jeszcze raz = wyjdź bez zapisu, ^S = zapisz".into();
             }
+            Key::Redraw => self.invalidate(),
             Key::Ignore => {}
         }
         Action::None
@@ -346,18 +356,15 @@ impl Editor {
         }
     }
 
-    /// Cały ekran jako sekwencje ANSI: tekst, pasek stanu, komunikat, kursor.
-    pub fn render(&mut self) -> String {
-        self.scroll();
-        let mut out = String::from("\x1b[?25l\x1b[H");
+    /// Wiersze ekranu tak, jak mają wyglądać: tekst, pasek stanu, komunikat.
+    fn screen_rows(&self) -> Vec<String> {
+        let mut rows = Vec::with_capacity(self.rows);
         for r in 0..self.text_rows() {
-            let y = self.top + r;
-            if let Some(line) = self.lines.get(y) {
-                out.extend(line.iter().skip(self.left).take(self.cols));
-            } else {
-                out.push('~');
-            }
-            out.push_str("\x1b[K\r\n");
+            let row = match self.lines.get(self.top + r) {
+                Some(line) => line.iter().skip(self.left).take(self.cols).collect(),
+                None => "~".to_string(),
+            };
+            rows.push(row);
         }
         let status = format!(
             " {}{}  L{}:{}  ({} linii)",
@@ -369,18 +376,40 @@ impl Editor {
         );
         let status: String = status.chars().take(self.cols).collect();
         let pad = self.cols.saturating_sub(status.chars().count());
-        out.push_str("\x1b[7m");
-        out.push_str(&status);
-        out.push_str(&" ".repeat(pad));
-        out.push_str("\x1b[0m\r\n");
-        out.extend(self.message.chars().take(self.cols));
-        out.push_str("\x1b[K");
+        rows.push(format!("\x1b[7m{status}{}\x1b[0m", " ".repeat(pad)));
+        rows.push(self.message.chars().take(self.cols).collect());
+        rows
+    }
+
+    /// Sekwencje ANSI tylko dla wierszy, które zmieniły się od poprzedniego
+    /// rysunku (po serialu 115200 cały ekran 80×24 to do ~2 KB, linia z paskiem
+    /// stanu ~150 B).
+    /// Pierwszy rysunek i `invalidate` rysują wszystko.
+    pub fn render(&mut self) -> String {
+        self.scroll();
+        let rows = self.screen_rows();
+        if self.drawn.len() != rows.len() {
+            self.drawn = vec![None; rows.len()];
+        }
+        let mut out = String::from("\x1b[?25l");
+        for (r, row) in rows.into_iter().enumerate() {
+            if self.drawn[r].as_deref() == Some(row.as_str()) {
+                continue;
+            }
+            out.push_str(&format!("\x1b[{};1H{row}\x1b[K", r + 1));
+            self.drawn[r] = Some(row);
+        }
         out.push_str(&format!(
             "\x1b[{};{}H\x1b[?25h",
             self.cy - self.top + 1,
             self.cx - self.left + 1
         ));
         out
+    }
+
+    /// Następny `render` rysuje cały ekran (np. po wyczyszczeniu terminala).
+    pub fn invalidate(&mut self) {
+        self.drawn.clear();
     }
 }
 
@@ -578,5 +607,36 @@ mod tests {
         assert!(!after.contains("linia 1\x1b[K"), "{after}");
         // kursor na ekranie: 4 wiersze tekstu, linia 9 na dole → wiersz 4
         assert!(after.ends_with("\x1b[4;1H\x1b[?25h"), "{after}");
+    }
+
+    #[test]
+    fn render_sends_only_changed_rows() {
+        let text: Vec<String> = (1..=30).map(|n| format!("linia numer {n}")).collect();
+        let mut ed = Editor::new("bin/d", &text.join("\n"), 24, 80);
+        let full = ed.render();
+        assert!(full.len() > 600, "pierwszy rysunek: {}", full.len());
+
+        // bez zmian: żaden wiersz, tylko kursor
+        let idle = ed.render();
+        assert_eq!(idle, "\x1b[?25l\x1b[1;1H\x1b[?25h");
+
+        // znak w linii 1: linia 1 i pasek stanu (wiersz 23), komunikat bez zmian
+        feed(&mut ed, b"X");
+        let typed = ed.render();
+        assert!(typed.contains("\x1b[1;1HXlinia numer 1\x1b[K"), "{typed}");
+        assert!(typed.contains("\x1b[23;1H"), "{typed}");
+        assert!(!typed.contains("\x1b[2;1H"), "{typed}");
+        assert!(!typed.contains("\x1b[24;1H"), "{typed}");
+        assert!(typed.len() < 200, "po znaku: {} B", typed.len());
+
+        // sama strzałka: tylko pasek stanu (pozycja kursora)
+        feed(&mut ed, b"\x1b[B");
+        let moved = ed.render();
+        assert!(!moved.contains("linia"), "{moved}");
+        assert!(moved.contains("L2:2"), "{moved}");
+
+        // ^L: znowu cały ekran
+        assert_eq!(feed(&mut ed, b"\x0c"), vec![Action::None]);
+        assert!(ed.render().len() > 600);
     }
 }
