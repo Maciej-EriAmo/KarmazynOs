@@ -61,6 +61,7 @@ Most Lorentza: [MAZUR_CRYSTAL.md](MAZUR_CRYSTAL.md) · `KARMAZYN_MAZUR=0` wyłą
 | `fs.read/write/list/delete` | pliki w Store (bąbel `fs`), przechodzą przez `save` i `sync` |
 | `fs bin/<nazwa>` | własne narzędzie: `tool <nazwa>` szuka tu przed `lua_bin` |
 | `fs lib/<nazwa>` | własna biblioteka: `require('<nazwa>')` szuka tu przed preload i projektem; zapis do lib/ odświeża `require` |
+| `nano bin/<plik>`, `nano lib/<plik>` | edycja pliku w fs: puste linie zostają, przed zapisem sprawdzenie składni, `.set N tekst` podmienia linię |
 | `cache.read/write` | mini cache w pamięci sesji |
 
 ### Proxy atomu

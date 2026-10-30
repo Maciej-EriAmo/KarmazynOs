@@ -103,7 +103,7 @@ impl Evaluator {
         install_sandbox(&lua).expect("lua sandbox");
         install_print(&lua, prints.clone()).expect("lua print");
         install_searchers(&lua, store, project.clone()).expect("lua searchers");
-        install_karmazyn(&lua, store.clone(), guest.clone()).expect("karmazyn host");
+        install_karmazyn(&lua, store.clone(), guest.clone(), prints.clone()).expect("karmazyn host");
         let arm_budget = install_budget(&lua, Some(DEFAULT_BUDGET)).expect("lua budget");
         Self {
             env: Cell::new(env),
@@ -511,7 +511,12 @@ fn module_file(root: &Path, name: &str) -> Option<PathBuf> {
     Some(root.join(format!("{rel}.lua")))
 }
 
-fn install_karmazyn(lua: &Lua, store: Store, guest: Rc<Guest>) -> LuaResult<()> {
+fn install_karmazyn(
+    lua: &Lua,
+    store: Store,
+    guest: Rc<Guest>,
+    prints: Rc<RefCell<String>>,
+) -> LuaResult<()> {
     let k = lua.create_table()?;
     k.set("_VERSION", HOST_API_VERSION)?;
     k.set("T_INIT", T_INIT)?;
@@ -574,7 +579,7 @@ fn install_karmazyn(lua: &Lua, store: Store, guest: Rc<Guest>) -> LuaResult<()> 
 
     let guest_in = guest.clone();
     let read_line = lua.create_function(move |_, args: MultiValue| -> LuaResult<Option<String>> {
-        Ok(read_line(&guest_in, &args))
+        Ok(read_line(&guest_in, &prints, &args))
     })?;
     k.set("read_line", read_line)?;
 
@@ -1024,12 +1029,18 @@ fn resources_table(lua: &Lua, store: &Store) -> LuaResult<mlua::Table> {
     Ok(t)
 }
 
-fn read_line(guest: &Guest, args: &MultiValue) -> Option<String> {
+fn read_line(guest: &Guest, prints: &RefCell<String>, args: &MultiValue) -> Option<String> {
     if let Some(line) = guest.input.borrow_mut().pop_front() {
         return Some(line);
     }
     if !guest.stdin_on.get() {
         return Some(String::new());
+    }
+    // Przed czekaniem na klawiaturę: to, co narzędzie już wypisało, ma być
+    // widać teraz, nie dopiero po wyjściu z chunku (nano pokazuje bufor).
+    let pending = std::mem::take(&mut *prints.borrow_mut());
+    if !pending.is_empty() {
+        println!("{pending}");
     }
     let prompt = match args.iter().next() {
         Some(Value::String(s)) => lua_string(s),
@@ -1959,6 +1970,41 @@ mod tests {
         let out = ev.run_tool(store, name).expect("tool");
         assert!(!out.starts_with("blad:"), "{name}: {out}");
         out
+    }
+
+    #[test]
+    fn nano_edits_bin_and_lib_files() {
+        let (store, ev) = with_bin();
+        // jak w shellu: pusta linia to linia, nie koniec wejścia. Kolejka kończy
+        // się na .save, więc stdin nie jest czytany.
+        ev.enable_stdin(true);
+        for line in ["local n = ...", "", "return 'hej '..(n or '?')", ".save"] {
+            ev.push_input(line);
+        }
+        let out = require_ok(&ev, &store, "nano bin/hej");
+        assert!(out.contains("Zapisano bin/hej (3 linii)"), "{out}");
+        assert!(!out.contains("Błąd składni"), "{out}");
+        assert_eq!(
+            ev.eval_line(&store, "return karmazyn.fs.read('bin','hej')"),
+            "local n = ...\n\nreturn 'hej '..(n or '?')"
+        );
+        // bez kopii jako atom nano_*
+        assert_eq!(ev.eval_line(&store, "return karmazyn.get_atom('nano_bin')"), "nil");
+        assert_eq!(ev.run_tool(&store, "hej Karmazyn").unwrap(), "hej Karmazyn");
+
+        // ponowne otwarcie: pusta linia wraca jako 02, .set podmienia linię
+        ev.push_input(".set 3 return 'czesc '..(n or '?')");
+        ev.push_input(".save");
+        let again = require_ok(&ev, &store, "nano bin/hej");
+        assert!(again.contains("02 | \n"), "{again}");
+        assert_eq!(ev.run_tool(&store, "hej X").unwrap(), "czesc X");
+
+        // lib/: błąd składni ostrzega, ale zapisuje
+        ev.push_input("return (");
+        ev.push_input(".save");
+        let bad = require_ok(&ev, &store, "nano lib/zly");
+        assert!(bad.contains("Błąd składni"), "{bad}");
+        assert_eq!(ev.eval_line(&store, "return karmazyn.fs.read('lib','zly')"), "return (");
     }
 
     #[test]

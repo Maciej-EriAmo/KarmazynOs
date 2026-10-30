@@ -1,6 +1,9 @@
 -- nano.lua – edytor tekstu dla KarmazynOS (wersja fs/cache)
 -- Użycie: nano [nazwa_bąbla] [--temp]
+--         nano <katalog>/<plik>     np. nano bin/hej, nano lib/mat
 -- Domyślnie zapisuje trwale w bąblu. Flaga --temp używa tymczasowego cache (atomy).
+-- Tryb pliku czyta i pisze karmazyn.fs(katalog, plik), zachowuje puste linie,
+-- a w bin/ i lib/ przed zapisem sprawdza składnię Lua.
 
 local args = {...}
 local bubble_name = "notatki"
@@ -15,6 +18,16 @@ for i, a in ipairs(args) do
 end
 
 local file_id = "dokument"
+-- nano katalog/plik: plik w fs zamiast domyślnego "dokument"
+local file_mode = false
+if not temp_mode then
+    local d, f = bubble_name:match("^([^/]+)/([^/]+)$")
+    if d then
+        bubble_name, file_id, file_mode = d, f, true
+    end
+end
+local code_mode = file_mode and (bubble_name == "bin" or bubble_name == "lib")
+local title = file_mode and (bubble_name .. "/" .. file_id) or bubble_name
 
 -- Funkcja do odczytu treści
 local function saved_atom_text()
@@ -36,6 +49,9 @@ local function load_content()
         if text ~= nil then
             return text
         end
+        if file_mode then
+            return ""
+        end
     end
     return saved_atom_text()
 end
@@ -47,29 +63,53 @@ local function save_content(content)
         return karmazyn.cache.write(bubble_name, "nano", content, 1.0)
     else
         -- Zapis do bąbla
-        return karmazyn.fs.write(bubble_name, file_id, "nano-editor", content)
+        return karmazyn.fs.write(bubble_name, file_id, code_mode and "lua" or "nano-editor", content)
     end
 end
 
 -- Wczytaj istniejącą treść
 local content = load_content()
 local lines = {}
-for line in content:gmatch("[^\r\n]+") do
-    table.insert(lines, line)
+if file_mode then
+    -- puste linie zostają (kod); końcowy \n nie tworzy pustej linii
+    if content ~= "" then
+        local text = content:gsub("\r", "")
+        if text:sub(-1) ~= "\n" then
+            text = text .. "\n"
+        end
+        for line in text:gmatch("(.-)\n") do
+            table.insert(lines, line)
+        end
+    end
+else
+    for line in content:gmatch("[^\r\n]+") do
+        table.insert(lines, line)
+    end
 end
 
 -- Wyświetl aktualny bufor
 local function list_lines()
-    print("\n===== " .. bubble_name .. (temp_mode and " (tymcz.)" or "") .. " =====")
+    print("\n===== " .. title .. (temp_mode and " (tymcz.)" or "") .. " =====")
     for i, line in ipairs(lines) do
         print(string.format("%02d | %s", i, line))
     end
-    print(karmazyn.ui.draw_frame(bubble_name, lines, "phi_signal"))
+    if not file_mode then
+        print(karmazyn.ui.draw_frame(bubble_name, lines, "phi_signal"))
+    end
 end
 
 local function persist()
     local text = table.concat(lines, "\n")
+    if code_mode and load then
+        local _, err = load(text, "=" .. title)
+        if err then
+            print("⚠ Błąd składni (zapisuję mimo to): " .. tostring(err))
+        end
+    end
     local ok = save_content(text)
+    if file_mode then
+        return ok, nil
+    end
     local id = "nano_" .. bubble_name
     local atom = karmazyn.get_atom(id)
     if type(atom) ~= "table" then
@@ -82,7 +122,7 @@ local function persist()
 end
 
 list_lines()
-print("Komendy: .save, .abort, .del N, .ins N tekst, .list")
+print("Komendy: .save, .abort, .del N, .ins N tekst, .set N tekst, .list")
 
 -- Główna pętla edycji
 while true do
@@ -92,7 +132,11 @@ while true do
     if input == ".save" then
         local ok, atom = persist()
         if ok == true or (type(ok) == "string" and ok:match("^True")) then
-            print("✓ Zapisano w " .. bubble_name .. " (" .. tostring(type(atom) == "table" and atom.id or "?") .. ").")
+            if file_mode then
+                print("✓ Zapisano " .. title .. " (" .. #lines .. " linii). `sync` zapisze na dysk.")
+            else
+                print("✓ Zapisano w " .. bubble_name .. " (" .. tostring(type(atom) == "table" and atom.id or "?") .. ").")
+            end
         else
             print("✗ Błąd zapisu: " .. tostring(ok))
         end
@@ -107,6 +151,15 @@ while true do
         if n and lines[n] then
             table.remove(lines, n)
             print("Usunięto linię " .. n)
+        else
+            print("❌ Nieprawidłowy numer.")
+        end
+    elseif input:match("^%.set (%d+) (.*)$") then
+        local n, text = input:match("^%.set (%d+) (.*)$")
+        n = tonumber(n)
+        if n and lines[n] then
+            lines[n] = text
+            print("Zmieniono linię " .. n)
         else
             print("❌ Nieprawidłowy numer.")
         end
