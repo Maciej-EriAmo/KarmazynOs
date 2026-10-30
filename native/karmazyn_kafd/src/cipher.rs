@@ -110,7 +110,8 @@ pub fn resolve_master_key(create: bool) -> Result<Vec<u8>> {
     }
     let mut key = vec![0u8; KEY_LEN];
     getrandom::getrandom(&mut key).map_err(|e| Error(format!("losowość: {e}")))?;
-    std::fs::write(&path, &key)?;
+    // klucz musi przeżyć twarde wyłączenie: bez niego świat jest nie do odczytania
+    crate::atomic_replace(&path, &key)?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;

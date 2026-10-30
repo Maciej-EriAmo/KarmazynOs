@@ -631,7 +631,19 @@ pub fn compact_journal(
     Ok(CompactReport { atoms: atoms.len(), bytes: blob.len(), empty: false, recovered_frames })
 }
 
-/// Zapis tmp + fsync + rename w tym samym katalogu.
+/// fsync katalogu: utrwala `rename`/utworzenie wpisu (Unix). Na Windows
+/// katalogu nie da się otworzyć do fsync — wtedy nic nie robi.
+pub fn sync_dir(dir: &Path) {
+    #[cfg(unix)]
+    if let Ok(d) = File::open(dir) {
+        let _ = d.sync_all();
+    }
+    #[cfg(not(unix))]
+    let _ = dir;
+}
+
+/// Zapis tmp + fsync + rename w tym samym katalogu, potem fsync katalogu —
+/// po twardym wyłączeniu zostaje stary albo nowy plik, nigdy żaden.
 pub fn atomic_replace(path: &Path, data: &[u8]) -> Result<()> {
     let dir = path.parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(Path::new("."));
     fs::create_dir_all(dir)?;
@@ -645,7 +657,9 @@ pub fn atomic_replace(path: &Path, data: &[u8]) -> Result<()> {
     fs::rename(&tmp, path).map_err(|e| {
         let _ = fs::remove_file(&tmp);
         Error::from(e)
-    })
+    })?;
+    sync_dir(dir);
+    Ok(())
 }
 
 #[cfg(test)]

@@ -1,6 +1,8 @@
 # Trwały dysk: dwa rozruchy płyty na tym samym dysku virtio (out/karmazyn-disk-test.raw).
-# Rozruch 1: pusty dysk, atom, program Lua w fs, sync. Rozruch 2: shell przy
-# starcie czyta slot, atom jest z powrotem, program z fs się uruchamia, a narzędzie
+# Rozruch 1: pusty dysk → shell zakłada ext2, montuje go jako ext4 pod /data;
+# atom, program Lua w fs, sync zapisuje świat KAFD (KAFX) w
+# /data/cynober/worlds/karmazyn.kafd. Rozruch 2: shell wczytuje świat,
+# atom jest z powrotem, program z fs się uruchamia, a narzędzie
 # zapisane w fs bin działa jako `tool`, także z biblioteką z fs lib (`require`)
 # i napisane w nano (bin/razy, z pustą linią).
 # Exit 0 = pass, 1 = fail, 2 = brak qemu albo ISO.
@@ -138,16 +140,18 @@ $two = Invoke-Boot @("info 0", "assert has 0", "lua return load(karmazyn.fs.read
 Write-Host "--- rozruch 2 ---"
 Write-Host (Tail $two)
 
+$raw = [IO.File]::ReadAllBytes($disk)
+$rawText = [Text.Encoding]::GetEncoding(28591).GetString($raw)
 $checks = [ordered]@{
-    'pusty dysk, autosync' = $one -match 'disk — /dev/vda pusty, autosync'
-    'sync'                 = $one -match 'sync /dev/vda gen=\d+'
+    'pusty dysk → ext4'    = $one -match 'disk — /dev/vda ext4 → /data, sformatowano, nowy świat /data/cynober/worlds/karmazyn\.kafd, autosync'
+    'sync'                 = $one -match 'sync /data/cynober/worlds/karmazyn\.kafd dokumenty=\d+'
     'nano bin/razy'        = $one -match 'Zapisano bin/razy \(3 linii\)'
     # echo terminala może wstawić pustą linię przed pierwszym "> "
     'nano bufor przed >'   = $one -match '===== bin/razy =====\s+Komendy:[^\n]*\n\s*> '
     'edit zamknięty'       = $one -match 'edit: zamknięto bin/kursor'
     'edit rysuje przyrost' = $one -match '\x1b\[1;1Hreturn a\x1b\[K\x1b\[23;1H\x1b\[7m[^\x1b]*L1:9'
     'edit treść'           =$one -match "local a = \.\.\.\r?\nreturn a\.\.' kursor'"
-    'restore'              = $two -match 'disk — /dev/vda gen=\d+ atoms=8'
+    'restore'              = $two -match 'disk — /dev/vda ext4 → /data, świat /data/cynober/worlds/karmazyn\.kafd atoms=8'
     'atom'                 = ($two -match 's=trwaly e=hej') -and ($two -match 'assert ok')
     'program fs'           = $two -match '(?m)^hej swiat'
     'tool fs bin'          = $two -match '(?m)^witaj Karmazyn'
@@ -156,11 +160,12 @@ $checks = [ordered]@{
     'tool z edit'          = $two -match '(?m)^Hej kursor'
     'autosync po sync'     = $two -match '(?m)^autosync ok'
     # rozruch 2 tylko czyta i uruchamia narzędzia: autosync nie pisze (heat to nie treść)
-    'odczyt bez zapisu'    = $(
-        $g0 = [int][regex]::Match($two, 'disk — /dev/vda gen=(\d+)').Groups[1].Value
-        $gens = [regex]::Matches($two, 'gen=(\d+) bytes') | ForEach-Object { [int]$_.Groups[1].Value }
-        $g0 -gt 0 -and ($gens | Measure-Object -Maximum).Maximum -eq $g0
-    )
+    # rozruch 2 tylko czyta i uruchamia narzędzia: autosync nie pisze (heat to nie treść)
+    'odczyt bez zapisu'    = $two -match 'świat=/data/cynober/worlds/karmazyn\.kafd KAFX \(AES-GCM\) bytes=\d+ zapisy=0'
+    # surowy dysk: superblok ext2/ext4, świat w kopercie KAFX, bez jawnych programów
+    'ext na dysku'         = $raw.Length -gt 1081 -and $raw[1080] -eq 0x53 -and $raw[1081] -eq 0xEF
+    'KAFX na dysku'        = $rawText.Contains('KAFX')
+    'bez jawnej treści'    = -not $rawText.Contains("return function(n)") -and -not $rawText.Contains("autosync ok")
 }
 $checks.GetEnumerator() | Where-Object { -not $_.Value } | ForEach-Object { Write-Host "BRAK: $($_.Key)" }
 $pass = -not ($checks.Values -contains $false)

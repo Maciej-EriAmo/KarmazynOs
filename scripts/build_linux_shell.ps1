@@ -73,7 +73,7 @@ if (-not (Test-Path $elf)) {
     exit 1
 }
 
-# Jądro i virtio_blk.ko z jednego apk: moduł ładuje się tylko na swoim vermagic.
+# Jądro i moduły z jednego apk: moduł ładuje się tylko na swoim vermagic.
 $kApk = Join-Path $cache "linux-virt.apk"
 if (-not (Test-Path $kApk) -or (Get-Item $kApk).Length -lt 1000000) {
     $u = "https://dl-cdn.alpinelinux.org/alpine/latest-stable/main/x86_64/linux-virt-6.18.57-r0.apk"
@@ -83,7 +83,8 @@ if (-not (Test-Path $kApk) -or (Get-Item $kApk).Length -lt 1000000) {
 }
 $vmlinuz = Join-Path $cache "vmlinuz-virt-6.18.57"
 $mods = Join-Path $Repo "out\linux-modules"
-python (Join-Path $Repo "scripts\extract_virt_kernel.py") $kApk $vmlinuz $mods virtio_blk
+# virtio_blk (dysk) i ext4 z zależnościami: świat KAFD leży jako plik na ext4
+python (Join-Path $Repo "scripts\extract_virt_kernel.py") $kApk $vmlinuz $mods virtio_blk crc16 mbcache jbd2 ext4
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 $out = Join-Path $Repo "out"

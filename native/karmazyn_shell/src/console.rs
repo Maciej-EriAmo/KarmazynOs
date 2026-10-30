@@ -26,6 +26,7 @@ pub fn is_terminal() -> bool {
 }
 
 /// Ścieżki terminali dla wartości `KARMAZYN_CONSOLE`.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub fn devices(mode: &str) -> &'static [&'static str] {
     match mode {
         "vga" => &["/dev/tty1"],

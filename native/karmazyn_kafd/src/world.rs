@@ -12,6 +12,7 @@ use crate::json;
 use crate::seek::{Layout, Reader, Writer};
 use crate::{err, Atom, Error, Result, A_MANIFEST, A_RAW, F_ENCRYPTED, F_PHI_NATIVE};
 use serde_json::{Map, Value};
+use std::path::Path;
 
 pub const STORE_META: &str = "karmazyn_store_v1.4_kafx";
 pub const BUBBLE_S: &str = "__bubble__";
@@ -227,6 +228,10 @@ pub fn write_world(
         Some(encrypt),
     )?;
     crate::atomic_replace(path, &blob)?;
+    // nowy katalog worlds/ też musi być na dysku
+    if let Some(parent) = path.parent().and_then(Path::parent) {
+        crate::sync_dir(parent);
+    }
     Ok(docs.len())
 }
 

@@ -25,7 +25,7 @@ mod seek;
 pub mod world;
 
 pub use flow::{
-    atomic_replace, compact_journal, Checkpoint, CompactReport, Crypt, FlowReader, FlowWriter,
+    atomic_replace, compact_journal, sync_dir, Checkpoint, CompactReport, Crypt, FlowReader, FlowWriter,
     Journal, Recovery, FT_ATOM, FT_CHECKPOINT, FT_END, FT_META, KAFS_MAGIC,
 };
 pub use seek::{Entry, Layout, Reader, TickRecord, Writer};

@@ -3,8 +3,8 @@
 usage: extract_virt_kernel.py <linux-virt.apk> <out-vmlinuz> <out-modules-dir> [moduł]...
 
 Moduły wychodzą rozpakowane (`.ko`): jądro virt nie ma CONFIG_MODULE_DECOMPRESS.
-Kolejność ładowania = kolejność alfabetyczna w katalogu, więc zależności muszą
-mieć nazwy wcześniejsze (virtio_blk nie ma żadnych).
+Shell ładuje je w kolejności nazw, więc plik dostaje prefiks z kolejności
+argumentów (`00-virtio_blk.ko`, `01-crc16.ko`…): zależności podaj wcześniej.
 """
 import gzip
 import sys
@@ -25,14 +25,14 @@ def main() -> int:
     for old in mods_dir.glob("*.ko"):
         old.unlink()
     names = [n for n in tf.getnames() if n.startswith("lib/modules/") and n.endswith(".ko.gz")]
-    for mod in wanted:
+    for idx, mod in enumerate(wanted):
         hit = [n for n in names if n.rsplit("/", 1)[-1] == f"{mod}.ko.gz"]
         if len(hit) != 1:
             print(f"brak modułu {mod} w {apk}", file=sys.stderr)
             return 1
         data = gzip.decompress(tf.extractfile(hit[0]).read())
-        (mods_dir / f"{mod}.ko").write_bytes(data)
-        print(f"{mod}.ko {len(data)}")
+        (mods_dir / f"{idx:02d}-{mod}.ko").write_bytes(data)
+        print(f"{idx:02d}-{mod}.ko {len(data)}")
     print(f"vmlinuz {vmlinuz.stat().st_size}")
     return 0
 

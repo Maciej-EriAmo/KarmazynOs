@@ -1,156 +1,128 @@
-//! Trwały dysk shella: snapshot KSUB na surowym urządzeniu blokowym.
+//! Trwałość shella: świat DBase (KAFD w kopercie KAFX) jako plik na ext4.
 //!
-//! Bez systemu plików. Urządzenie dzieli się na dwa sloty (A i B). Każdy zaczyna
-//! się nagłówkiem, po nim leżą bajty snapshotu:
+//! Na płycie (PID 1): dysk `KARMAZYN_DISK` (domyślnie `/dev/vda`) montowany
+//! jako ext4 pod `/data`. Pusty dysk (same zera na początku) dostaje ext2
+//! z [`crate::ext2`]; dysk z nieznanymi danymi czeka na jawne `disk format`.
+//! `CYNOBER_DATA_HOME` = `/data/cynober` (klucz węzła `master.key`), świat
+//! w `worlds/<KARMAZYN_WORLD_NAME albo karmazyn>.kafd` — jak `cynober_worlds`.
 //!
-//! ```text
-//! 0   8  magic  "KDISK01\0"
-//! 8   8  gen    numer zapisu (rośnie)
-//! 16  8  len    długość snapshotu
-//! 24  8  sum    FNV-1a 64 (gen, len, dane)
-//! ```
+//! Na hoście: `KARMAZYN_WORLD=<plik.kafd>` wskazuje świat wprost.
 //!
-//! `sync` pisze do starszego slotu: najpierw dane, fsync, potem nagłówek, fsync.
-//! Zerwany zapis zostawia poprzedni slot nietknięty. Odczyt bierze ważny slot
-//! z najwyższym `gen`.
+//! Gdy istniejącego świata nie da się wczytać (zły klucz, uszkodzenie),
+//! zapis zostaje wstrzymany, żeby go nie nadpisać pustym Store.
 
-use std::fs::{File, OpenOptions};
-use std::io::{Read, Seek, SeekFrom, Write};
+use karmazyn_kafd::world::{load_store, save_store};
+use karmazyn_kafd::Crypt;
+use karmazyn_substrate::Store;
+use std::cell::Cell;
 use std::path::{Path, PathBuf};
 
-const MAGIC: &[u8; 8] = b"KDISK01\0";
-const HDR: u64 = 32;
-const ALIGN: u64 = 4096;
 pub const DEFAULT_DEVICE: &str = "/dev/vda";
+pub const DATA_MOUNT: &str = "/data";
+pub const DEFAULT_WORLD: &str = "karmazyn";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Slot {
-    pub gen: u64,
-    pub len: u64,
+/// Świat na dysku.
+pub struct Storage {
+    pub world: PathBuf,
+    pub device: Option<String>,
+    crypt: Crypt,
+    writable: Cell<bool>,
+    saves: Cell<u64>,
 }
 
-pub struct Disk {
-    path: PathBuf,
+impl Storage {
+    pub fn new(world: PathBuf, device: Option<String>) -> Self {
+        Storage {
+            world,
+            device,
+            crypt: Crypt::default(),
+            writable: Cell::new(true),
+            saves: Cell::new(0),
+        }
+    }
+
+    /// Wczytuje świat, gdy plik istnieje. `Ok(None)` = świata jeszcze nie ma.
+    /// Błąd blokuje zapis.
+    pub fn load(&self, store: &Store) -> Result<Option<(usize, usize)>, String> {
+        if !self.world.exists() {
+            return Ok(None);
+        }
+        match load_store(store, &self.world, &self.crypt) {
+            Ok(n) => Ok(Some(n)),
+            Err(e) => {
+                self.writable.set(false);
+                Err(format!("{}: {e} — zapis wstrzymany", self.world.display()))
+            }
+        }
+    }
+
+    pub fn save(&self, store: &Store) -> Result<usize, String> {
+        if !self.writable.get() {
+            return Err(format!(
+                "{}: świata nie dało się wczytać, zapis wstrzymany (nie nadpisuję)",
+                self.world.display()
+            ));
+        }
+        let n = save_store(store, &self.world, &self.crypt).map_err(|e| e.to_string())?;
+        self.saves.set(self.saves.get() + 1);
+        Ok(n)
+    }
+
+    pub fn writable(&self) -> bool {
+        self.writable.get()
+    }
+
+    pub fn saves(&self) -> u64 {
+        self.saves.get()
+    }
 }
 
-fn fnv1a(gen: u64, len: u64, data: &[u8]) -> u64 {
-    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-    for b in gen.to_le_bytes().iter().chain(len.to_le_bytes().iter()).chain(data) {
-        h ^= u64::from(*b);
-        h = h.wrapping_mul(0x0000_0100_0000_01b3);
-    }
-    h
+/// Ścieżka świata w `data_home` (jak `cynober_paths.worlds_home()`).
+pub fn world_in_data_home() -> PathBuf {
+    let name = std::env::var("KARMAZYN_WORLD_NAME")
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| DEFAULT_WORLD.into());
+    karmazyn_kafd::cipher::data_home()
+        .join("worlds")
+        .join(format!("{name}.kafd"))
 }
 
-fn u64_at(b: &[u8], at: usize) -> u64 {
-    let mut a = [0u8; 8];
-    a.copy_from_slice(&b[at..at + 8]);
-    u64::from_le_bytes(a)
+/// Czy początek urządzenia (do 1 MiB) to same zera — tylko taki dysk
+/// formatujemy bez pytania.
+pub fn is_blank(device: &Path) -> std::io::Result<bool> {
+    use std::io::Read;
+    let mut f = std::fs::File::open(device)?;
+    let mut buf = vec![0u8; 1 << 20];
+    let mut n = 0;
+    while n < buf.len() {
+        match f.read(&mut buf[n..])? {
+            0 => break,
+            k => n += k,
+        }
+    }
+    Ok(buf[..n].iter().all(|b| *b == 0))
 }
 
-impl Disk {
-    pub fn new(path: impl Into<PathBuf>) -> Self {
-        Disk { path: path.into() }
-    }
-
-    pub fn path(&self) -> &Path {
-        &self.path
-    }
-
-    fn open(&self, write: bool) -> Result<File, String> {
-        OpenOptions::new()
-            .read(true)
-            .write(write)
-            .open(&self.path)
-            .map_err(|e| format!("{}: {e}", self.path.display()))
-    }
-
-    /// Rozmiar urządzenia (dla pliku blokowego seek na koniec daje pojemność).
-    pub fn size(&self) -> Result<u64, String> {
-        let mut f = self.open(false)?;
-        f.seek(SeekFrom::End(0)).map_err(|e| e.to_string())
-    }
-
-    fn slot_size(&self) -> Result<u64, String> {
-        let size = self.size()?;
-        let slot = (size / 2) / ALIGN * ALIGN;
-        if slot <= HDR {
-            return Err(format!("{}: za mały ({size} B)", self.path.display()));
-        }
-        Ok(slot)
-    }
-
-    /// Nagłówek i dane slotu `i`, gdy suma się zgadza.
-    fn read_slot(&self, f: &mut File, i: u64, slot: u64) -> Option<(Slot, Vec<u8>)> {
-        let mut h = [0u8; HDR as usize];
-        f.seek(SeekFrom::Start(i * slot)).ok()?;
-        f.read_exact(&mut h).ok()?;
-        if &h[0..8] != MAGIC {
-            return None;
-        }
-        let gen = u64_at(&h, 8);
-        let len = u64_at(&h, 16);
-        let sum = u64_at(&h, 24);
-        if len > slot - HDR {
-            return None;
-        }
-        let mut data = vec![0u8; len as usize];
-        f.read_exact(&mut data).ok()?;
-        (fnv1a(gen, len, &data) == sum).then_some((Slot { gen, len }, data))
-    }
-
-    /// Stan obu slotów (A, B). `None` = pusty albo uszkodzony.
-    pub fn slots(&self) -> Result<[Option<Slot>; 2], String> {
-        let slot = self.slot_size()?;
-        let mut f = self.open(false)?;
-        Ok([
-            self.read_slot(&mut f, 0, slot).map(|s| s.0),
-            self.read_slot(&mut f, 1, slot).map(|s| s.0),
-        ])
-    }
-
-    /// Najnowszy ważny snapshot.
-    pub fn read_latest(&self) -> Result<Option<(Slot, Vec<u8>)>, String> {
-        let slot = self.slot_size()?;
-        let mut f = self.open(false)?;
-        let a = self.read_slot(&mut f, 0, slot);
-        let b = self.read_slot(&mut f, 1, slot);
-        Ok(match (a, b) {
-            (Some(a), Some(b)) => Some(if b.0.gen > a.0.gen { b } else { a }),
-            (a, b) => a.or(b),
-        })
-    }
-
-    /// Zapis do starszego slotu. Zwraca nowy `gen`.
-    pub fn write_next(&self, data: &[u8]) -> Result<Slot, String> {
-        let slot = self.slot_size()?;
-        let len = data.len() as u64;
-        if len > slot - HDR {
-            return Err(format!("snapshot {len} B > slot {} B", slot - HDR));
-        }
-        let [a, b] = self.slots()?;
-        let (i, gen) = match (a, b) {
-            (Some(a), Some(b)) if a.gen <= b.gen => (0, b.gen + 1),
-            (Some(a), Some(_)) => (1, a.gen + 1),
-            (Some(a), None) => (1, a.gen + 1),
-            (None, Some(b)) => (0, b.gen + 1),
-            (None, None) => (0, 1),
-        };
-        let mut f = self.open(true)?;
-        let io = |e: std::io::Error| e.to_string();
-        f.seek(SeekFrom::Start(i * slot + HDR)).map_err(io)?;
-        f.write_all(data).map_err(io)?;
-        f.sync_all().map_err(io)?;
-        let mut h = [0u8; HDR as usize];
-        h[0..8].copy_from_slice(MAGIC);
-        h[8..16].copy_from_slice(&gen.to_le_bytes());
-        h[16..24].copy_from_slice(&len.to_le_bytes());
-        h[24..32].copy_from_slice(&fnv1a(gen, len, data).to_le_bytes());
-        f.seek(SeekFrom::Start(i * slot)).map_err(io)?;
-        f.write_all(&h).map_err(io)?;
-        f.sync_all().map_err(io)?;
-        Ok(Slot { gen, len })
-    }
+/// Zakłada ext2 na całym urządzeniu (albo pliku obrazu).
+pub fn format(device: &Path) -> Result<crate::ext2::Layout, String> {
+    use std::io::{Seek, SeekFrom};
+    let mut f = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(device)
+        .map_err(|e| format!("{}: {e}", device.display()))?;
+    let size = f.seek(SeekFrom::End(0)).map_err(|e| e.to_string())?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as u32)
+        .unwrap_or(0);
+    let mut uuid = [0u8; 16];
+    getrandom::getrandom(&mut uuid).map_err(|e| e.to_string())?;
+    let layout = crate::ext2::format(&mut f, size, now, uuid).map_err(|e| e.to_string())?;
+    f.sync_all().map_err(|e| e.to_string())?;
+    Ok(layout)
 }
 
 /// devtmpfs na `/dev`, raz na proces (konsola i dysk wołają to oba).
@@ -177,8 +149,9 @@ pub fn mount_dev() -> Option<String> {
     .clone()
 }
 
-/// PID 1 na Linuksie: `/dev` (devtmpfs) i moduły z `/lib/modules`, potem
-/// czeka chwilę na urządzenie. Zwraca opis kroków, które się nie udały.
+/// PID 1 na Linuksie: `/dev` (devtmpfs) i moduły z `/lib/modules` w kolejności
+/// nazw (prefiks `NN-` ustala zależności), potem czeka chwilę na urządzenie.
+/// Zwraca opis kroków, które się nie udały.
 #[cfg(target_os = "linux")]
 pub fn prepare(device: &Path) -> Vec<String> {
     use std::ffi::CString;
@@ -231,61 +204,113 @@ pub fn prepare(_device: &Path) -> Vec<String> {
     Vec::new()
 }
 
+/// `mount -t ext4 device target`.
+#[cfg(target_os = "linux")]
+pub fn mount_ext4(device: &Path, target: &Path) -> Result<(), String> {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
+    std::fs::create_dir_all(target).map_err(|e| format!("{}: {e}", target.display()))?;
+    let src = CString::new(device.as_os_str().as_bytes()).map_err(|e| e.to_string())?;
+    let dst = CString::new(target.as_os_str().as_bytes()).map_err(|e| e.to_string())?;
+    let fs = CString::new("ext4").unwrap();
+    // ext2 bez księgowania: zapisy i metadane od razu na dysk (MS_SYNCHRONOUS),
+    // bez aktualizacji czasu odczytu (MS_NOATIME)
+    let flags = libc::MS_SYNCHRONOUS | libc::MS_NOATIME;
+    // SAFETY: wskaźniki na żywe CString; data = NULL.
+    let rc = unsafe { libc::mount(src.as_ptr(), dst.as_ptr(), fs.as_ptr(), flags, std::ptr::null()) };
+    if rc == 0 {
+        Ok(())
+    } else {
+        Err(format!("mount {}: {}", device.display(), std::io::Error::last_os_error()))
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn mount_ext4(_device: &Path, _target: &Path) -> Result<(), String> {
+    Err("mount ext4 tylko na Linuksie (płyta)".into())
+}
+
+/// PID 1: dysk → ext4 pod `/data` → świat w `data_home`. Zwraca magazyn
+/// (gdy dysk jest gotowy) i opis do linii startowej.
+pub fn attach_device(device: &str, allow_format: bool) -> (Option<Storage>, Result<String, String>) {
+    let dev = Path::new(device);
+    let warn = prepare(dev);
+    if !dev.exists() {
+        let extra = if warn.is_empty() { String::new() } else { format!(" ({})", warn.join("; ")) };
+        return (None, Err(format!("{device}: brak urządzenia{extra}")));
+    }
+    let target = Path::new(DATA_MOUNT);
+    let mut note = String::new();
+    if mount_ext4(dev, target).is_err() {
+        let blank = is_blank(dev).unwrap_or(false);
+        if !blank && !allow_format {
+            return (
+                None,
+                Err(format!("{device}: nie ext4 i nie pusty — `disk format` wyczyści go i założy ext2")),
+            );
+        }
+        if let Err(e) = format(dev) {
+            return (None, Err(format!("{device}: format: {e}")));
+        }
+        if let Err(e) = mount_ext4(dev, target) {
+            return (None, Err(e));
+        }
+        note = ", sformatowano".into();
+    }
+    if std::env::var_os("CYNOBER_DATA_HOME").is_none() {
+        std::env::set_var("CYNOBER_DATA_HOME", target.join("cynober"));
+    }
+    let storage = Storage::new(world_in_data_home(), Some(device.to_string()));
+    (Some(storage), Ok(format!("{device} ext4 → {DATA_MOUNT}{note}")))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn blank(name: &str, size: u64) -> Disk {
-        let p = std::env::temp_dir().join(format!("kdisk_{name}_{}.raw", std::process::id()));
-        let f = File::create(&p).unwrap();
-        f.set_len(size).unwrap();
-        Disk::new(p)
+    #[test]
+    fn storage_roundtrip_and_refuses_unreadable_world() {
+        let dir = std::env::temp_dir().join(format!("shell_world_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("swiat.kafd");
+        let mut st = Storage::new(path.clone(), None);
+        st.crypt = Crypt::with_master(&[5u8; 32]);
+        let s = Store::new(true);
+        assert_eq!(st.load(&s).unwrap(), None);
+        let a = s.atom_new("var", "x", 60.0);
+        let b = s.bubble_new("r", None);
+        s.set_root(b);
+        s.bind(b, "x", a).unwrap();
+        st.save(&s).unwrap();
+
+        let t = Store::new(true);
+        assert_eq!(st.load(&t).unwrap(), Some((1, 1)));
+        assert_eq!(t.lookup(b, "x"), Some(a));
+
+        // zły klucz: odczyt zawodzi, zapis wstrzymany, plik nietknięty
+        let before = std::fs::read(&path).unwrap();
+        let mut bad = Storage::new(path.clone(), None);
+        bad.crypt = Crypt::with_master(&[6u8; 32]);
+        assert!(bad.load(&Store::new(true)).is_err());
+        assert!(!bad.writable());
+        assert!(bad.save(&Store::new(true)).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
-    fn empty_disk_has_nothing() {
-        let d = blank("empty", 64 * 1024);
-        assert_eq!(d.read_latest().unwrap(), None);
-        assert_eq!(d.slots().unwrap(), [None, None]);
-        let _ = std::fs::remove_file(d.path());
-    }
-
-    #[test]
-    fn writes_alternate_and_latest_wins() {
-        let d = blank("alt", 64 * 1024);
-        assert_eq!(d.write_next(b"one").unwrap().gen, 1);
-        assert_eq!(d.write_next(b"two").unwrap().gen, 2);
-        assert_eq!(d.write_next(b"three").unwrap().gen, 3);
-        let [a, b] = d.slots().unwrap();
-        assert_eq!(a.unwrap().gen, 3);
-        assert_eq!(b.unwrap().gen, 2);
-        let (s, data) = d.read_latest().unwrap().unwrap();
-        assert_eq!((s.gen, data.as_slice()), (3, &b"three"[..]));
-        let _ = std::fs::remove_file(d.path());
-    }
-
-    #[test]
-    fn torn_slot_falls_back_to_previous() {
-        let d = blank("torn", 64 * 1024);
-        d.write_next(b"good").unwrap();
-        d.write_next(b"newer").unwrap();
-        // psuje dane slotu B (gen 2): suma się nie zgadza
-        let mut f = OpenOptions::new().write(true).open(d.path()).unwrap();
-        f.seek(SeekFrom::Start(32 * 1024 + HDR)).unwrap();
-        f.write_all(b"X").unwrap();
-        drop(f);
-        let (s, data) = d.read_latest().unwrap().unwrap();
-        assert_eq!((s.gen, data.as_slice()), (1, &b"good"[..]));
-        // następny zapis nadpisuje uszkodzony slot, nie dobry
-        assert_eq!(d.write_next(b"again").unwrap().gen, 2);
-        assert_eq!(d.slots().unwrap()[0].unwrap().gen, 1);
-        let _ = std::fs::remove_file(d.path());
-    }
-
-    #[test]
-    fn too_big_is_refused() {
-        let d = blank("big", 16 * 1024);
-        assert!(d.write_next(&vec![0u8; 9000]).is_err());
-        let _ = std::fs::remove_file(d.path());
+    fn blank_detection_and_format_file() {
+        let dir = std::env::temp_dir().join(format!("shell_blank_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let img = dir.join("disk.img");
+        std::fs::File::create(&img).unwrap().set_len(8 << 20).unwrap();
+        assert!(is_blank(&img).unwrap());
+        format(&img).unwrap();
+        assert!(!is_blank(&img).unwrap());
+        let head = std::fs::read(&img).unwrap();
+        assert!(crate::ext2::has_ext_superblock(&head[..2048]));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

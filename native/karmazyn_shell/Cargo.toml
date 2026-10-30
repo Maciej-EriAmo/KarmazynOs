@@ -15,6 +15,9 @@ path = "src/main.rs"
 karmazyn_substrate = { path = "../karmazyn_substrate" }
 karmazyn_lisp = { path = "../karmazyn_lisp" }
 karmazyn_lua = { path = "../karmazyn_lua" }
+# świat DBase (KAFD/KAFX) jako trwałość Store
+karmazyn_kafd = { path = "../karmazyn_kafd", features = ["substrate"] }
+getrandom = "0.2"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = "0.2"

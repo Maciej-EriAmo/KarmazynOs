@@ -11,8 +11,10 @@
 mod console;
 mod disk;
 mod editor;
+mod ext2;
 
-use disk::Disk;
+use disk::Storage;
+use std::cell::RefCell;
 use karmazyn_lisp::Evaluator;
 use karmazyn_lua::Evaluator as LuaEvaluator;
 
@@ -48,7 +50,10 @@ struct App {
     store: Store,
     lisp: Evaluator,
     lua: LuaEvaluator,
-    disk: Option<Disk>,
+    /// Świat KAFD na dysku (albo `KARMAZYN_WORLD` na hoście).
+    storage: RefCell<Option<Storage>>,
+    /// Urządzenie, którego nie dało się podłączyć (do `disk format`).
+    pending_device: RefCell<Option<String>>,
     /// Po każdym poleceniu zapis na dysk, jeśli Store się zmienił.
     autosync: bool,
     /// Skrót ostatniego snapshotu na dysku (albo wczytanego z dysku).
@@ -79,7 +84,8 @@ fn main() {
         store,
         lisp,
         lua,
-        disk: None,
+        storage: RefCell::new(None),
+        pending_device: RefCell::new(None),
         autosync: autosync_on,
         synced: std::cell::Cell::new(0),
     };
@@ -130,6 +136,9 @@ fn main() {
 
     if !batch.is_empty() {
         println!("karmazyn_shell {VERSION} — batch ({} cmds)", batch.len());
+        if let Some((false, msg)) = &disk_line {
+            println!("[WARN] disk — {msg}");
+        }
         let mut failed = false;
         for cmd in batch {
             println!("k$ {cmd}");
@@ -256,7 +265,7 @@ fn dispatch(app: &App, line: &str) -> Outcome {
     } else if head.eq_ignore_ascii_case("sync") {
         disk_sync(app)
     } else if head.eq_ignore_ascii_case("disk") {
-        disk_status(app)
+        disk_status(app, &parts)
     } else if head.eq_ignore_ascii_case("tick") {
         shell_tick(app, &parts)
     } else if head.eq_ignore_ascii_case("settle") {
@@ -345,57 +354,64 @@ fn print_boot(
     }
 }
 
-/// KARMAZYN_DISK=<urządzenie albo plik>; PID 1 bez zmiennej bierze /dev/vda.
-/// Najnowszy snapshot z dysku wraca do Store. `None` = dysk wyłączony.
+/// Trwałość: `KARMAZYN_WORLD=<plik.kafd>` wprost (host), inaczej PID 1
+/// podłącza `KARMAZYN_DISK` (domyślnie /dev/vda) jako ext4 pod /data.
+/// Świat z dysku wraca do Store. `None` = trwałość wyłączona.
 fn open_disk(app: &mut App) -> Option<(bool, String)> {
-    let path = match env::var("KARMAZYN_DISK") {
-        Ok(p) if p.trim().is_empty() || p.trim() == "none" => return None,
-        Ok(p) => p.trim().to_string(),
-        Err(_) if is_pid1() => disk::DEFAULT_DEVICE.to_string(),
-        Err(_) => return None,
-    };
-    let warn = if is_pid1() {
-        disk::prepare(std::path::Path::new(&path))
-    } else {
-        Vec::new()
-    };
-    let d = Disk::new(&path);
-    let line = match d.read_latest() {
-        Err(e) => {
-            let mut msg = e;
-            if !warn.is_empty() {
-                msg = format!("{msg} ({})", warn.join("; "));
+    let world = env::var("KARMAZYN_WORLD").ok().map(|w| w.trim().to_string());
+    let (storage, line) = match world {
+        Some(w) if w == "none" => return None,
+        Some(w) if !w.is_empty() => (Some(Storage::new(w.clone().into(), None)), Ok(String::new())),
+        _ => {
+            let dev = match env::var("KARMAZYN_DISK") {
+                Ok(p) if p.trim().is_empty() || p.trim() == "none" => return None,
+                Ok(p) => p.trim().to_string(),
+                Err(_) if is_pid1() => disk::DEFAULT_DEVICE.to_string(),
+                Err(_) => return None,
+            };
+            if !is_pid1() {
+                return Some((false, format!("{dev}: dysk tylko jako PID 1; na hoście KARMAZYN_WORLD=<plik.kafd>")));
             }
-            return Some((false, msg));
+            *app.pending_device.borrow_mut() = Some(dev.clone());
+            disk::attach_device(&dev, false)
         }
-        Ok(None) => (
-            true,
-            format!(
-                "{path} pusty{}",
-                if app.autosync { ", autosync" } else { ", `sync` zapisze stan" }
-            ),
-        ),
-        Ok(Some((slot, data))) => match String::from_utf8(data)
-            .map_err(|e| e.to_string())
-            .and_then(|t| StoreSnapshot::from_text(&t))
-        {
-            Ok(snap) => {
-                app.store.import_snapshot(&snap);
-                app.lisp.remount_repl(&app.store);
-                app.lua.remount_session(&app.store);
-                let st = app.store.stats();
-                (
-                    true,
-                    format!("{path} gen={} atoms={} bubbles={}", slot.gen, st.total, st.bubbles),
-                )
-            }
-            Err(e) => (false, format!("{path} gen={}: {e}", slot.gen)),
-        },
     };
-    app.disk = Some(d);
+    let mut detail = match line {
+        Ok(d) => d,
+        Err(e) => return Some((false, e)),
+    };
+    let st = storage?;
+    *app.pending_device.borrow_mut() = None;
+    let ok = attach_world(app, st, &mut detail);
+    Some((ok, detail))
+}
+
+/// Wczytuje świat do Store i podpina magazyn. Opis dopisuje do `detail`.
+fn attach_world(app: &App, st: Storage, detail: &mut String) -> bool {
+    let sep = if detail.is_empty() { "" } else { ", " };
+    let world = st.world.display().to_string();
+    let ok = match st.load(&app.store) {
+        Ok(Some(_)) => {
+            app.lisp.remount_repl(&app.store);
+            app.lua.remount_session(&app.store);
+            let s = app.store.stats();
+            detail.push_str(&format!("{sep}świat {world} atoms={} bubbles={}", s.total, s.bubbles));
+            true
+        }
+        Ok(None) => {
+            let how = if app.autosync { "autosync" } else { "`sync` zapisze stan" };
+            detail.push_str(&format!("{sep}nowy świat {world}, {how}"));
+            true
+        }
+        Err(e) => {
+            detail.push_str(&format!("{sep}{e}"));
+            false
+        }
+    };
+    *app.storage.borrow_mut() = Some(st);
     // stan po starcie (wczytany albo pusty) liczy się jako zapisany
     app.synced.set(content_hash(&app.store.export_snapshot()));
-    Some(line)
+    ok
 }
 
 /// Skrót treści Store dla autosync: atomy (S, E, token, payload), bąble,
@@ -422,15 +438,15 @@ fn content_hash(snap: &StoreSnapshot) -> u64 {
 
 /// Zapis na dysk, gdy treść różni się od ostatnio zapisanej (`content_hash`).
 /// `None` = nic do zrobienia (brak dysku, autosync wyłączony, bez zmian).
-fn write_if_changed(app: &App) -> Option<Result<disk::Slot, String>> {
-    let d = app.disk.as_ref()?;
-    let snap = app.store.export_snapshot();
-    let h = content_hash(&snap);
+fn write_if_changed(app: &App) -> Option<Result<usize, String>> {
+    let guard = app.storage.borrow();
+    // świat nieczytelny: cicho (linia startowa, `disk` i `sync` mówią o tym)
+    let st = guard.as_ref().filter(|s| s.writable())?;
+    let h = content_hash(&app.store.export_snapshot());
     if h == app.synced.get() {
         return None;
     }
-    let text = snap.to_text();
-    let r = d.write_next(text.as_bytes());
+    let r = st.save(&app.store);
     if r.is_ok() {
         app.synced.set(h);
     }
@@ -473,7 +489,7 @@ fn edit_file(app: &App, parts: &[&str]) -> Outcome {
         let kind = if code { "lua" } else { "text" };
         app.lua.fs_write(&app.store, dir, file, kind, text.as_bytes())?;
         let disk = match (app.autosync, write_if_changed(app)) {
-            (true, Some(Ok(s))) => format!(", dysk gen={}", s.gen),
+            (true, Some(Ok(_))) => ", świat zapisany".to_string(),
             (true, Some(Err(e))) => format!(", dysk: {e}"),
             _ => String::new(),
         };
@@ -495,16 +511,17 @@ fn edit_file(app: &App, parts: &[&str]) -> Outcome {
 }
 
 fn disk_sync(app: &App) -> Outcome {
-    let Some(d) = &app.disk else {
-        println!("sync: brak dysku (KARMAZYN_DISK)");
+    let guard = app.storage.borrow();
+    let Some(st) = guard.as_ref() else {
+        println!("sync: brak świata (dysk albo KARMAZYN_WORLD)");
         return Outcome::Err;
     };
     let snap = app.store.export_snapshot();
-    let text = snap.to_text();
-    match d.write_next(text.as_bytes()) {
-        Ok(s) => {
+    match st.save(&app.store) {
+        Ok(n) => {
             app.synced.set(content_hash(&snap));
-            println!("sync {} gen={} bytes={}", d.path().display(), s.gen, s.len);
+            let bytes = std::fs::metadata(&st.world).map(|m| m.len()).unwrap_or(0);
+            println!("sync {} dokumenty={n} bytes={bytes}", st.world.display());
             Outcome::Ok
         }
         Err(e) => {
@@ -514,28 +531,56 @@ fn disk_sync(app: &App) -> Outcome {
     }
 }
 
-fn disk_status(app: &App) -> Outcome {
-    let Some(d) = &app.disk else {
-        println!("disk: brak (KARMAZYN_DISK)");
+fn disk_status(app: &App, parts: &[&str]) -> Outcome {
+    if parts.get(1).is_some_and(|p| p.eq_ignore_ascii_case("format")) {
+        return disk_format(app);
+    }
+    let guard = app.storage.borrow();
+    let Some(st) = guard.as_ref() else {
+        match app.pending_device.borrow().as_deref() {
+            Some(d) => println!("disk: {d} niepodłączony (`disk format` założy ext2)"),
+            None => println!("disk: brak (KARMAZYN_DISK albo KARMAZYN_WORLD)"),
+        }
         return Outcome::Err;
     };
-    match (d.size(), d.slots()) {
-        (Ok(size), Ok(slots)) => {
-            println!(
-                "disk {} size={size} autosync={}",
-                d.path().display(),
-                if app.autosync { "on" } else { "off" }
-            );
-            for (name, s) in ["A", "B"].iter().zip(slots) {
-                match s {
-                    Some(s) => println!("  {name} gen={} bytes={}", s.gen, s.len),
-                    None => println!("  {name} pusty"),
-                }
-            }
+    let head = std::fs::read(&st.world).ok();
+    let (bytes, kind) = match &head {
+        Some(b) if b.starts_with(b"KAFX") => (b.len(), "KAFX (AES-GCM)"),
+        Some(b) if b.starts_with(b"KAFD") => (b.len(), "KAFD jawny"),
+        Some(b) => (b.len(), "nieznany"),
+        None => (0, "brak pliku"),
+    };
+    println!(
+        "disk {} świat={} {kind} bytes={bytes} zapisy={} autosync={}{}",
+        st.device.as_deref().unwrap_or("-"),
+        st.world.display(),
+        st.saves(),
+        if app.autosync { "on" } else { "off" },
+        if st.writable() { "" } else { " ZAPIS WSTRZYMANY" }
+    );
+    Outcome::Ok
+}
+
+/// `disk format`: tylko dysk, którego nie podłączono (nieznane dane).
+/// Czyści go, zakłada ext2, montuje i zaczyna nowy świat.
+fn disk_format(app: &App) -> Outcome {
+    if app.storage.borrow().is_some() {
+        println!("disk format: dysk już podłączony — format usunąłby świat");
+        return Outcome::Err;
+    }
+    let Some(dev) = app.pending_device.borrow().clone() else {
+        println!("disk format: brak urządzenia do sformatowania");
+        return Outcome::Err;
+    };
+    match disk::attach_device(&dev, true) {
+        (Some(st), Ok(mut detail)) => {
+            *app.pending_device.borrow_mut() = None;
+            attach_world(app, st, &mut detail);
+            println!("disk format: {detail}");
             Outcome::Ok
         }
-        (Err(e), _) | (_, Err(e)) => {
-            println!("disk err: {e}");
+        (_, Err(e)) | (None, Ok(e)) => {
+            println!("disk format: {e}");
             Outcome::Err
         }
     }
@@ -1214,11 +1259,11 @@ fn print_help() {
   assert has|nohas|dead|nodead|lookup|t|val|stats|root|noroot …
   echo <text>
   save <path> / load <path>     KSUB_SNAP v1. load remounts lisp and lua
-  sync                          snapshot na dysk (KARMAZYN_DISK, slot A/B)
+  sync                          świat KAFD (KAFX) na dysk: /data/cynober/worlds/*.kafd
                                 po każdym poleceniu sam, gdy zmieniła się treść
                                 (KARMAZYN_AUTOSYNC=0 wyłącza)
   edit <katalog>/<plik>         edytor z kursorem (^S zapis, ^Q wyjście, ^K linia, ^L odśwież)
-  disk                          stan dysku i slotów
+  disk / disk format            stan świata / ext2 na dysku z nieznanymi danymi
   (define x 10) / lisp <expr>   mini-Lisp guest (atoms = vars)
   lua <chunk>                   Lua guest (mlua). return karmazyn._VERSION
                                 limit instrukcji na chunk: KARMAZYN_LUA_BUDGET (0 = brak)
