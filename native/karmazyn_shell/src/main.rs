@@ -404,12 +404,12 @@ fn boot_line(color: bool, code: &str, name: &str, detail: &str) {
 
 fn run_tool(app: &App, name: &str) -> Outcome {
     if name.is_empty() {
-        let names = app.lua.tool_names();
+        let names = app.lua.all_tool_names(&app.store);
         if names.is_empty() {
             println!("usage: tool <name>  (brak lua_bin)");
             return Outcome::Err;
         }
-        println!("lua_bin:");
+        println!("narzędzia (fs bin + lua_bin):");
         for n in names {
             println!("  {n}");
         }
@@ -1041,7 +1041,7 @@ fn print_help() {
   (define x 10) / lisp <expr>   mini-Lisp guest (atoms = vars)
   lua <chunk>                   Lua guest (mlua). return karmazyn._VERSION
                                 limit instrukcji na chunk: KARMAZYN_LUA_BUDGET (0 = brak)
-  tool <name> [args] | :tool    lua_bin tool (uptime, ls, df, nano, …). bare tool lists names
+  tool <name> [args] | :tool    narzędzie: najpierw fs bin/<name>, potem lua_bin. bare tool lists names
   help | quit
 
 batch: non-zero exit if a command fails (assert/save/bind/…)"

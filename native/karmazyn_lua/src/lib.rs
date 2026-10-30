@@ -228,9 +228,11 @@ impl Evaluator {
             .set(self.guest.epoch.get().saturating_add(n));
     }
 
-    /// Run a preloaded `lua_bin` script. Calls `package.preload[name]` directly so
-    /// a second `tool ls` runs again (`require` would return the cached module).
-    /// `spec` is `name` plus optional arguments (`tool nano notatki --temp`).
+    /// Run a tool. `fs` directory `bin` (written in the session, kept by `sync`)
+    /// wins over a preloaded `lua_bin` script of the same name. The chunk is
+    /// called directly, so a second `tool ls` runs again (`require` would cache).
+    /// `spec` is `name` plus optional arguments (`tool nano notatki --temp`);
+    /// arguments reach the chunk as `...` strings, untouched.
     pub fn run_tool(&self, store: &Store, spec: &str) -> Result<String, String> {
         let mut parts = spec.split_whitespace();
         let Some(name) = parts.next() else {
@@ -242,24 +244,44 @@ impl Evaluator {
         {
             return Err("usage: tool <name> [arg...]".into());
         }
-        let mut call = format!(
-            "do local fn = package.preload['{name}']; if not fn then error('brak narzędzia {name}') end; return fn("
-        );
-        let mut first = true;
-        for arg in parts {
-            if arg.chars().any(|c| c == '\\' || c == '\'' || c.is_control()) {
-                return Err("usage: tool <name> [arg...]".into());
+        let args: Vec<String> = parts.map(str::to_string).collect();
+        let func = match vfs::read(store, vfs::BIN_DIR, name) {
+            Some(src) => match self.lua.load(src).set_name(name).into_function() {
+                Ok(f) => f,
+                Err(e) => return Ok(format!("blad: {e}")),
+            },
+            None => {
+                let preload = self
+                    .lua
+                    .globals()
+                    .get::<mlua::Table>("package")
+                    .and_then(|p| p.get::<mlua::Table>("preload"))
+                    .map_err(|e| e.to_string())?;
+                match preload.get::<Option<Function>>(name) {
+                    Ok(Some(f)) => f,
+                    _ => return Ok(format!("blad: brak narzędzia {name}")),
+                }
             }
-            if !first {
-                call.push_str(", ");
-            }
-            first = false;
-            call.push('\'');
-            call.push_str(arg);
-            call.push('\'');
+        };
+        self.prints.borrow_mut().clear();
+        if let Err(e) = self.arm_budget.call::<()>(()) {
+            return Ok(format!("blad: {e}"));
         }
-        call.push_str(") end");
-        Ok(self.eval_line(store, &call))
+        Ok(match func.call::<MultiValue>(MultiValue::from_iter(
+            args.into_iter().map(|a| self.lua.create_string(a).map(Value::String)).filter_map(Result::ok),
+        )) {
+            Ok(values) => join_print_and_return(&self.prints.borrow(), &values),
+            Err(e) => format!("blad: {e}"),
+        })
+    }
+
+    /// Tool names from `lua_bin` and from `fs` directory `bin`, sorted, no repeats.
+    pub fn all_tool_names(&self, store: &Store) -> Vec<String> {
+        let mut names = self.tool_names();
+        names.extend(vfs::files(store, vfs::BIN_DIR));
+        names.sort();
+        names.dedup();
+        names
     }
 
     pub fn set_project_root(&self, root: impl Into<PathBuf>) {
@@ -2043,7 +2065,21 @@ mod tests {
         let missing = ev.run_tool(&store, "brak_takiego").unwrap();
         assert!(missing.starts_with("blad:"), "{missing}");
         assert!(ev.run_tool(&store, "../x").is_err());
-        assert!(ev.run_tool(&store, "echoargs a'b").is_err());
+        assert_eq!(ev.run_tool(&store, r"echoargs a'b \x").unwrap(), r"a'b:\x");
+
+        // fs bin wygrywa z lua_bin, a po fs.delete wraca wersja z lua_bin
+        ev.eval_line(
+            &store,
+            "karmazyn.fs.write('bin','echoargs','lua',\"local a = ...; return 'fs:'..a\")",
+        );
+        ev.eval_line(&store, "karmazyn.fs.write('bin','nowe','lua','return 7*6')");
+        assert_eq!(ev.run_tool(&store, "echoargs x").unwrap(), "fs:x");
+        assert_eq!(ev.run_tool(&store, "nowe").unwrap(), "42");
+        assert!(ev.all_tool_names(&store).contains(&"nowe".to_string()));
+        ev.eval_line(&store, "karmazyn.fs.delete('bin','echoargs')");
+        assert_eq!(ev.run_tool(&store, "echoargs x y").unwrap(), "x:y");
+        ev.eval_line(&store, "karmazyn.fs.write('bin','zly','lua','return (')");
+        assert!(ev.run_tool(&store, "zly").unwrap().starts_with("blad:"));
         assert!(ev.run_tool(&store, "  ").is_err());
     }
 

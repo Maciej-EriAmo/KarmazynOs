@@ -1,6 +1,7 @@
 # Trwały dysk: dwa rozruchy płyty na tym samym dysku virtio (out/karmazyn-disk-test.raw).
 # Rozruch 1: pusty dysk, atom, program Lua w fs, sync. Rozruch 2: shell przy
-# starcie czyta slot, atom jest z powrotem, a program z fs się uruchamia.
+# starcie czyta slot, atom jest z powrotem, program z fs się uruchamia, a narzędzie
+# zapisane w fs bin działa jako `tool`.
 # Exit 0 = pass, 1 = fail, 2 = brak qemu albo ISO.
 $ErrorActionPreference = "Stop"
 $Repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
@@ -104,16 +105,17 @@ function Tail([string]$t) {
 
 [Console]::OutputEncoding = [Text.Encoding]::UTF8
 $prog = "lua karmazyn.fs.write('bin','hello','lua',""return function(n) return 'hej '..n end"")"
-$one = Invoke-Boot @("disk", "atom trwaly hej 80", $prog, "sync", "disk") 45471
+$tool = "lua karmazyn.fs.write('bin','powitanie','lua',""local n = ...; return 'witaj '..(n or '?')"")"
+$one = Invoke-Boot @("disk", "atom trwaly hej 80", $prog, $tool, "sync", "disk") 45471
 Write-Host "--- rozruch 1 ---"
 Write-Host (Tail $one)
-$two = Invoke-Boot @("info 0", "assert has 0", "lua return load(karmazyn.fs.read('bin','hello'))()('swiat')", "disk") 45472
+$two = Invoke-Boot @("info 0", "assert has 0", "lua return load(karmazyn.fs.read('bin','hello'))()('swiat')", "tool powitanie Karmazyn", "disk") 45472
 Write-Host "--- rozruch 2 ---"
 Write-Host (Tail $two)
 
 $pass = ($one -match 'disk — /dev/vda pusty') -and ($one -match 'sync /dev/vda gen=1') `
-    -and ($two -match 'disk — /dev/vda gen=1 atoms=2') -and ($two -match 's=trwaly e=hej') `
-    -and ($two -match 'assert ok') -and ($two -match '(?m)^hej swiat')
+    -and ($two -match 'disk — /dev/vda gen=1 atoms=3') -and ($two -match 's=trwaly e=hej') `
+    -and ($two -match 'assert ok') -and ($two -match '(?m)^hej swiat') -and ($two -match '(?m)^witaj Karmazyn')
 Remove-Item $disk -Force -ErrorAction SilentlyContinue
 if ($pass) {
     Write-Host "LINUX DISK PASS"
