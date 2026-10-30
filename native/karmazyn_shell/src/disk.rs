@@ -153,6 +153,30 @@ impl Disk {
     }
 }
 
+/// devtmpfs na `/dev`, raz na proces (konsola i dysk wołają to oba).
+/// `Some` = opis błędu.
+#[cfg(target_os = "linux")]
+pub fn mount_dev() -> Option<String> {
+    use std::ffi::CString;
+    use std::sync::OnceLock;
+    static DONE: OnceLock<Option<String>> = OnceLock::new();
+    DONE.get_or_init(|| {
+        let _ = std::fs::create_dir_all("/dev");
+        let src = CString::new("devtmpfs").unwrap();
+        let dst = CString::new("/dev").unwrap();
+        // SAFETY: wskaźniki na żywe CString; data = NULL.
+        let rc = unsafe {
+            libc::mount(src.as_ptr(), dst.as_ptr(), src.as_ptr(), 0, std::ptr::null())
+        };
+        if rc == 0 {
+            return None;
+        }
+        let e = std::io::Error::last_os_error();
+        (e.raw_os_error() != Some(libc::EBUSY)).then(|| format!("mount /dev: {e}"))
+    })
+    .clone()
+}
+
 /// PID 1 na Linuksie: `/dev` (devtmpfs) i moduły z `/lib/modules`, potem
 /// czeka chwilę na urządzenie. Zwraca opis kroków, które się nie udały.
 #[cfg(target_os = "linux")]
@@ -161,18 +185,8 @@ pub fn prepare(device: &Path) -> Vec<String> {
     use std::time::{Duration, Instant};
 
     let mut warn = Vec::new();
-    let _ = std::fs::create_dir_all("/dev");
-    let src = CString::new("devtmpfs").unwrap();
-    let dst = CString::new("/dev").unwrap();
-    // SAFETY: wskaźniki na żywe CString; data = NULL.
-    let rc = unsafe {
-        libc::mount(src.as_ptr(), dst.as_ptr(), src.as_ptr(), 0, std::ptr::null())
-    };
-    if rc != 0 {
-        let e = std::io::Error::last_os_error();
-        if e.raw_os_error() != Some(libc::EBUSY) {
-            warn.push(format!("mount /dev: {e}"));
-        }
+    if let Some(e) = mount_dev() {
+        warn.push(e);
     }
 
     if let Ok(dir) = std::fs::read_dir("/lib/modules") {

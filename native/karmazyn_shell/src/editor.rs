@@ -420,29 +420,47 @@ pub type SaveFn<'a> = dyn FnMut(&str) -> Result<String, String> + 'a;
 mod term {
     use std::io::{self, Read, Write};
 
+    /// Terminale do przełączenia: konsola PID 1 (ekran i serial) albo fd 0.
+    fn fds() -> Vec<i32> {
+        let t = crate::console::ttys();
+        if t.is_empty() {
+            vec![0]
+        } else {
+            t.to_vec()
+        }
+    }
+
     pub struct Raw {
-        saved: libc::termios,
+        saved: Vec<(i32, libc::termios)>,
     }
 
     impl Raw {
         pub fn enter() -> io::Result<Self> {
-            // SAFETY: termios wypełnia tcgetattr; fd 0 to terminal shella.
-            unsafe {
-                let mut t: libc::termios = std::mem::zeroed();
-                if libc::tcgetattr(0, &mut t) != 0 {
-                    return Err(io::Error::last_os_error());
+            let mut saved = Vec::new();
+            for fd in fds() {
+                // SAFETY: termios wypełnia tcgetattr; fd to terminal konsoli.
+                unsafe {
+                    let mut t: libc::termios = std::mem::zeroed();
+                    if libc::tcgetattr(fd, &mut t) != 0 {
+                        continue;
+                    }
+                    let old = t;
+                    libc::cfmakeraw(&mut t);
+                    // cfmakeraw zdejmuje OPOST; bez niego nowa linia nie wraca do kolumny 1
+                    t.c_oflag |= libc::OPOST | libc::ONLCR;
+                    t.c_cc[libc::VMIN] = 1;
+                    t.c_cc[libc::VTIME] = 0;
+                    if libc::tcsetattr(fd, libc::TCSANOW, &t) == 0 {
+                        saved.push((fd, old));
+                    }
                 }
-                let saved = t;
-                libc::cfmakeraw(&mut t);
-                t.c_cc[libc::VMIN] = 1;
-                t.c_cc[libc::VTIME] = 0;
-                if libc::tcsetattr(0, libc::TCSANOW, &t) != 0 {
-                    return Err(io::Error::last_os_error());
-                }
-                print!("\x1b[?1049h");
-                let _ = io::stdout().flush();
-                Ok(Raw { saved })
             }
+            if saved.is_empty() {
+                return Err(io::Error::other("brak terminala do trybu surowego"));
+            }
+            print!("\x1b[?1049h");
+            let _ = io::stdout().flush();
+            Ok(Raw { saved })
         }
     }
 
@@ -450,26 +468,36 @@ mod term {
         fn drop(&mut self) {
             print!("\x1b[?1049l");
             let _ = io::stdout().flush();
-            // SAFETY: przywraca ustawienia odczytane w enter().
-            unsafe {
-                libc::tcsetattr(0, libc::TCSANOW, &self.saved);
+            for (fd, t) in &self.saved {
+                // SAFETY: przywraca ustawienia odczytane w enter().
+                unsafe {
+                    libc::tcsetattr(*fd, libc::TCSANOW, t);
+                }
             }
         }
     }
 
-    /// (wiersze, kolumny). Serial zwykle zwraca 0×0 → LINES/COLUMNS albo 24×80.
+    /// (wiersze, kolumny): najmniejszy z terminali konsoli, żeby ekran mieścił
+    /// się wszędzie. Serial zwykle zwraca 0×0 → LINES/COLUMNS albo 24×80.
     pub fn size() -> (usize, usize) {
-        // SAFETY: winsize wypełnia ioctl.
-        let mut ws: libc::winsize = unsafe { std::mem::zeroed() };
-        let ok = unsafe { libc::ioctl(1, libc::TIOCGWINSZ, &mut ws) } == 0;
         let env = |k: &str, d: usize| {
             std::env::var(k).ok().and_then(|v| v.parse().ok()).unwrap_or(d)
         };
-        if ok && ws.ws_row > 0 && ws.ws_col > 0 {
-            (ws.ws_row as usize, ws.ws_col as usize)
-        } else {
-            (env("LINES", 24), env("COLUMNS", 80))
+        let mut best = (env("LINES", 24), env("COLUMNS", 80));
+        let mut fds = crate::console::ttys().to_vec();
+        if fds.is_empty() {
+            fds.push(1);
         }
+        for fd in fds {
+            // SAFETY: winsize wypełnia ioctl.
+            let mut ws: libc::winsize = unsafe { std::mem::zeroed() };
+            let ok = unsafe { libc::ioctl(fd, libc::TIOCGWINSZ, &mut ws) } == 0;
+            if ok && ws.ws_row > 0 && ws.ws_col > 0 {
+                best.0 = best.0.min(ws.ws_row as usize);
+                best.1 = best.1.min(ws.ws_col as usize);
+            }
+        }
+        best
     }
 
     /// Kolejna porcja bajtów. Czyta przez std::io::stdin, więc najpierw

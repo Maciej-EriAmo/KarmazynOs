@@ -8,6 +8,7 @@
 //! Commands: help | version | stats | atom | … | save | load | quit
 //! Lisp guest: line starting with `(` → karmazyn_lisp::Evaluator::eval_line.
 
+mod console;
 mod disk;
 mod editor;
 
@@ -17,7 +18,7 @@ use karmazyn_lua::Evaluator as LuaEvaluator;
 
 use karmazyn_substrate::{state_for_t, Store, StoreSnapshot, T_INIT};
 use std::env;
-use std::io::{self, BufRead, IsTerminal, Write};
+use std::io::{self, BufRead, Write};
 use std::process;
 use std::thread;
 use std::time::Duration;
@@ -55,6 +56,12 @@ struct App {
 }
 
 fn main() {
+    // PID 1: ekran i serial, zanim cokolwiek się wypisze
+    let console_line = is_pid1().then(console::setup);
+    if matches!(console_line, Some(Ok(_))) {
+        // gość Lua (clear_screen) widzi terminal mimo rury konsoli
+        env::set_var("KARMAZYN_TTY", "1");
+    }
     let thermal = true;
     let store = Store::new(thermal);
     let lisp = Evaluator::new(&store);
@@ -144,7 +151,7 @@ fn main() {
     }
 
     app.lua.enable_stdin(true);
-    print_boot(tools, &disk_line);
+    print_boot(tools, &disk_line, &console_line);
     println!("karmazyn_shell {VERSION} — Stage 2 (native, no Python)");
     println!("thermal={thermal}  lisp: (   lua: `lua <chunk>`   tool: `tool <name> [args]`   type `help`");
 
@@ -314,8 +321,17 @@ fn preload_lua_bin(lua: &LuaEvaluator) -> usize {
     0
 }
 
-fn print_boot(tools: usize, disk: &Option<(bool, String)>) {
-    let color = io::stdout().is_terminal();
+fn print_boot(
+    tools: usize,
+    disk: &Option<(bool, String)>,
+    console: &Option<Result<Vec<String>, String>>,
+) {
+    let color = console::is_terminal();
+    match console {
+        Some(Ok(names)) => boot_line(color, "ok", "console", &names.join(" + ")),
+        Some(Err(e)) => boot_line(color, "warn", "console", &format!("/dev/console ({e})")),
+        None => {}
+    }
     boot_line(color, "ok", "store", "");
     boot_line(color, "ok", "lisp", "");
     boot_line(color, "ok", "lua", "");

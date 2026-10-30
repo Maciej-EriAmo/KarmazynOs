@@ -1104,7 +1104,9 @@ fn read_line(guest: &Guest, prints: &RefCell<String>, args: &MultiValue) -> Opti
 }
 
 fn clear_screen(guest: &Guest) {
-    if guest.stdin_on.get() && io::stdout().is_terminal() {
+    // KARMAZYN_TTY: shell PID 1 podaje terminal przez rurę konsoli (ekran + serial)
+    let tty = io::stdout().is_terminal() || std::env::var_os("KARMAZYN_TTY").is_some();
+    if guest.stdin_on.get() && tty {
         print!("\x1b[2J\x1b[H");
         let _ = io::stdout().flush();
     }
