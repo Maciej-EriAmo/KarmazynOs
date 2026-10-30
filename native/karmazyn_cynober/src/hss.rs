@@ -56,15 +56,19 @@ pub const PRODUCTION: Profile = Profile {
     a_seed: b"KARMAZYN_HSS_KEM_A_v3_n512",
 };
 
-/// Profil z `KARM_HSS_PROFILE` (domyślnie `proto` jak w DBase). `None` =
-/// profil nieobsługiwany natywnie (proto) — wtedy bez HSS.
-pub fn profile_from_env() -> Option<Profile> {
-    let raw = std::env::var("KARM_HSS_PROFILE").unwrap_or_default();
+/// Nazwa profilu → parametry. `standard` i `production` są natywne.
+/// `proto`, puste i nieznane dają `None`: klient nie ogłasza HSS.
+pub fn profile_from_name(raw: &str) -> Option<Profile> {
     match raw.trim().to_lowercase().as_str() {
         "standard" => Some(STANDARD),
         "production" => Some(PRODUCTION),
         _ => None,
     }
+}
+
+/// Profil z `KARM_HSS_PROFILE`. Puste i `proto` → `None` (rozmowa idzie ECDH).
+pub fn profile_from_env() -> Option<Profile> {
+    profile_from_name(&std::env::var("KARM_HSS_PROFILE").unwrap_or_default())
 }
 
 fn mod_pow(base: i64, mut exp: i64, m: i64) -> i64 {

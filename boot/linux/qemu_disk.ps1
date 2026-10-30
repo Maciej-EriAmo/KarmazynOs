@@ -1,10 +1,10 @@
 # Trwały dysk: dwa rozruchy płyty na tym samym dysku virtio (out/karmazyn-disk-test.raw).
 # Rozruch 1: pusty dysk → shell zakłada ext2, montuje go jako ext4 pod /data;
-# atom, program Lua w fs, sync zapisuje świat KAFD (KAFX) w
+# atom, bąbel kodu, sync zapisuje świat KAFD (KAFX) w
 # /data/cynober/worlds/karmazyn.kafd. Rozruch 2: shell wczytuje świat,
-# atom jest z powrotem, program z fs się uruchamia, a narzędzie
-# zapisane w fs bin działa jako `tool`, także z biblioteką z fs lib (`require`)
-# i napisane w nano (bin/razy, z pustą linią).
+# atom jest z powrotem, program z bąbla się uruchamia, a narzędzie
+# o etykiecie działa jako `tool`, także z biblioteką powiązaną przez code.link
+# i napisane w nano (bąbel razy, z pustą linią).
 # Exit 0 = pass, 1 = fail, 2 = brak qemu albo ISO.
 $ErrorActionPreference = "Stop"
 $Repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
@@ -106,6 +106,7 @@ function Invoke-Boot([object[]]$cmds, [int]$port) {
         if ($client) { $client.Close() }
         if ($proc -and -not $proc.HasExited) {
             Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+            $proc.WaitForExit(5000) | Out-Null
         }
     }
     return $text
@@ -119,43 +120,61 @@ function Tail([string]$t) {
 }
 
 [Console]::OutputEncoding = [Text.Encoding]::UTF8
-$prog = "lua karmazyn.fs.write('bin','hello','lua',""return function(n) return 'hej '..n end"")"
-$tool = "lua karmazyn.fs.write('bin','powitanie','lua',""local n = ...; return 'witaj '..(n or '?')"")"
-$lib = "lua karmazyn.fs.write('lib','mat','lua',""return { dodaj = function(a,b) return a+b end }"")"
-$suma = "lua karmazyn.fs.write('bin','suma','lua',""local a,b = ...; return require('mat').dodaj(tonumber(a), tonumber(b))"")"
+$prog = "lua karmazyn.code.write('hello',""return function(n) return 'hej '..n end"")"
+$tool = "lua karmazyn.code.write('powitanie',""local n = ...; return 'witaj '..(n or '?')"")"
+$lib = "lua karmazyn.code.write('mat',""return { dodaj = function(a,b) return a+b end }"")"
+$suma = "lua karmazyn.code.write('suma',""local a,b = ...; return require('mat').dodaj(tonumber(a), tonumber(b))"")"
+$link = "lua karmazyn.code.link('suma','mat')"
 # nano przez serial: wszystkie linie edycji idą naraz, nano czyta je z tego samego stdin
-$nano = "tool nano bin/razy`nlocal a, b = ...`n`nreturn tonumber(a) * tonumber(b)`n.save"
+$nano = "tool nano razy`nlocal a, b = ...`n`nreturn tonumber(a) * tonumber(b)`n.save"
 # edytor z kursorem: pusty plik, "return a", Home, wstaw linię nad, End, dopisz, ^S, ^Q
 # dwie porcje: po pierwszej edytor rysuje tylko zmienione wiersze (linia 1 + pasek)
 $keys = "`e[Hlocal a = ...`r`e[F..' kursor'" + [char]0x13 + [char]0x11
-$one = Invoke-Boot @("disk", "atom trwaly hej 80", $prog, $tool, $lib, $suma, $nano,
-    "edit bin/kursor", @{ after = 'L1:1'; send = "return a" }, @{ after = 'L1:9'; send = $keys },
-    "lua return karmazyn.fs.read('bin','kursor')", "sync",
+$seeds = @(Get-ChildItem (Join-Path $Repo "lua_bin\*.lua")).Count
+# ziarno + trwaly, hello, powitanie, mat, suma, razy, kursor, po_sync
+$atoms = $seeds + 8
+$one = Invoke-Boot @("disk", "atom trwaly hej 80", $prog, $tool, $lib, $suma, $link, $nano,
+    "edit kursor", @{ after = 'L1:1'; send = "return a" }, @{ after = 'L1:9'; send = $keys },
+    "lua return karmazyn.code.read('kursor')", "sync",
     "lua karmazyn.fs.write('dev','po_sync','txt','autosync ok')", "disk") 45471
 Write-Host "--- rozruch 1 ---"
 Write-Host (Tail $one)
-$two = Invoke-Boot @("info 0", "assert has 0", "lua return load(karmazyn.fs.read('bin','hello'))()('swiat')",
-    "tool powitanie Karmazyn", "tool suma 40 2", "tool razy 6 9", "lua return karmazyn.fs.read('bin','razy')",
+if ($one -notmatch 'aid=(\d+) state=') {
+    Write-Host "BRAK: aid atomu trwaly"
+    exit 1
+}
+$aid = $Matches[1]
+$two = Invoke-Boot @("info $aid", "assert has $aid", "lua return load(karmazyn.code.read('hello'))()('swiat')",
+    "tool powitanie Karmazyn", "tool suma 40 2", "tool razy 6 9", "lua return karmazyn.code.read('razy')",
     "tool kursor Hej", "lua return karmazyn.fs.read('dev','po_sync')", "disk") 45472
 Write-Host "--- rozruch 2 ---"
 Write-Host (Tail $two)
 
-$raw = [IO.File]::ReadAllBytes($disk)
+$raw = $null
+foreach ($try in 1..20) {
+    try {
+        $raw = [IO.File]::ReadAllBytes($disk)
+        break
+    } catch {
+        Start-Sleep -Milliseconds 250
+    }
+}
+if ($null -eq $raw) { throw "dysk zajęty: $disk" }
 $rawText = [Text.Encoding]::GetEncoding(28591).GetString($raw)
 $checks = [ordered]@{
     'pusty dysk → ext4'    = $one -match 'disk — /dev/vda ext4 → /data, sformatowano, nowy świat /data/cynober/worlds/karmazyn\.kafd, autosync'
     'sync'                 = $one -match 'sync /data/cynober/worlds/karmazyn\.kafd dokumenty=\d+'
-    'nano bin/razy'        = $one -match 'Zapisano bin/razy \(3 linii\)'
+    'nano bąbel razy'      = $one -match 'Zapisano razy \(3 linii\)'
     # echo terminala może wstawić pustą linię przed pierwszym "> "
-    'nano bufor przed >'   = $one -match '===== bin/razy =====\s+Komendy:[^\n]*\n\s*> '
-    'edit zamknięty'       = $one -match 'edit: zamknięto bin/kursor'
+    'nano bufor przed >'   = $one -match '===== razy =====\s+Komendy:[^\n]*\n\s*> '
+    'edit zamknięty'       = $one -match 'edit: zamknięto kursor'
     'edit rysuje przyrost' = $one -match '\x1b\[1;1Hreturn a\x1b\[K\x1b\[23;1H\x1b\[7m[^\x1b]*L1:9'
     'edit treść'           =$one -match "local a = \.\.\.\r?\nreturn a\.\.' kursor'"
-    'restore'              = $two -match 'disk — /dev/vda ext4 → /data, świat /data/cynober/worlds/karmazyn\.kafd atoms=8'
+    'restore'              = $two -match "disk — /dev/vda ext4 → /data, świat /data/cynober/worlds/karmazyn\.kafd atoms=$atoms"
     'atom'                 = ($two -match 's=trwaly e=hej') -and ($two -match 'assert ok')
-    'program fs'           = $two -match '(?m)^hej swiat'
-    'tool fs bin'          = $two -match '(?m)^witaj Karmazyn'
-    'require fs lib'       = $two -match '(?m)^42\s*$'
+    'program bąbla'        = $two -match '(?m)^hej swiat'
+    'tool po etykiecie'    = $two -match '(?m)^witaj Karmazyn'
+    'require powiązanie'   = $two -match '(?m)^42\s*$'
     'tool z nano'          = ($two -match '(?m)^54\s*$') -and ($two -match 'local a, b = \.\.\.\r?\n\r?\nreturn')
     'tool z edit'          = $two -match '(?m)^Hej kursor'
     'autosync po sync'     = $two -match '(?m)^autosync ok'

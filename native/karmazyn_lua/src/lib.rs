@@ -6,6 +6,7 @@
 //! closures stay on that heap. Only atoms created through `karmazyn.*`
 //! live in the Store. This guest does not register `env_of("guest")`.
 
+mod code;
 mod vfs;
 
 use std::cell::{Cell, RefCell};
@@ -67,6 +68,8 @@ pub struct Evaluator {
     project: Rc<RefCell<Option<PathBuf>>>,
     tools: Rc<RefCell<Vec<String>>>,
     guest: Rc<Guest>,
+    /// Bąbel, z którego `require` widzi biblioteki. `None` poza chunkiem.
+    caller: Rc<Cell<Option<BubbleId>>>,
     /// None = no limit. Counted per chunk; `eval_line` resets the count.
     budget: Cell<Option<u64>>,
     /// C function that arms `budget_hook` on the thread that runs chunks.
@@ -100,9 +103,11 @@ impl Evaluator {
             holograms: RefCell::new(HashMap::new()),
         });
         let tools = Rc::new(RefCell::new(Vec::new()));
+        let caller = Rc::new(Cell::new(None));
         install_sandbox(&lua).expect("lua sandbox");
         install_print(&lua, prints.clone()).expect("lua print");
-        install_searchers(&lua, store, project.clone()).expect("lua searchers");
+        install_searchers(&lua, store, project.clone(), caller.clone()).expect("lua searchers");
+        install_code_require(&lua, store, caller.clone()).expect("lua require");
         install_karmazyn(&lua, store.clone(), guest.clone(), prints.clone()).expect("karmazyn host");
         let arm_budget = install_budget(&lua, Some(DEFAULT_BUDGET)).expect("lua budget");
         Self {
@@ -112,6 +117,7 @@ impl Evaluator {
             project,
             tools,
             guest,
+            caller,
             budget: Cell::new(Some(DEFAULT_BUDGET)),
             arm_budget,
         }
@@ -228,45 +234,64 @@ impl Evaluator {
             .set(self.guest.epoch.get().saturating_add(n));
     }
 
-    /// Run a tool. `fs` directory `bin` (written in the session, kept by `sync`)
-    /// wins over a preloaded `lua_bin` script of the same name. The chunk is
-    /// called directly, so a second `tool ls` runs again (`require` would cache).
-    /// `spec` is `name` plus optional arguments (`tool nano notatki --temp`);
-    /// arguments reach the chunk as `...` strings, untouched.
+    /// Wchłania `katalog/*.lua` do bąbli kodu. Etykieta, która już ma źródło,
+    /// zostaje (świat wygrywa z ziarnem). Zwraca liczbę nowo założonych bąbli.
+    /// Katalog nie wchodzi do `package.preload`.
+    pub fn absorb_dir(&self, store: &Store, dir: impl AsRef<Path>) -> Result<usize, String> {
+        let dir = dir.as_ref();
+        if !dir.is_dir() {
+            return Err(format!("brak katalogu {}", dir.display()));
+        }
+        let mut files: Vec<PathBuf> = fs::read_dir(dir)
+            .map_err(|e| e.to_string())?
+            .filter_map(|ent| ent.ok().map(|e| e.path()))
+            .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("lua"))
+            .collect();
+        files.sort();
+        let mut n = 0;
+        for path in files {
+            let Some(name) = path.file_stem().and_then(|s| s.to_str()) else {
+                continue;
+            };
+            if !code::is_label(name) || code::find(store, name).is_some() {
+                continue;
+            }
+            let source = fs::read(&path).map_err(|e| e.to_string())?;
+            code::write(store, name, &source)?;
+            n += 1;
+        }
+        Ok(n)
+    }
+
+    /// Run a tool bubble by label. The chunk is called directly, so a second
+    /// `tool ls` runs again (`require` would cache). `spec` is the label plus
+    /// optional arguments (`tool nano notatki --temp`); arguments reach the
+    /// chunk as `...` strings, untouched. `require` inside the chunk sees
+    /// libraries linked from this bubble.
     pub fn run_tool(&self, store: &Store, spec: &str) -> Result<String, String> {
         let mut parts = spec.split_whitespace();
         let Some(name) = parts.next() else {
-            return Err("usage: tool <name> [arg...]".into());
+            return Err("usage: tool <etykieta> [arg...]".into());
         };
-        if !name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '_')
-        {
-            return Err("usage: tool <name> [arg...]".into());
+        if !code::is_label(name) {
+            return Err("usage: tool <etykieta> [arg...]".into());
         }
+        let Some(bid) = code::find(store, name) else {
+            return Ok(format!("blad: brak narzędzia {name}"));
+        };
+        let Some(src) = code::read(store, name) else {
+            return Ok(format!("blad: brak narzędzia {name}"));
+        };
         let args: Vec<String> = parts.map(str::to_string).collect();
-        let func = match vfs::read(store, vfs::BIN_DIR, name) {
-            Some(src) => match self.lua.load(src).set_name(name).into_function() {
-                Ok(f) => f,
-                Err(e) => return Ok(format!("blad: {e}")),
-            },
-            None => {
-                let preload = self
-                    .lua
-                    .globals()
-                    .get::<mlua::Table>("package")
-                    .and_then(|p| p.get::<mlua::Table>("preload"))
-                    .map_err(|e| e.to_string())?;
-                match preload.get::<Option<Function>>(name) {
-                    Ok(Some(f)) => f,
-                    _ => return Ok(format!("blad: brak narzędzia {name}")),
-                }
-            }
+        let func = match self.lua.load(src).set_name(name).into_function() {
+            Ok(f) => f,
+            Err(e) => return Ok(format!("blad: {e}")),
         };
         self.prints.borrow_mut().clear();
         if let Err(e) = self.arm_budget.call::<()>(()) {
             return Ok(format!("blad: {e}"));
         }
+        let _caller = CallerPush::new(&self.caller, Some(bid));
         Ok(match func.call::<MultiValue>(MultiValue::from_iter(
             args.into_iter().map(|a| self.lua.create_string(a).map(Value::String)).filter_map(Result::ok),
         )) {
@@ -275,13 +300,25 @@ impl Evaluator {
         })
     }
 
-    /// Tool names from `lua_bin` and from `fs` directory `bin`, sorted, no repeats.
+    /// Etykiety bąbli kodu, posortowane, bez powtórzeń.
     pub fn all_tool_names(&self, store: &Store) -> Vec<String> {
-        let mut names = self.tool_names();
-        names.extend(vfs::files(store, vfs::BIN_DIR));
-        names.sort();
-        names.dedup();
-        names
+        code::labels(store)
+    }
+
+    /// Etykieta bąbla kodu (bez spacji, ukośników i `@`).
+    pub fn code_label(name: &str) -> bool {
+        code::is_label(name)
+    }
+
+    /// Źródło bąbla kodu. Brak bąbla to `None`.
+    pub fn code_read(&self, store: &Store, label: &str) -> Option<Vec<u8>> {
+        code::read(store, label)
+    }
+
+    /// Zapis źródła. Czyści `package.loaded[etykieta]`, więc następny `require` czyta nowy tekst.
+    pub fn code_write(&self, store: &Store, label: &str, data: &[u8]) -> Result<(), String> {
+        code::write(store, label, data)?;
+        forget_loaded(&self.lua, label).map_err(|e| e.to_string())
     }
 
     /// `karmazyn.fs.read` for host code (the shell editor).
@@ -337,10 +374,32 @@ impl Evaluator {
         if let Err(e) = self.arm_budget.call::<()>(()) {
             return format!("blad: {e}");
         }
+        let _caller = CallerPush::new(&self.caller, Some(self.env.get()));
         match self.lua.load(line).set_name("=stdin").eval::<MultiValue>() {
             Ok(values) => join_print_and_return(&self.prints.borrow(), &values),
             Err(e) => format!("blad: {e}"),
         }
+    }
+}
+
+/// Na czas chunku `require` widzi biblioteki tego bąbla. Przy wyjściu wraca
+/// poprzedni wołający (także gdy chunk spanikuje).
+struct CallerPush<'a> {
+    cell: &'a Cell<Option<BubbleId>>,
+    prev: Option<BubbleId>,
+}
+
+impl<'a> CallerPush<'a> {
+    fn new(cell: &'a Cell<Option<BubbleId>>, next: Option<BubbleId>) -> Self {
+        let prev = cell.get();
+        cell.set(next);
+        Self { cell, prev }
+    }
+}
+
+impl Drop for CallerPush<'_> {
+    fn drop(&mut self) {
+        self.cell.set(self.prev);
     }
 }
 
@@ -483,16 +542,21 @@ fn install_print(lua: &Lua, prints: Rc<RefCell<String>>) -> LuaResult<()> {
     Ok(())
 }
 
-/// Kolejność: `fs` lib/<nazwa> (pisane w sesji, wygrywa jak przy `tool`),
-/// potem `package.preload` (lua_bin), potem katalog projektu.
+/// Kolejność: bąbel kodu osiągalny z wołającego (powiązanie albo rodzic),
+/// potem `package.preload` (tylko to, co sesja wstawiła sama), potem katalog projektu.
+/// Ziarno `lua_bin` tu nie wchodzi.
 fn install_searchers(
     lua: &Lua,
     store: &Store,
     project: Rc<RefCell<Option<PathBuf>>>,
+    caller: Rc<Cell<Option<BubbleId>>>,
 ) -> LuaResult<()> {
-    let store_fs = store.clone();
-    let fs_searcher = lua.create_function(move |lua, name: String| -> LuaResult<MultiValue> {
-        let Some(src) = vfs::read(&store_fs, vfs::LIB_DIR, &name) else {
+    let store_code = store.clone();
+    let code_searcher = lua.create_function(move |lua, name: String| -> LuaResult<MultiValue> {
+        let Some(bid) = caller.get() else {
+            return Ok(MultiValue::new());
+        };
+        let Some(src) = code::source_for(&store_code, bid, &name) else {
             return Ok(MultiValue::new());
         };
         let func = lua.load(src).set_name(&name).into_function()?;
@@ -525,10 +589,62 @@ fn install_searchers(
         Ok(MultiValue::from_vec(vec![Value::Function(func)]))
     })?;
     let searchers = lua.create_table()?;
-    searchers.set(1, fs_searcher)?;
+    searchers.set(1, code_searcher)?;
     searchers.set(2, preload_searcher)?;
     searchers.set(3, project_searcher)?;
     package.set("searchers", searchers)?;
+    Ok(())
+}
+
+/// `require` z bąbla kodu nie korzysta z `package.loaded` założonego przez
+/// innego wołającego. Moduł z bąbla wraca z cache tylko temu, kto sam go sięga.
+fn install_code_require(
+    lua: &Lua,
+    store: &Store,
+    caller: Rc<Cell<Option<BubbleId>>>,
+) -> LuaResult<()> {
+    let marks = lua.create_table()?;
+    let original: Function = lua.globals().get("require")?;
+    let store = store.clone();
+    let require_fn = lua.create_function(move |lua, name: String| -> LuaResult<Value> {
+        let package: mlua::Table = lua.globals().get("package")?;
+        let loaded: mlua::Table = package.get("loaded")?;
+        let from_code: bool = marks.get::<Option<bool>>(name.as_str())?.unwrap_or(false);
+        if let Some(bid) = caller.get() {
+            if let Some(src) = code::source_for(&store, bid, &name) {
+                if from_code {
+                    if let Some(v) = loaded.get::<Option<Value>>(name.as_str())? {
+                        return Ok(v);
+                    }
+                }
+                let func = lua.load(src).set_name(&name).into_function()?;
+                // Strażnik na czas chunku: require tego samego modułu nie wchodzi w pętlę.
+                loaded.set(name.as_str(), Value::Boolean(true))?;
+                marks.set(name.as_str(), true)?;
+                let value: Value = match func.call(()) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        loaded.set(name.as_str(), Value::Nil)?;
+                        marks.set(name.as_str(), false)?;
+                        return Err(e);
+                    }
+                };
+                let stored = if matches!(value, Value::Nil) {
+                    Value::Boolean(true)
+                } else {
+                    value
+                };
+                loaded.set(name.as_str(), stored.clone())?;
+                return Ok(stored);
+            }
+        }
+        if from_code {
+            loaded.set(name.as_str(), Value::Nil)?;
+            marks.set(name.as_str(), false)?;
+        }
+        original.call(name)
+    })?;
+    lua.globals().set("require", require_fn)?;
     Ok(())
 }
 
@@ -763,6 +879,32 @@ fn install_karmazyn(
     })?;
     fs_tbl.set("delete", fs_delete)?;
     k.set("fs", fs_tbl)?;
+
+    // Kod: bąbel z etykietą i atomem `src`. Nie katalog bin/lib.
+    let code_tbl = lua.create_table()?;
+    let store_cr = store.clone();
+    let code_read = lua.create_function(move |lua, label: String| -> LuaResult<Value> {
+        match code::read(&store_cr, &label) {
+            Some(bytes) => Ok(Value::String(lua.create_string(bytes)?)),
+            None => Ok(Value::Nil),
+        }
+    })?;
+    code_tbl.set("read", code_read)?;
+    let store_cw = store.clone();
+    let code_write = lua.create_function(move |lua, (label, content): (String, String)| -> LuaResult<bool> {
+        code::write(&store_cw, &label, content.as_bytes()).map_err(mlua::Error::external)?;
+        forget_loaded(lua, &label)?;
+        Ok(true)
+    })?;
+    code_tbl.set("write", code_write)?;
+    let store_cl = store.clone();
+    let code_link = lua.create_function(move |lua, (from, to): (String, String)| -> LuaResult<bool> {
+        code::link(&store_cl, &from, &to).map_err(mlua::Error::external)?;
+        forget_loaded(lua, &to)?;
+        Ok(true)
+    })?;
+    code_tbl.set("link", code_link)?;
+    k.set("code", code_tbl)?;
 
     let guest_cr = guest.clone();
     let cache_tbl = lua.create_table()?;
@@ -1325,13 +1467,18 @@ fn pair_key(args: &MultiValue) -> (String, String) {
     (arg_string(it.next()), arg_string(it.next()))
 }
 
-/// Po zmianie pliku w lib/ następny `require` czyta go od nowa.
+/// Po zmianie pliku w lib/ albo źródła bąbla następny `require` czyta je od nowa.
+fn forget_loaded(lua: &Lua, name: &str) -> LuaResult<()> {
+    let package: mlua::Table = lua.globals().get("package")?;
+    let loaded: mlua::Table = package.get("loaded")?;
+    loaded.set(name, Value::Nil)?;
+    Ok(())
+}
+
 fn forget_lib(lua: &Lua, args: &MultiValue) -> LuaResult<()> {
     let (d, f) = pair_key(args);
     if d == vfs::LIB_DIR {
-        let package: mlua::Table = lua.globals().get("package")?;
-        let loaded: mlua::Table = package.get("loaded")?;
-        loaded.set(f, Value::Nil)?;
+        forget_loaded(lua, &f)?;
     }
     Ok(())
 }
@@ -1827,34 +1974,47 @@ mod tests {
     }
 
     #[test]
-    fn require_reads_fs_lib_first() {
+    fn require_follows_the_callers_link() {
         let (store, ev) = guest();
+        ev.eval_line(
+            &store,
+            "karmazyn.code.write('mat', \"return { kto = 'babel', dodaj = function(a,b) return a+b end }\")",
+        );
+        // bez powiązania sesja nie widzi biblioteki; preload zostaje drugą kolejką
+        let missing = ev.eval_line(&store, "return require('mat')");
+        assert!(missing.starts_with("blad:"), "{missing}");
         ev.install_preload("mat", "return { kto = 'preload' }").unwrap();
         assert_eq!(ev.eval_line(&store, "return require('mat').kto"), "preload");
 
-        // lib/ wygrywa z preload; zapis do lib/ zapomina wynik poprzedniego require
-        ev.eval_line(
-            &store,
-            "karmazyn.fs.write('lib','mat','lua',\"return { kto = 'fs', dodaj = function(a,b) return a+b end }\")",
-        );
-        assert_eq!(ev.eval_line(&store, "return require('mat').kto"), "fs");
+        ev.eval_line(&store, "karmazyn.code.link('lua','mat')");
+        assert_eq!(ev.eval_line(&store, "return require('mat').kto"), "babel");
         assert_eq!(
             ev.eval_line(&store, "return require('mat') == require('mat')"),
             "true"
         );
-
-        // narzędzie z bin/ korzysta z biblioteki z lib/
+        // zapis źródła zapomina cache
         ev.eval_line(
             &store,
-            "karmazyn.fs.write('bin','suma','lua',\"local a,b = ...; return require('mat').dodaj(tonumber(a), tonumber(b))\")",
+            "karmazyn.code.write('mat', \"return { kto = 'nowy', dodaj = function(a,b) return a+b end }\")",
         );
+        assert_eq!(ev.eval_line(&store, "return require('mat').kto"), "nowy");
+
+        ev.eval_line(
+            &store,
+            "karmazyn.code.write('suma', \"local a,b = ...; return require('mat').dodaj(tonumber(a), tonumber(b))\")",
+        );
+        // require trzyma moduł w package.loaded całej sesji; bez tego suma
+        // dostałaby bibliotekę już wczytaną przez bąbel lua.
+        ev.eval_line(&store, "package.loaded['mat'] = nil");
+        assert!(ev.run_tool(&store, "suma 40 2").unwrap().starts_with("blad:"));
+        ev.eval_line(&store, "karmazyn.code.link('suma','mat')");
         assert_eq!(ev.run_tool(&store, "suma 40 2").unwrap(), "42");
 
-        ev.eval_line(&store, "karmazyn.fs.delete('lib','mat')");
-        assert_eq!(ev.eval_line(&store, "return require('mat').kto"), "preload");
-
-        ev.eval_line(&store, "karmazyn.fs.write('lib','zly','lua','return (')");
-        assert!(ev.eval_line(&store, "return require('zly')").starts_with("blad:"));
+        // katalog fs nie jest przestrzenią narzędzi
+        ev.eval_line(&store, "karmazyn.fs.write('bin','obok','lua','return 1')");
+        assert!(ev.run_tool(&store, "obok").unwrap().starts_with("blad:"));
+        ev.eval_line(&store, "karmazyn.code.write('zly','return (')");
+        assert!(ev.run_tool(&store, "zly").unwrap().starts_with("blad:"));
     }
 
     #[test]
@@ -2001,7 +2161,7 @@ mod tests {
     fn with_bin() -> (Store, Evaluator) {
         let (store, ev) = guest();
         let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../lua_bin");
-        let n = ev.install_preload_dir(&dir).expect("lua_bin");
+        let n = ev.absorb_dir(&store, &dir).expect("lua_bin");
         assert!(n >= 30, "narzędzi: {n}");
         (store, ev)
     }
@@ -2013,7 +2173,7 @@ mod tests {
     }
 
     #[test]
-    fn nano_edits_bin_and_lib_files() {
+    fn nano_edits_labeled_bubbles() {
         let (store, ev) = with_bin();
         // jak w shellu: pusta linia to linia, nie koniec wejścia. Kolejka kończy
         // się na .save, więc stdin nie jest czytany.
@@ -2021,30 +2181,28 @@ mod tests {
         for line in ["local n = ...", "", "return 'hej '..(n or '?')", ".save"] {
             ev.push_input(line);
         }
-        let out = require_ok(&ev, &store, "nano bin/hej");
-        assert!(out.contains("Zapisano bin/hej (3 linii)"), "{out}");
+        let out = require_ok(&ev, &store, "nano hej");
+        assert!(out.contains("Zapisano hej (3 linii)"), "{out}");
         assert!(!out.contains("Błąd składni"), "{out}");
         assert_eq!(
-            ev.eval_line(&store, "return karmazyn.fs.read('bin','hej')"),
+            ev.eval_line(&store, "return karmazyn.code.read('hej')"),
             "local n = ...\n\nreturn 'hej '..(n or '?')"
         );
-        // bez kopii jako atom nano_*
-        assert_eq!(ev.eval_line(&store, "return karmazyn.get_atom('nano_bin')"), "nil");
         assert_eq!(ev.run_tool(&store, "hej Karmazyn").unwrap(), "hej Karmazyn");
 
         // ponowne otwarcie: pusta linia wraca jako 02, .set podmienia linię
         ev.push_input(".set 3 return 'czesc '..(n or '?')");
         ev.push_input(".save");
-        let again = require_ok(&ev, &store, "nano bin/hej");
+        let again = require_ok(&ev, &store, "nano hej");
         assert!(again.contains("02 | \n"), "{again}");
         assert_eq!(ev.run_tool(&store, "hej X").unwrap(), "czesc X");
 
-        // lib/: błąd składni ostrzega, ale zapisuje
+        // błąd składni ostrzega, ale zapisuje
         ev.push_input("return (");
         ev.push_input(".save");
-        let bad = require_ok(&ev, &store, "nano lib/zly");
+        let bad = require_ok(&ev, &store, "nano zly");
         assert!(bad.contains("Błąd składni"), "{bad}");
-        assert_eq!(ev.eval_line(&store, "return karmazyn.fs.read('lib','zly')"), "return (");
+        assert_eq!(ev.eval_line(&store, "return karmazyn.code.read('zly')"), "return (");
     }
 
     #[test]
@@ -2073,7 +2231,8 @@ mod tests {
         let du = require_ok(&ev, &store, "du");
         assert!(du.contains("EMANATION USAGE"), "{du}");
         let lsb = require_ok(&ev, &store, "lsb");
-        assert!(lsb.contains("Brak trwałych bąbli"), "{lsb}");
+        assert!(lsb.contains("uptime"), "{lsb}");
+        assert!(!lsb.contains("Brak trwałych bąbli"), "{lsb}");
         let idea = require_ok(&ev, &store, "idea");
         assert!(idea.contains("wycofane"), "{idea}");
         let ps = require_ok(&ev, &store, "ps");
@@ -2203,29 +2362,30 @@ mod tests {
         assert_eq!(ev.eval_line(&store, "return karmazyn.get_atom('k').E"), "nowe");
         assert_eq!(ev.eval_line(&store, "return karmazyn.get_atom('k').age"), "0");
 
-        ev.install_preload(
-            "echoargs",
-            "local a,b = ...; print(tostring(a)..':'..tostring(b))",
-        )
-        .unwrap();
+        ev.eval_line(
+            &store,
+            "karmazyn.code.write('echoargs', \"local a,b = ...; print(tostring(a)..':'..tostring(b))\")",
+        );
         assert_eq!(ev.run_tool(&store, "echoargs foo bar").unwrap(), "foo:bar");
         let missing = ev.run_tool(&store, "brak_takiego").unwrap();
         assert!(missing.starts_with("blad:"), "{missing}");
         assert!(ev.run_tool(&store, "../x").is_err());
         assert_eq!(ev.run_tool(&store, r"echoargs a'b \x").unwrap(), r"a'b:\x");
 
-        // fs bin wygrywa z lua_bin, a po fs.delete wraca wersja z lua_bin
         ev.eval_line(
             &store,
-            "karmazyn.fs.write('bin','echoargs','lua',\"local a = ...; return 'fs:'..a\")",
+            "karmazyn.code.write('echoargs', \"local a = ...; return 'kod:'..a\")",
         );
-        ev.eval_line(&store, "karmazyn.fs.write('bin','nowe','lua','return 7*6')");
-        assert_eq!(ev.run_tool(&store, "echoargs x").unwrap(), "fs:x");
+        ev.eval_line(&store, "karmazyn.code.write('nowe','return 7*6')");
+        assert_eq!(ev.run_tool(&store, "echoargs x").unwrap(), "kod:x");
         assert_eq!(ev.run_tool(&store, "nowe").unwrap(), "42");
         assert!(ev.all_tool_names(&store).contains(&"nowe".to_string()));
-        ev.eval_line(&store, "karmazyn.fs.delete('bin','echoargs')");
+        ev.eval_line(
+            &store,
+            "karmazyn.code.write('echoargs', \"local a,b = ...; print(tostring(a)..':'..tostring(b))\")",
+        );
         assert_eq!(ev.run_tool(&store, "echoargs x y").unwrap(), "x:y");
-        ev.eval_line(&store, "karmazyn.fs.write('bin','zly','lua','return (')");
+        ev.eval_line(&store, "karmazyn.code.write('zly','return (')");
         assert!(ev.run_tool(&store, "zly").unwrap().starts_with("blad:"));
         assert!(ev.run_tool(&store, "  ").is_err());
     }
@@ -2260,35 +2420,17 @@ mod tests {
     #[test]
     fn lua_bin_nano_top_and_starlink_hot() {
         let (store, ev) = with_bin();
-        assert_eq!(
-            ev.eval_line(
-                &store,
-                "return karmazyn.create_atom('nano_arch','nano','z-atomu', karmazyn.T_INIT).id"
-            ),
-            "nano_arch"
-        );
+        ev.eval_line(&store, "karmazyn.code.write('arch','z-kodu')");
         ev.push_input(".abort");
-        let restored = require_ok(&ev, &store, "nano arch");
-        assert!(restored.contains("z-atomu"), "{restored}");
-        ev.eval_line(
-            &store,
-            "karmazyn.fs.write('arch','dokument','nano','z-fs'); return 1",
-        );
-        ev.push_input(".abort");
-        let prefer_fs = require_ok(&ev, &store, "nano arch");
-        assert!(prefer_fs.contains("z-fs"), "{prefer_fs}");
+        let shown = require_ok(&ev, &store, "nano arch");
+        assert!(shown.contains("z-kodu"), "{shown}");
 
         ev.push_input("linia");
         ev.push_input(".save");
         let nano = require_ok(&ev, &store, "nano");
-        assert!(nano.contains("Zapisano"), "{nano}");
-        assert!(nano.contains("nano_notatki"), "{nano}");
+        assert!(nano.contains("Zapisano notatki"), "{nano}");
         assert_eq!(
-            ev.eval_line(&store, "return karmazyn.fs.read('notatki','dokument')"),
-            "linia"
-        );
-        assert_eq!(
-            ev.eval_line(&store, "return karmazyn.get_atom('nano_notatki').E"),
+            ev.eval_line(&store, "return karmazyn.code.read('notatki')"),
             "linia"
         );
 

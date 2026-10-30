@@ -81,7 +81,6 @@ fn main() {
     {
         lua.set_budget((n > 0).then_some(n));
     }
-    let tools = preload_lua_bin(&lua);
     let autosync_on = env::var("KARMAZYN_AUTOSYNC").map_or(true, |v| v.trim() != "0");
     let mut app = App {
         store,
@@ -94,6 +93,9 @@ fn main() {
         synced: std::cell::Cell::new(0),
     };
     let disk_line = open_disk(&mut app);
+    // Ziarno wchodzi do świata tylko na płycie (PID 1). Na hoście shell
+    // zostaje operatorem: batch stage2 liczy bąble i id atomów od zera.
+    let tools = if is_pid1() { absorb_seeds(&app) } else { None };
     let net_line = if is_pid1() { open_net() } else { None };
     let args: Vec<String> = env::args().skip(1).collect();
 
@@ -167,7 +169,7 @@ fn main() {
     app.lua.enable_stdin(true);
     print_boot(tools, &disk_line, &console_line, &net_line);
     println!("karmazyn_shell {VERSION} — Stage 2 (native, no Python)");
-    println!("thermal={thermal}  lisp: (   lua: `lua <chunk>`   tool: `tool <name> [args]`   type `help`");
+    println!("thermal={thermal}  lisp: (   lua: `lua <chunk>`   tool: `tool <etykieta> [args]`   type `help`");
 
     let stdin = io::stdin();
     let mut stdout = io::stdout();
@@ -321,29 +323,41 @@ fn eval_lisp(app: &App, src: &str) -> Outcome {
     Outcome::Ok
 }
 
-fn preload_lua_bin(lua: &LuaEvaluator) -> usize {
-    if let Ok(dir) = env::var("KARMAZYN_LUA_BIN") {
-        return lua.install_preload_dir(dir).unwrap_or(0);
-    }
-    let Ok(exe) = env::current_exe() else {
-        return 0;
-    };
-    let mut dir = exe.parent().map(|p| p.to_path_buf());
-    for _ in 0..8 {
-        let Some(d) = dir else {
-            return 0;
-        };
-        let candidate = d.join("lua_bin");
-        if candidate.is_dir() {
-            return lua.install_preload_dir(&candidate).unwrap_or(0);
+/// Ziarno `lua_bin/*.lua` wchodzi do świata jako bąble, gdy etykiety jeszcze
+/// nie ma. Potem katalog nie jest przestrzenią nazw: `tool` woła bąbel.
+/// `Some(n)` = liczba bąbli kodu po wchłonięciu. `None` = brak katalogu ziarna.
+fn absorb_seeds(app: &App) -> Option<usize> {
+    let dir = if let Ok(dir) = env::var("KARMAZYN_LUA_BIN") {
+        std::path::PathBuf::from(dir)
+    } else {
+        let exe = env::current_exe().ok()?;
+        let mut dir = exe.parent().map(|p| p.to_path_buf());
+        let mut found = None;
+        for _ in 0..8 {
+            let Some(d) = dir else {
+                break;
+            };
+            let candidate = d.join("lua_bin");
+            if candidate.is_dir() {
+                found = Some(candidate);
+                break;
+            }
+            dir = d.parent().map(|p| p.to_path_buf());
         }
-        dir = d.parent().map(|p| p.to_path_buf());
+        found?
+    };
+    if !dir.is_dir() {
+        return None;
     }
-    0
+    if let Err(e) = app.lua.absorb_dir(&app.store, &dir) {
+        eprintln!("narzędzia: {e}");
+        return None;
+    }
+    Some(app.lua.all_tool_names(&app.store).len())
 }
 
 fn print_boot(
-    tools: usize,
+    tools: Option<usize>,
     disk: &Option<(bool, String)>,
     console: &Option<Result<Vec<String>, String>>,
     net: &Option<Result<String, String>>,
@@ -357,10 +371,10 @@ fn print_boot(
     boot_line(color, "ok", "store", "");
     boot_line(color, "ok", "lisp", "");
     boot_line(color, "ok", "lua", "");
-    if tools > 0 {
-        boot_line(color, "ok", "lua_bin", &format!("{tools} narzędzi"));
-    } else {
-        boot_line(color, "warn", "lua_bin", "brak katalogu");
+    match tools {
+        Some(n) if n > 0 => boot_line(color, "ok", "narzędzia", &format!("{n} bąbli")),
+        Some(_) => boot_line(color, "warn", "narzędzia", "brak bąbli kodu"),
+        None => {}
     }
     if let Some((ok, detail)) = disk {
         boot_line(color, if *ok { "ok" } else { "warn" }, "disk", detail);
@@ -385,7 +399,10 @@ fn open_net() -> Option<Result<String, String>> {
 
 /// `db connect [host[:port]] [port]` · `db info` · `db close` · `db <zapytanie>`.
 /// Zapytanie idzie tunelem Cynober-Secure-1.2 (HSS/ECDH + HSL) do Karmin_DB.
-/// Bez `db connect` pierwsze zapytanie łączy z `KARMAZYN_DB=host:port`.
+/// PSK i profil HSS bierze klient z aktywnego profilu w `client.json`
+/// (`/data/cynober`, obok `master.key`), gdy środowisko ich nie podało.
+/// Brak pliku zostawia ECDH. Bez `db connect` pierwsze zapytanie łączy
+/// z `KARMAZYN_DB=host:port`.
 fn db_cmd(app: &App, rest: &str) -> Outcome {
     let rest = rest.trim();
     let (head, tail) = rest.split_once(char::is_whitespace).unwrap_or((rest, ""));
@@ -602,31 +619,22 @@ fn autosync(app: &App) {
     }
 }
 
-/// `edit <katalog>/<plik>`: edytor z kursorem na pliku fs. W bin/ i lib/
-/// sprawdza składnię przy zapisie (ostrzega, zapisuje mimo to).
+/// `edit <etykieta>`: edytor z kursorem na źródle bąbla. Składnię Lua
+/// sprawdza przy zapisie (ostrzega, zapisuje mimo to).
 fn edit_file(app: &App, parts: &[&str]) -> Outcome {
     let target = parts.get(1).copied().unwrap_or("");
-    let Some((dir, file)) = target
-        .split_once('/')
-        .filter(|(d, f)| !d.is_empty() && !f.is_empty() && !f.contains('/'))
-    else {
-        println!("usage: edit <katalog>/<plik>   np. edit bin/hej, edit lib/mat");
+    if !LuaEvaluator::code_label(target) {
+        println!("usage: edit <etykieta>   np. edit hej");
         return Outcome::Err;
-    };
-    let code = dir == "bin" || dir == "lib";
+    }
     let text = app
         .lua
-        .fs_read(&app.store, dir, file)
+        .code_read(&app.store, target)
         .map(|b| String::from_utf8_lossy(&b).into_owned())
         .unwrap_or_default();
     let mut save = |text: &str| -> Result<String, String> {
-        let warn = if code {
-            app.lua.check_syntax(target, text).err()
-        } else {
-            None
-        };
-        let kind = if code { "lua" } else { "text" };
-        app.lua.fs_write(&app.store, dir, file, kind, text.as_bytes())?;
+        let warn = app.lua.check_syntax(target, text).err();
+        app.lua.code_write(&app.store, target, text.as_bytes())?;
         let disk = match (app.autosync, write_if_changed(app)) {
             (true, Some(Ok(_))) => ", świat zapisany".to_string(),
             (true, Some(Err(e))) => format!(", dysk: {e}"),
@@ -743,10 +751,10 @@ fn run_tool(app: &App, name: &str) -> Outcome {
     if name.is_empty() {
         let names = app.lua.all_tool_names(&app.store);
         if names.is_empty() {
-            println!("usage: tool <name>  (brak lua_bin)");
+            println!("usage: tool <etykieta>  (brak bąbli kodu)");
             return Outcome::Err;
         }
-        println!("narzędzia (fs bin + lua_bin):");
+        println!("narzędzia:");
         for n in names {
             println!("  {n}");
         }
@@ -1401,14 +1409,15 @@ fn print_help() {
   sync                          świat KAFD (KAFX) na dysk: /data/cynober/worlds/*.kafd
                                 po każdym poleceniu sam, gdy zmieniła się treść
                                 (KARMAZYN_AUTOSYNC=0 wyłącza)
-  edit <katalog>/<plik>         edytor z kursorem (^S zapis, ^Q wyjście, ^K linia, ^L odśwież)
+  edit <etykieta>               edytor źródła bąbla (^S zapis, ^Q wyjście, ^K linia, ^L odśwież)
   disk / disk format            stan świata / ext2 na dysku z nieznanymi danymi
   db connect <host> [port]      tunel Cynober-Secure-1.2 (HSS/ECDH + HSL) do Karmin_DB
+                                PSK i profil HSS: /data/cynober/client.json; brak pliku = ECDH
   db <zapytanie>                KarminQL przez tunel (np. db ZDROWIE); db info / db close
   (define x 10) / lisp <expr>   mini-Lisp guest (atoms = vars)
   lua <chunk>                   Lua guest (mlua). return karmazyn._VERSION
                                 limit instrukcji na chunk: KARMAZYN_LUA_BUDGET (0 = brak)
-  tool <name> [args] | :tool    narzędzie: najpierw fs bin/<name>, potem lua_bin. bare tool lists names
+  tool <etykieta> [args] | :tool  bąbel kodu po etykiecie. samo tool wypisuje etykiety
   help | quit
 
 batch: non-zero exit if a command fails (assert/save/bind/…)"

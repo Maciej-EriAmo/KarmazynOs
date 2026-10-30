@@ -1,4 +1,4 @@
-//! `edit <katalog>/<plik>`: pełnoekranowy edytor z kursorem dla plików fs.
+//! `edit <etykieta>`: pełnoekranowy edytor z kursorem dla źródła bąbla.
 //!
 //! Logika (bufor, kursor, klawisze, rysowanie) nie dotyka terminala, więc
 //! testy działają na każdym hoście. Tryb surowy terminala i pętla odczytu są

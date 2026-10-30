@@ -1,6 +1,6 @@
 # Faza 1: GRUB → Linux → /init = karmazyn_shell.
 # Exit 0 gdy serial ma prompt k$, wynik Lisp (+ 1 2), Lua (lua return 6*7 → 42),
-# narzędzie z /lua_bin (tool uptime), limit instrukcji (pętla bez końca ucięta,
+# narzędzie z bąbla wchłoniętego z ziarna lua_bin (tool uptime), limit instrukcji (pętla bez końca ucięta,
 # lua return 7*8 → 56 dalej działa) oraz „pid 1 stays” po quit.
 # Exit 2 gdy brak qemu albo ISO (najpierw scripts\build_linux_shell.ps1).
 $ErrorActionPreference = "Stop"

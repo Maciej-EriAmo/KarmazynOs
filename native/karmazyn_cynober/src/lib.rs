@@ -4,6 +4,9 @@
 //! TCP (L0) → caps (JSON, sort_keys) → anty-replay (ts ±300 s, session_id)
 //!          → klucz sesji: HSS (Ring-LWE, standard|production) albo ECDH (X25519)
 //!            [+ KARM_PSK: key = SHA-256(key ‖ psk)]
+//!            PSK i profil HSS: środowisko, a gdy puste — aktywny profil
+//!            w `{data_home}/client.json` (na płycie `/data/cynober/client.json`,
+//!            obok `master.key`). Brak pliku = ECDH.
 //!          → HSL-1.1: hsl_link / hsl_cap jako "HSL1" ‖ AES-GCM (AAD stałe)
 //!            s_target = HKDF(link_seed ‖ sorted(commits) ‖ epoch ‖ ctx, "hsl-prism")
 //!          → RPC: zlib(JSON {query, cap, epoch}) w AES-GCM kluczem ramki
@@ -25,7 +28,7 @@ use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 pub const PROTO_VERSION: &str = "Cynober-Secure-1.2";
@@ -242,6 +245,60 @@ pub fn data_home() -> PathBuf {
     }
     let home = env_nonempty("HOME").or_else(|| env_nonempty("USERPROFILE")).unwrap_or_else(|| "/".into());
     PathBuf::from(home).join(".local").join("share").join("cynober")
+}
+
+/// PSK i profil HSS z aktywnego profilu `client.json` (jak
+/// `cynober_client_config.apply_profile_secrets`). Sekcja `server` nie jest
+/// sekretem klienta. Brak pliku, zły JSON albo brak klucza = puste.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ClientSecrets {
+    psk: Option<String>,
+    hss_profile: Option<String>,
+}
+
+fn text_field(v: &Value, key: &str) -> Option<String> {
+    v.get(key)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+}
+
+fn client_secrets_from_value(v: &Value) -> ClientSecrets {
+    let Some(profiles) = v.get("profiles").and_then(Value::as_object) else {
+        return ClientSecrets { psk: None, hss_profile: None };
+    };
+    let active = v.get("active").and_then(Value::as_str).unwrap_or("lokalny");
+    let Some(profile) = profiles.get(active) else {
+        return ClientSecrets { psk: None, hss_profile: None };
+    };
+    ClientSecrets {
+        psk: text_field(profile, "psk"),
+        hss_profile: text_field(profile, "hss_profile").map(|s| s.to_lowercase()),
+    }
+}
+
+fn load_client_secrets(home: &Path) -> ClientSecrets {
+    let empty = ClientSecrets { psk: None, hss_profile: None };
+    let Ok(raw) = std::fs::read(home.join("client.json")) else {
+        return empty;
+    };
+    let Ok(text) = std::str::from_utf8(&raw) else {
+        return empty;
+    };
+    let Ok(v) = serde_json::from_str::<Value>(text) else {
+        return empty;
+    };
+    client_secrets_from_value(&v)
+}
+
+fn nonempty(s: Option<&str>) -> Option<&str> {
+    s.map(str::trim).filter(|s| !s.is_empty())
+}
+
+/// Środowisko wygrywa z plikiem. Puste (albo same białe znaki) = brak wartości.
+fn pick<'a>(from_env: Option<&'a str>, from_file: Option<&'a str>) -> Option<&'a str> {
+    nonempty(from_env).or(nonempty(from_file))
 }
 
 /// `load_or_create_node_id`: `node_` + 12 hex w `data_home/node_id`.
@@ -503,7 +560,17 @@ impl Client {
         s.set_write_timeout(Some(timeout))?;
         s.set_nodelay(true)?;
 
-        let hss_profile = hss::profile_from_env();
+        // Plik obok master.key wypełnia puste KARM_PSK / KARM_HSS_PROFILE.
+        // Brak pliku i puste środowisko zostawiają ECDH (`proto` nie jest HSS).
+        let env_psk = std::env::var("KARM_PSK").ok();
+        let env_hss = std::env::var("KARM_HSS_PROFILE").ok();
+        let file = load_client_secrets(&data_home());
+        let psk = pick(env_psk.as_deref(), file.psk.as_deref())
+            .unwrap_or("")
+            .to_string();
+        let hss_profile = hss::profile_from_name(
+            pick(env_hss.as_deref(), file.hss_profile.as_deref()).unwrap_or(""),
+        );
         let crypto = caps_crypto(hss_profile);
         let local_ts = now_f64();
         let session_id = hex(&random::<8>()?);
@@ -559,7 +626,6 @@ impl Client {
                 ecdh_key(shared.as_bytes())
             }
         };
-        let psk = std::env::var("KARM_PSK").unwrap_or_default();
         if !psk.is_empty() {
             key = sha256(&[&key, psk.as_bytes()]);
         }
@@ -751,5 +817,83 @@ mod tests {
         let c = seal(&k, b"dane", b"aad").unwrap();
         assert_eq!(open(&k, &c, b"aad").unwrap(), b"dane");
         assert!(open(&k, &c, b"inne").is_err());
+    }
+
+    fn sample_client_json() -> Value {
+        json!({
+            "active": "lokalny",
+            "profiles": {
+                "lokalny": {"psk": "  sekret-sieci  ", "hss_profile": " Standard "},
+                "inny": {"psk": "nie-ten", "hss_profile": "production"}
+            },
+            "server": {"psk": "serwer", "hss_profile": "production"}
+        })
+    }
+
+    #[test]
+    fn client_json_active_profile_supplies_psk_and_hss() {
+        let s = client_secrets_from_value(&sample_client_json());
+        assert_eq!(s.psk.as_deref(), Some("sekret-sieci"));
+        assert_eq!(s.hss_profile.as_deref(), Some("standard"));
+        assert_eq!(pick(None, s.psk.as_deref()), Some("sekret-sieci"));
+        let prof = hss::profile_from_name(pick(None, s.hss_profile.as_deref()).unwrap_or(""));
+        assert_eq!(prof.unwrap().name, "standard");
+    }
+
+    #[test]
+    fn env_wins_and_proto_stays_ecdh() {
+        let s = client_secrets_from_value(&json!({
+            "active": "lokalny",
+            "profiles": {"lokalny": {"psk": "z-pliku", "hss_profile": "proto"}}
+        }));
+        assert_eq!(pick(Some("z-env"), s.psk.as_deref()), Some("z-env"));
+        assert_eq!(pick(Some("   "), s.psk.as_deref()), Some("z-pliku"));
+        assert!(hss::profile_from_name("proto").is_none());
+        assert!(hss::profile_from_name("").is_none());
+        assert_eq!(hss::profile_from_name("production").unwrap().name, "production");
+    }
+
+    #[test]
+    fn missing_profile_does_not_borrow_server_or_another_profile() {
+        let foreign = client_secrets_from_value(&json!({
+            "active": "biuro",
+            "profiles": {"dom": {"psk": "cudzy", "hss_profile": "standard"}},
+            "server": {"psk": "serwer", "hss_profile": "production"}
+        }));
+        assert_eq!(foreign, ClientSecrets { psk: None, hss_profile: None });
+        let no_hss = client_secrets_from_value(&json!({
+            "profiles": {"lokalny": {"psk": ""}}
+        }));
+        assert!(no_hss.psk.is_none());
+        assert!(no_hss.hss_profile.is_none());
+        assert!(hss::profile_from_name(pick(None, no_hss.hss_profile.as_deref()).unwrap_or("")).is_none());
+    }
+
+    #[test]
+    fn secrets_file_beside_master_key_and_absent_file_is_ecdh() {
+        let dir = std::env::temp_dir().join(format!("cynober_secrets_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let missing = load_client_secrets(&dir);
+        assert_eq!(missing, ClientSecrets { psk: None, hss_profile: None });
+        assert_eq!(pick(None, missing.psk.as_deref()).unwrap_or(""), "");
+        assert!(hss::profile_from_name(pick(None, missing.hss_profile.as_deref()).unwrap_or("")).is_none());
+
+        std::fs::write(dir.join("master.key"), [1u8; 32]).unwrap();
+        std::fs::write(
+            dir.join("client.json"),
+            br#"{"active":"lokalny","profiles":{"lokalny":{"psk":"z-dysku"}}}"#,
+        )
+        .unwrap();
+        let s = load_client_secrets(&dir);
+        assert_eq!(s.psk.as_deref(), Some("z-dysku"));
+        assert!(s.hss_profile.is_none());
+
+        std::fs::write(dir.join("client.json"), b"{not json").unwrap();
+        assert_eq!(
+            load_client_secrets(&dir),
+            ClientSecrets { psk: None, hss_profile: None }
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

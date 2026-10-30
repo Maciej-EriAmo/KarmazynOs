@@ -17,7 +17,14 @@ karmazyn> :tool ls
 karmazyn> :tool whoami
 ```
 
-Ścieżka: `KARMAZYN_LUA_BIN` lub monorepo `lua_bin/`.
+Na płycie (`k$`) narzędzie jest bąblem z etykietą, nie plikiem w `bin/` ani `lib/`.
+Katalog `lua_bin/` (albo `KARMAZYN_LUA_BIN`) jest ziarnem startowym: przy starcie
+shell wchłania brakujące etykiety do świata i dalej woła tylko bąble.
+`require('mat')` działa, gdy wołający ma powiązanie `code.link('suma','mat')`
+albo biblioteka jest jego rodzicem. Skórka `karmazyn>` na hoście nadal
+uruchamia pliki z `lua_bin/`.
+
+Ścieżka ziarna: `KARMAZYN_LUA_BIN` lub monorepo `lua_bin/`.
 
 ## Minimalny skrypt
 
@@ -58,14 +65,14 @@ Most Lorentza: [MAZUR_CRYSTAL.md](MAZUR_CRYSTAL.md) · `KARMAZYN_MAZUR=0` wyłą
 | `clear_screen()` / `sleep(sec)` | UI terminala |
 | `ui.progress_bar(v, max, width)` | pasek tekstowy |
 | `ui.draw_frame(title, lines)` | ramka tekstowa |
-| `fs.read/write/list/delete` | pliki w Store (bąbel `fs`), przechodzą przez `save` i `sync` |
-| `fs bin/<nazwa>` | własne narzędzie: `tool <nazwa>` szuka tu przed `lua_bin` |
-| `fs lib/<nazwa>` | własna biblioteka: `require('<nazwa>')` szuka tu przed preload i projektem; zapis do lib/ odświeża `require` |
-| `nano bin/<plik>`, `nano lib/<plik>` | edycja pliku w fs: puste linie zostają, przed zapisem sprawdzenie składni, `.set N tekst` podmienia linię |
-| `edit <katalog>/<plik>` (polecenie shella) | edytor z kursorem na płycie: strzałki, Home/End, PgUp/PgDn, ^S zapis, ^Q wyjście, ^K usuń linię, ^L odśwież; rysuje tylko zmienione wiersze; w bin/ i lib/ sprawdza składnię |
+| `fs.read/write/list/delete` | dokumenty w Store (bąbel `fs`), przechodzą przez `save` i `sync`. To nie jest przestrzeń narzędzi |
+| `code.read/write/link` | kod: bąbel o etykiecie, źródło w atomie `src`. `link(od, do)` wiąże wołającego z biblioteką. `write` czyści `package.loaded` |
+| `tool <etykieta>` (shell) | woła bąbel kodu. `require` w środku widzi bibliotekę powiązaną z tym bąblem albo leżącą na drodze rodzica |
+| `nano <etykieta>` | edycja źródła bąbla: puste linie zostają, przed zapisem sprawdzenie składni, `.set N tekst` podmienia linię. `--temp` zostaje w cache |
+| `edit <etykieta>` (polecenie shella) | edytor z kursorem na płycie: strzałki, Home/End, PgUp/PgDn, ^S zapis, ^Q wyjście, ^K usuń linię, ^L odśwież; rysuje tylko zmienione wiersze; przy zapisie sprawdza składnię Lua |
 | autosync | shell sam zapisuje Store na dysk po każdym poleceniu, które zmieniło treść (atomy S/E/token/payload, bąble, powiązania); samo grzanie odczytem nie pisze, temperaturę zapisuje `sync`; `KARMAZYN_AUTOSYNC=0` wyłącza |
 | trwałość (płyta) | Store zapisywany jako świat DBase (KAFD w kopercie KAFX) w `/data/cynober/worlds/karmazyn.kafd` na ext4 (`/dev/vda` → `/data`); pusty dysk dostaje ext2 sam, inny tylko przez `disk format`; klucz węzła `/data/cynober/master.key`; na hoście `KARMAZYN_WORLD=<plik.kafd>` |
-| `db` (polecenie shella) | połączenie z Karmin_DB: `db connect <host> [port]`, `db <zapytanie KarminQL>`, `db info`, `db close`; tunel Cynober-Secure-1.2 (ECDH albo HSS przy `KARM_HSS_PROFILE=standard\|production`, + HSL, PSK, QKD); na płycie sieć z `KARMAZYN_IP` / `KARMAZYN_GW` (grub.cfg, QEMU: host = 10.0.2.2) |
+| `db` (polecenie shella) | połączenie z Karmin_DB: `db connect <host> [port]`, `db <zapytanie KarminQL>`, `db info`, `db close`; tunel Cynober-Secure-1.2 (ECDH albo HSS `standard`/`production`, + HSL, PSK, QKD). Na płycie adres z `KARMAZYN_IP` / `KARMAZYN_GW` (grub.cfg, QEMU: host = 10.0.2.2). `KARM_PSK` i `KARM_HSS_PROFILE` z aktywnego profilu w `/data/cynober/client.json` (obok `master.key`); brak pliku zostawia ECDH. Zmienna środowiska ma pierwszeństwo przed plikiem |
 | `cache.read/write` | mini cache w pamięci sesji |
 
 ### Proxy atomu
@@ -84,7 +91,9 @@ a.consolidate()
 1. **Nie zakładaj** `dofile` / `io.open` / `os.execute` — ich nie ma.
 2. I/O użytkownika → `karmazyn.read_line` (host może wstrzyknąć kolejkę).
 3. Trwałość między restartami → `consolidate` / bąble-korzenie, nie pliki OS.
-4. Narzędzie = plik `lua_bin/name.lua` uruchamiany przez `:tool name` (chunk, niekoniecznie `return M`).
+4. Na płycie narzędzie to bąbel kodu. Etykieta bez `/`, `\`, `@` i białych znaków. Źródło leży w atomie `src` (E = `lua`). `tool <etykieta>` odpala chunk od nowa; argumenty idą w `...`. Samo `tool` wypisuje etykiety.
+5. `require(nazwa)` na płycie szuka po kolei: bąbel kodu widoczny z wołającego (powiązanie albo rodzic), potem `package.preload`, potem katalog projektu. Ziarno `lua_bin` do preloadu nie wchodzi. Wpis z bąbla kodu w `package.loaded` zostaje, dopóki kolejny wołający nadal ten bąbel widzi.
+6. Skórka `karmazyn>` na hoście nadal uruchamia plik `lua_bin/<nazwa>.lua` przez `:tool <nazwa>` (chunk, zwrot modułu jest opcjonalny).
 
 ## Testy smoke
 

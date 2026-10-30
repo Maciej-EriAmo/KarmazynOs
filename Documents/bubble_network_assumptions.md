@@ -548,7 +548,7 @@ To jest **Carrier**, nie ontologia łącza (§1.2, §3 L0).
 | **Revoke** | koniec sesji HSL / utrata klucza / zamknięcie tunelu; pełne Warp Oblivion bąbla — osobne ścieżki (m.in. gossip SOUL / administracja świata) |
 | **Budget** | rate limit połączeń i zapytań (firewall / `cynober_rate_limit`) — analog budżetu Surface na brzegu RPC |
 | **SyncSurface** | faza 2–4 uścisku; oraz ścieżki replikacji / gossip (manifest-first, shardy) dla dłuższych powierzchni |
-| **Carrier** | TCP (LAN / Termux); PSK opcjonalnie (`KARM_PSK`); QKD-seed slot (`KARM_QKD_SEED`) |
+| **Carrier** | TCP (LAN / Termux); PSK opcjonalnie (`KARM_PSK`, na płycie z aktywnego profilu `/data/cynober/client.json`); QKD-seed slot (`KARM_QKD_SEED`, zostaje w środowisku) |
 
 ### 15.4 Warstwy L0–L4 na stacku Cynober
 

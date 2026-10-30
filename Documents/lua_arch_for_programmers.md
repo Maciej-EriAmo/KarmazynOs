@@ -22,7 +22,7 @@ Nie oczekuj `lua.exe` 1:1. Oczekuj **semantyki skryptowej** + **gwarancji piasko
 | Globalne `_G` / `_ENV` | Bubble-korzeń sesji (`set_root`) | Utrata reach + zimno → vacuum |
 | Domknięcie / upvalue | Bubble env + hak `env_of` | Rejestr `register_env_of(name="guest")` |
 | Stack call | Ramki + `extra_reach` | Locale chronione w trakcie call |
-| `require` + `package.path` | preload / memory / **project host** | Dysku szuka **host**, nie gość |
+| `require` + `package.path` | bąbel kodu, potem preload, potem projekt | Dysku szuka **host**, nie gość |
 | `io` / pliki | Wirtualne IO sesji **lub** host tools | Brak `io.open` na FS |
 | `os.execute` | **Brak** | Cel: zero ambient authority |
 | C `userdata` / `.so` | **Brak** | Substrat Python/Rust, nie C API Lua |
@@ -105,11 +105,14 @@ setmetatable(o, { __index = proto })
 ### 4.3 Narzędzia OS
 
 ```text
+k$ tool ls
 karmazyn> :tool ls
 ```
 
-Skrypty w `lua_bin/` wołają **`karmazyn.*`** (host API 1.0).  
-To nie jest stdlib PUC-Rio — to **API systemu**.
+Na płycie (`k$`) narzędzie jest bąblem kodu. Katalog `lua_bin/` jest ziarnem startowym PID 1. Skórka `karmazyn>` nadal uruchamia plik `lua_bin/<nazwa>.lua`.
+
+Skrypty wołają **`karmazyn.*`** (host API 1.0).  
+To nie jest stdlib PUC-Rio — to **API systemu**. Szczegóły: [tools_lua.md](tools_lua.md).
 
 ---
 
@@ -136,14 +139,15 @@ Weak/`__gc` (rozwój 1.1) = **warstwa gościa**, nie drugi GC.
 
 ## 6. `require` i searchery (ważne)
 
-Kolejność (1.0):
+Kolejność na płycie i w `native/karmazyn_lua`:
 
-1. **preload** — tools / `lua_bin` jako preload  
-2. **memory** — bufory edytora (`put_buffer`)  
-3. **project** — pliki pod rootem projektu (host czyta)
+1. **bąbel kodu** widoczny z wołającego — powiązanie (`code.link`) albo etykieta na drodze rodzica
+2. **`package.preload`** — tylko to, co sesja wstawiła sama; ziarno `lua_bin` tu nie wchodzi
+3. **projekt** — pliki pod rootem projektu (host czyta)
 
-**Nie ma** `package.path` w stylu Uniksa.  
-Bez projektu `lua_bin` **nie** staje się `ev.project` (tylko preload) — unikamy mylenia tools z aplikacją.
+Skórka `karmazyn>` (gość w Pythonie) zostaje przy starszej kolejności: preload (`lua_bin`), bufor edytora, projekt.
+
+`package.path` w stylu Uniksa jest puste. Gość sam nie czyta dysku.
 
 ---
 

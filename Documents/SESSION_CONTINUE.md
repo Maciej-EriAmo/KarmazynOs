@@ -1,9 +1,9 @@
 # SESSION_CONTINUE — KarmazynOs (kontynuacja)
 
-**Data:** 2026-10-30 (koniec sesji)  
-**Repo Os:** `main` @ **`673c082`** (sesja: `377263d`…`673c082`, nic nie wypchnięte)  
-**DBase:** `main` @ **`39f696e`** (2 poprawki protokołu z tej sesji, nie wypchnięte)  
-**Kanon:** [`KANON.md`](KANON.md) — KarmazynOs to **nie** dystrybucja Linuksa: jądro Linuksa tylko nośnik (proces, sterowniki); system plików = bąble/atomy w formacie KAFD, sieć = Cynober-Secure/HSL do Karmin_DB.
+**Data:** 2026-10-30  
+**Repo Os:** `main`, kontynuacja od `4b0f9ec` (opis jedzie w commicie tej sesji)  
+**DBase:** `master` @ **`39f696e`** (2 commity przed originem: `4eca597`, `39f696e`; push DBase czeka na prośbę)  
+**Kanon:** [`KANON.md`](KANON.md) — jądro Linuksa jest nośnikiem (proces, sterowniki). System plików to bąble i atomy w KAFD. Sieć to Cynober-Secure/HSL do Karmin_DB.
 
 ---
 
@@ -14,9 +14,9 @@
 | Konsola | ekran VGA (tty1) + serial (ttyS0) naraz, `KARMAZYN_CONSOLE=auto\|vga\|serial\|none` |
 | Trwałość | Store = świat DBase `karmazyn_store_v1.4_kafx`: KAFD w kopercie KAFX w `/data/cynober/worlds/karmazyn.kafd` na ext4 (`/dev/vda` → `/data`); pusty dysk dostaje ext2 sam, inny tylko `disk format`; świat nieczytelny = zapis wstrzymany; autosync po zmianie treści |
 | KAFD natywnie | `native/karmazyn_kafd`: v2.0/v2.1/KTIX/v1-odczyt, KAFS, dziennik, compact, KAFX/KX1, świat DBase (`world`, cecha `substrate`) — bajt w bajt z Pythonem |
-| Sieć | `KARMAZYN_IP` / `KARMAZYN_GW` (grub.cfg: QEMU, host = 10.0.2.2), virtio_net |
+| Sieć | `KARMAZYN_IP` / `KARMAZYN_GW` (grub.cfg: QEMU, host = 10.0.2.2), virtio_net; `KARM_PSK` i `KARM_HSS_PROFILE` z aktywnego profilu w `/data/cynober/client.json` (obok `master.key`); brak pliku = ECDH |
 | Karmin_DB | `native/karmazyn_cynober` (ECDH, HSS standard/production, HSL-1.1, PSK, QKD); w shellu `db connect / db <KarminQL> / db info / db close` |
-| Narzędzia | Lua w `karmazyn.fs`: `tool` z `bin`, `require` z `lib`, `nano bin/x`, `edit <dir>/<plik>` (kursor) — **do przeróbki, patrz niżej** |
+| Narzędzia | bąbel kodu: etykieta = nazwa, źródło w atomie `src` (E=`lua`, payload = bajty), bąbel jest korzeniem. `tool <etykieta>` woła najnowszy taki bąbel. `require` widzi bibliotekę z wołającego: powiązanie `code.link` albo etykieta na drodze rodzica. `nano <etykieta>` i `edit <etykieta>` edytują to źródło. `lua_bin/` jest ziarnem: PID 1 wchłania brakujące etykiety po wczytaniu świata (`narzędzia — N bąbli`). Skórka `karmazyn>` nadal odpala pliki z `lua_bin/`. `karmazyn.fs` zostaje na dokumenty |
 
 ## Bramki / testy
 
@@ -34,17 +34,28 @@ python native\karmazyn_cynober\cross\live_check.py    # klient vs żywy serwer D
 
 ---
 
+## Domknięte w tej sesji
+
+1. **Narzędzia są bąblami substratu.** Kod = bąbel-korzeń o etykiecie plus atom `src`. `tool` woła bąbel, `require` idzie po powiązaniu albo w górę rodziców. Ziarno `lua_bin` wchodzi do świata tylko jako PID 1, po wczytaniu świata, i tylko dla etykiet bez `src`. Stare pliki `bin/` i `lib/` w `karmazyn.fs` zostają dokumentami. Bramki: `stage2_verify.ps1`, `qemu_serial.ps1`, `qemu_disk.ps1`.
+2. **Sekrety sieci są w pliku.** `KARM_PSK` i `KARM_HSS_PROFILE` z aktywnego profilu w `/data/cynober/client.json` (obok `master.key`). Brak pliku zostawia ECDH. Profil `proto` i pusty profil też zostawiają ECDH; `standard` przy serwerze na `proto` zrywa tunel. Środowisko ma pierwszeństwo przed plikiem. `KARMAZYN_IP` / `KARMAZYN_GW` zostają w `grub.cfg`. Bramki: `qemu_net.ps1` (ECDH, linii jądra bez tych sekretów) i `live_check.py`.
+
+Szczegół narzędzi: [tools_lua.md](tools_lua.md).
+
 ## Do zrobienia w następnej sesji
 
-1. **Narzędzia na model Karmazyna (zastrzeżenie użytkownika).** `bin`/`lib` w `karmazyn.fs`, `nano`, `edit`, `tool`, `require` to konwencje Unixa przeniesione na bąble. Najpierw ustalić z użytkownikiem, jak kod i narzędzia mają żyć w substracie (KANON: ministrowie przez szwy), potem przerobić — nie zgadywać.
-2. **Sekrety sieci poza grub.cfg.** `KARM_PSK` (i ewentualnie `KARM_HSS_PROFILE`) z pliku w `/data/cynober` na dysku zamiast jawnie w linii jądra; domyślnie płyta idzie ECDH (HSS `standard` zerwałby połączenie z serwerem `proto`).
-3. **ext2 bez księgowania.** Po twardym wyłączeniu jądro ostrzega „mounting unchecked fs”; rozważyć ext4 z journalem (formater albo `mke2fs` na płycie) albo prosty fsck.
-4. **Dziennik KAFS na płycie.** Dziś każdy zapis podmienia cały świat (jak `save_documents`); przy większych światach dopisywać przyrostowo do `.kafs` i robić compact.
-5. **Sieć na prawdziwym sprzęcie.** Brak DHCP (adres statyczny w grub.cfg); klawiatura USB może wymagać modułów, których `virt` nie ma — niesprawdzone.
-6. **Polskie znaki na VGA.** Wbudowana czcionka konsoli nie ma ąęłó… (serial OK); np. font Lat2 przy starcie.
-7. **Klient Cynober — braki.** Profil HSS `proto` (macierz z PCG64 NumPy) i media KAFS (put/get) nieobsługiwane.
-8. **DBase.** Czerwony test `tests.test_kernel TestStore.test_nested_tick_is_noop` (był przed tą sesją). Wzmianka o natywnym KAFD i teście zgodności w `DBase/docs/KAFD.md` — czeka na zgodę (inne repo). Push obu repozytoriów — tylko na prośbę.
-9. **Odłożone świadomie:** `rustc` na płycie / samobudowa ISO.
+1. **Dziennik na dysku.** Formater w `native/karmazyn_shell/src/ext2.rs` robi ext2 rev 1. Jądro montuje to jako ext4 i po twardym wyłączeniu pisze `mounting unchecked fs`. Dodać mały journal ext4 w tym samym formaterze (`disk format` i pierwszy pusty dysk). Istniejący świat ext2 zostaje czytelny. Bramka: `qemu_disk.ps1` plus twardy reset bez ostrzeżenia o niesprawdzonym systemie plików.
+2. **Przyrostowy zapis KAFS.** `append_atom` i `compact_journal` już są w `native/karmazyn_kafd`. Autosync płyty nadal podmienia cały świat. Dopisywać zmiany do dziennika `.kafs` i robić compact po progu. Po compact treść świata ma być bajt w bajt z Pythonem. Bramka: `cross_check.py`, `qemu_disk.ps1`, test że zmiana jednego atomu nie przepisuje całej koperty.
+3. **Polskie znaki na VGA.** Czcionka konsoli nie ma ąęćłńóśźż. Wczytać font Lat2 do VGA przy starcie. Serial zostaje. Bramka: `qemu_vga.ps1` i odczyt `out/karmazyn-vga.png`.
+4. **Dwa braki klienta Cynober** (po dysku, bo zmieniają kontrakt na drucie). W `native/karmazyn_cynober`: profil HSS `proto` (macierz z PCG64, jak NumPy w DBase) i ramki KAFS (media put/get). Dziś `proto` spada do ECDH, a ramka KAFS jest odrzucana. Bramka: `python native/karmazyn_cynober/cross/live_check.py` przeciw żywemu `cynober_server.py`, w tym `proto` i jeden media put/get.
+
+## Na prośbę, poza tą kolejką
+
+- DBase: czerwony test `tests.test_kernel TestStore.test_nested_tick_is_noop` (był wcześniej). Wzmianka o natywnym KAFD w `DBase/docs/KAFD.md`. Dwa lokalne commity czekają. Push DBase osobno.
+- DHCP i klawiatura USB na prawdziwym sprzęcie. Moduły `virt` pod to nie były sprawdzane.
+- `rustc` na płycie, samobudowa ISO, własne jądro, faza G Store bez nośnika.
+- Demon upcall HSL z mapy 19 października.
+- Dopieszczanie gościa Lua 1.1.3 (`puc_subset`) — to host, nie ta płyta.
+- `generate_from_idea` zostaje `nil`. `ThermalSurface.write(..., visible=True)` nie grzeje macierzy.
 
 ---
 

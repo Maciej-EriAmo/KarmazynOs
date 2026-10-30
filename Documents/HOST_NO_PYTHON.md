@@ -1,6 +1,6 @@
 # Host bez CPythona — jak zdjąć skórę
 
-**Status:** living · **Data:** 2026-08-19  
+**Status:** living · **Data:** 2026-10-30  
 **Cel:** „pełny system jak go odpalasz” **nie** wymaga `python`.
 
 Dziś jądro i `karmazyn_shell` są w Rust. Padka to **launcher** (`karmazyn.cmd` wołał `python boot.py`) oraz goście (Lua/Lisp/Studio) napisane w CPythonie.
@@ -32,10 +32,10 @@ Python boot to nie tylko REPL na Store. To też:
 | H | Co | Stan |
 |---|----|------|
 | **H0** | Launcher = native shell | ✅ ta sesja |
-| **H1** | Raport startu `[ OK ]` usług po stronie shell | ✅ interaktywny shell: `store`, `lisp`, `lua`, `lua_bin`. Batch (`-e`, skrypt) milczy |
+| **H1** | Raport startu `[ OK ]` usług po stronie shell | ✅ interaktywny shell: `store`, `lisp`, `lua`, a na PID 1 także `narzędzia — N bąbli`. Batch (`-e`, skrypt) milczy |
 | **H2a** | Gość **mini-Lisp** na szwach Store | ✅ crate `karmazyn_lisp` (jak `karmazyn_exec.py`) |
-| **H2** | Gość Lua **bez** CPythona | częściowy: `native/karmazyn_lua` (mlua), `lua <chunk>`, host `karmazyn.*` pod `lua_bin`. Lorentz, HRR, `debug`, snapshot sterty Lua i pełny 1.1.2 zostają na `--python` |
-| **H3** | `lua_bin/*` jako narzędzia native | ✅ `tool <name> [arg...]` / `:tool` woła skrypt na gościu mlua. Brak narzędzia i zła nazwa kończą batch błędem. Seed katalogu Starlink i Studio zostają na Pythonie |
+| **H2** | Gość Lua **bez** CPythona | częściowy: `native/karmazyn_lua` (mlua), `lua <chunk>`, host `karmazyn.*`. Lorentz, HRR, `debug`, snapshot sterty Lua i pełny 1.1.2 zostają na `--python` |
+| **H3** | Narzędzia native | ✅ na płycie (PID 1) `lua_bin/*.lua` jest ziarnem: po wczytaniu świata brakujące etykiety stają się bąblami kodu. `tool <etykieta>` woła bąbel. Na hoście shell ziarna nie wchłania. Skórka `karmazyn>` nadal odpala pliki. Brak narzędzia i zła etykieta kończą batch błędem. Starlink i Studio zostają na Pythonie |
 | **H4** | Studio SDL | zostaje ministrem na hoście z Pythonem **albo** osobny crate |
 | **H5** | Kubity / φ | minister Python — na żądanie, nie warunek startu |
 

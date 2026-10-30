@@ -1,4 +1,5 @@
 //! `karmazyn.fs` w Store: katalog to bąbel, plik to atom z treścią w payload.
+//! Dokumenty, nie narzędzia. Kod shella żyje w [`crate::code`].
 //!
 //! ```text
 //! bąbel "fs"            korzeń, bez rodzica
@@ -12,9 +13,10 @@
 use karmazyn_substrate::{AtomId, BubbleId, Store, T_INIT};
 
 pub const ROOT_LABEL: &str = "fs";
-/// Katalog narzędzi: `tool <nazwa>` szuka tu przed `lua_bin`.
+/// Zostawione dla starych światów. Shell już tu nie szuka narzędzi.
+#[allow(dead_code)]
 pub const BIN_DIR: &str = "bin";
-/// Katalog bibliotek: `require('x')` szuka lib/x przed preload i projektem.
+/// Zostawione dla starych światów. `require` idzie przez [`crate::code`].
 pub const LIB_DIR: &str = "lib";
 
 fn root(store: &Store, create: bool) -> Option<BubbleId> {
@@ -147,14 +149,14 @@ mod tests {
     #[test]
     fn files_survive_ticks_and_snapshot() {
         let s = Store::new(true);
-        write(&s, "bin", "hello", "lua", b"return 'hej'").unwrap();
+        write(&s, BIN_DIR, "hello", "lua", b"return 'hej'").unwrap();
         s.settle(500);
-        assert_eq!(read(&s, "bin", "hello").as_deref(), Some(&b"return 'hej'"[..]));
+        assert_eq!(read(&s, BIN_DIR, "hello").as_deref(), Some(&b"return 'hej'"[..]));
 
         let text = s.export_snapshot().to_text();
         let s2 = Store::new(true);
         s2.import_snapshot(&karmazyn_substrate::StoreSnapshot::from_text(&text).unwrap());
-        assert_eq!(read(&s2, "bin", "hello").as_deref(), Some(&b"return 'hej'"[..]));
-        assert_eq!(dirs(&s2), vec!["bin"]);
+        assert_eq!(read(&s2, BIN_DIR, "hello").as_deref(), Some(&b"return 'hej'"[..]));
+        assert_eq!(dirs(&s2), vec![BIN_DIR.to_string()]);
     }
 }

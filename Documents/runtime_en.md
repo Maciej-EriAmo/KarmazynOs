@@ -5,8 +5,10 @@
 **Native substrate (Rust):** `0.1.0-karmazyn-substrate` — phases 0–5 done (PyO3 + C ABI, drop-in Store, boot default); Python = reference  
 **Lua guest:** `karmazyn_lua` **1.0.0** stable (project host, `karmazyn.*` 1.0.0, matrix 26/28)
 
-This document describes the **current** monorepo runtime (not archived `shell.py` / `studio.py` under `archiwum/`).  
+This document describes the `karmazyn>` host skin (not archived `shell.py` / `studio.py` under `archiwum/`).  
 Full Polish guide: **[runtime_pl.md](runtime_pl.md)**.
+
+The Linux disc (`k$`, `out/karmazyn-linux.iso`) is in [SESSION_CONTINUE.md](SESSION_CONTINUE.md) and [tools_lua.md](tools_lua.md): a tool is a code bubble, and `lua_bin/` is only the PID 1 seed.
 
 ---
 

@@ -2,6 +2,8 @@
 # QEMU: sieć użytkownika z virtio-net; host widziany z płyty jako 10.0.2.2.
 # Shell podnosi eth0 z KARMAZYN_IP/KARMAZYN_GW (grub.cfg), potem przez serial:
 #   db connect 10.0.2.2 <port> · db ZDROWIE · db info · db LISTA ŚWIATÓW
+# PSK i profil HSS nie są na linii jądra (plik: /data/cynober/client.json).
+# Ta bramka nie podkłada dysku, więc tunel zostaje ECDH.
 # Exit 0 = pass, 1 = fail, 2 = brak qemu, ISO, Pythona albo DBase.
 $ErrorActionPreference = "Stop"
 $Repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
@@ -83,12 +85,15 @@ try {
 [Console]::OutputEncoding = [Text.Encoding]::UTF8
 $k = $text.IndexOf("Run /init")
 Write-Host $(if ($k -ge 0) { $text.Substring($k) } else { $text })
+$kcmd = [regex]::Match($text, 'Kernel command line: ([^\r\n]+)').Groups[1].Value
 $checks = [ordered]@{
     'net eth0'          = $text -match 'net — eth0 10\.0\.2\.15/24 gw 10\.0\.2\.2'
     'tunel'             = $text -match "db: 10\.0\.2\.2:$dbPort ecdh hsl=true node_"
     'ZDROWIE'           = $text -match '"action":"HEALTH"' -and $text -match '"protocol":"Cynober-Secure-1\.2"'
     'db info'           = $text -match 'db Cynober-Secure-1\.2 ecdh hsl=true'
     'LISTA ŚWIATÓW'     = $text -match '"action":"LIST_WORLDS"'
+    'linia jądra'       = [bool]$kcmd
+    'sekret poza linią' = [bool]($kcmd -and $kcmd -notmatch 'KARM_PSK' -and $kcmd -notmatch 'KARM_HSS_PROFILE')
 }
 $checks.GetEnumerator() | Where-Object { -not $_.Value } | ForEach-Object { Write-Host "BRAK: $($_.Key)" }
 Remove-Item $srvHome -Recurse -Force -ErrorAction SilentlyContinue

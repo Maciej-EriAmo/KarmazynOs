@@ -3,8 +3,9 @@
 //! Na płycie (PID 1): dysk `KARMAZYN_DISK` (domyślnie `/dev/vda`) montowany
 //! jako ext4 pod `/data`. Pusty dysk (same zera na początku) dostaje ext2
 //! z [`crate::ext2`]; dysk z nieznanymi danymi czeka na jawne `disk format`.
-//! `CYNOBER_DATA_HOME` = `/data/cynober` (klucz węzła `master.key`), świat
-//! w `worlds/<KARMAZYN_WORLD_NAME albo karmazyn>.kafd` — jak `cynober_worlds`.
+//! `CYNOBER_DATA_HOME` = `/data/cynober` (klucz węzła `master.key`, sekrety
+//! sieci w `client.json`), świat w `worlds/<KARMAZYN_WORLD_NAME albo
+//! karmazyn>.kafd` — jak `cynober_worlds`.
 //!
 //! Na hoście: `KARMAZYN_WORLD=<plik.kafd>` wskazuje świat wprost.
 //!
