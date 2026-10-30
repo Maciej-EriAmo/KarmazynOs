@@ -2,7 +2,7 @@
 //! na tym samym tunelu. Wypisuje JSON: `{"session": {...}, "answers": [...]}`.
 
 use karmazyn_cynober::Client;
-use serde_json::{json, Value};
+use serde_json::json;
 use std::time::Duration;
 
 fn main() {
@@ -33,5 +33,5 @@ fn main() {
             Err(e) => json!({"client_error": e.0}),
         });
     }
-    println!("{}", Value::from(json!({"session": session, "answers": answers})));
+    println!("{}", json!({"session": session, "answers": answers}));
 }
