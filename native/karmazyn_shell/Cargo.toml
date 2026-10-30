@@ -16,6 +16,9 @@ karmazyn_substrate = { path = "../karmazyn_substrate" }
 karmazyn_lisp = { path = "../karmazyn_lisp" }
 karmazyn_lua = { path = "../karmazyn_lua" }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
+
 [profile.release]
 lto = true
 codegen-units = 1

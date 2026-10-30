@@ -8,10 +8,13 @@
 //! Commands: help | version | stats | atom | … | save | load | quit
 //! Lisp guest: line starting with `(` → karmazyn_lisp::Evaluator::eval_line.
 
+mod disk;
+
+use disk::Disk;
 use karmazyn_lisp::Evaluator;
 use karmazyn_lua::Evaluator as LuaEvaluator;
 
-use karmazyn_substrate::{state_for_t, Store, T_INIT};
+use karmazyn_substrate::{state_for_t, Store, StoreSnapshot, T_INIT};
 use std::env;
 use std::io::{self, BufRead, IsTerminal, Write};
 use std::process;
@@ -43,6 +46,7 @@ struct App {
     store: Store,
     lisp: Evaluator,
     lua: LuaEvaluator,
+    disk: Option<Disk>,
 }
 
 fn main() {
@@ -58,7 +62,8 @@ fn main() {
         lua.set_budget((n > 0).then_some(n));
     }
     let tools = preload_lua_bin(&lua);
-    let app = App { store, lisp, lua };
+    let mut app = App { store, lisp, lua, disk: None };
+    let disk_line = open_disk(&mut app);
     let args: Vec<String> = env::args().skip(1).collect();
 
     // batch: -e "cmd" ...  and/or trailing script file of commands
@@ -124,7 +129,7 @@ fn main() {
     }
 
     app.lua.enable_stdin(true);
-    print_boot(tools);
+    print_boot(tools, &disk_line);
     println!("karmazyn_shell {VERSION} — Stage 2 (native, no Python)");
     println!("thermal={thermal}  lisp: (   lua: `lua <chunk>`   tool: `tool <name> [args]`   type `help`");
 
@@ -214,6 +219,10 @@ fn dispatch(app: &App, line: &str) -> Outcome {
                 Outcome::Err
             }
         }
+    } else if head.eq_ignore_ascii_case("sync") {
+        disk_sync(app)
+    } else if head.eq_ignore_ascii_case("disk") {
+        disk_status(app)
     } else if head.eq_ignore_ascii_case("tick") {
         shell_tick(app, &parts)
     } else if head.eq_ignore_ascii_case("settle") {
@@ -278,7 +287,7 @@ fn preload_lua_bin(lua: &LuaEvaluator) -> usize {
     0
 }
 
-fn print_boot(tools: usize) {
+fn print_boot(tools: usize, disk: &Option<(bool, String)>) {
     let color = io::stdout().is_terminal();
     boot_line(color, "ok", "store", "");
     boot_line(color, "ok", "lisp", "");
@@ -287,6 +296,95 @@ fn print_boot(tools: usize) {
         boot_line(color, "ok", "lua_bin", &format!("{tools} narzędzi"));
     } else {
         boot_line(color, "warn", "lua_bin", "brak katalogu");
+    }
+    if let Some((ok, detail)) = disk {
+        boot_line(color, if *ok { "ok" } else { "warn" }, "disk", detail);
+    }
+}
+
+/// KARMAZYN_DISK=<urządzenie albo plik>; PID 1 bez zmiennej bierze /dev/vda.
+/// Najnowszy snapshot z dysku wraca do Store. `None` = dysk wyłączony.
+fn open_disk(app: &mut App) -> Option<(bool, String)> {
+    let path = match env::var("KARMAZYN_DISK") {
+        Ok(p) if p.trim().is_empty() || p.trim() == "none" => return None,
+        Ok(p) => p.trim().to_string(),
+        Err(_) if is_pid1() => disk::DEFAULT_DEVICE.to_string(),
+        Err(_) => return None,
+    };
+    let warn = if is_pid1() {
+        disk::prepare(std::path::Path::new(&path))
+    } else {
+        Vec::new()
+    };
+    let d = Disk::new(&path);
+    let line = match d.read_latest() {
+        Err(e) => {
+            let mut msg = e;
+            if !warn.is_empty() {
+                msg = format!("{msg} ({})", warn.join("; "));
+            }
+            return Some((false, msg));
+        }
+        Ok(None) => (true, format!("{path} pusty, `sync` zapisze stan")),
+        Ok(Some((slot, data))) => match String::from_utf8(data)
+            .map_err(|e| e.to_string())
+            .and_then(|t| StoreSnapshot::from_text(&t))
+        {
+            Ok(snap) => {
+                app.store.import_snapshot(&snap);
+                app.lisp.remount_repl(&app.store);
+                app.lua.remount_session(&app.store);
+                let st = app.store.stats();
+                (
+                    true,
+                    format!("{path} gen={} atoms={} bubbles={}", slot.gen, st.total, st.bubbles),
+                )
+            }
+            Err(e) => (false, format!("{path} gen={}: {e}", slot.gen)),
+        },
+    };
+    app.disk = Some(d);
+    Some(line)
+}
+
+fn disk_sync(app: &App) -> Outcome {
+    let Some(d) = &app.disk else {
+        println!("sync: brak dysku (KARMAZYN_DISK)");
+        return Outcome::Err;
+    };
+    let text = app.store.export_snapshot().to_text();
+    match d.write_next(text.as_bytes()) {
+        Ok(s) => {
+            println!("sync {} gen={} bytes={}", d.path().display(), s.gen, s.len);
+            Outcome::Ok
+        }
+        Err(e) => {
+            println!("sync err: {e}");
+            Outcome::Err
+        }
+    }
+}
+
+fn disk_status(app: &App) -> Outcome {
+    let Some(d) = &app.disk else {
+        println!("disk: brak (KARMAZYN_DISK)");
+        return Outcome::Err;
+    };
+    match (d.size(), d.slots()) {
+        (Ok(size), Ok(slots)) => {
+            println!("disk {} size={size}", d.path().display());
+            for (name, s) in ["A", "B"].iter().zip(slots) {
+                match s {
+                    Some(s) => println!("  {name} gen={} bytes={}", s.gen, s.len),
+                    None => println!("  {name} pusty"),
+                }
+            }
+            Outcome::Ok
+        }
+        (Err(e), _) | (_, Err(e)) => {
+            println!("disk err: {e}");
+            Outcome::Err
+        }
     }
 }
 
@@ -938,6 +1036,8 @@ fn print_help() {
   assert has|nohas|dead|nodead|lookup|t|val|stats|root|noroot …
   echo <text>
   save <path> / load <path>     KSUB_SNAP v1. load remounts lisp and lua
+  sync                          snapshot na dysk (KARMAZYN_DISK, slot A/B)
+  disk                          stan dysku i slotów
   (define x 10) / lisp <expr>   mini-Lisp guest (atoms = vars)
   lua <chunk>                   Lua guest (mlua). return karmazyn._VERSION
                                 limit instrukcji na chunk: KARMAZYN_LUA_BUDGET (0 = brak)

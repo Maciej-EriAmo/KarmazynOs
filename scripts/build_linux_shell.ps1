@@ -73,31 +73,23 @@ if (-not (Test-Path $elf)) {
     exit 1
 }
 
-$vmlinuz = Join-Path $cache "vmlinuz-virt"
-if (-not (Test-Path $vmlinuz) -or (Get-Item $vmlinuz).Length -lt 1000000) {
-    $urls = @(
-        "https://dl-cdn.alpinelinux.org/alpine/latest-stable/releases/x86_64/netboot/vmlinuz-virt",
-        "https://dl-cdn.alpinelinux.org/alpine/v3.22/releases/x86_64/netboot/vmlinuz-virt"
-    )
-    $ok = $false
-    foreach ($u in $urls) {
-        Write-Host "GET $u"
-        & curl.exe -fL --retry 2 -o $vmlinuz $u
-        if ($LASTEXITCODE -eq 0 -and (Test-Path $vmlinuz) -and (Get-Item $vmlinuz).Length -gt 1000000) {
-            $ok = $true
-            break
-        }
-    }
-    if (-not $ok) {
-        Write-Host "Nie pobrano vmlinuz-virt."
-        exit 2
-    }
+# Jądro i virtio_blk.ko z jednego apk: moduł ładuje się tylko na swoim vermagic.
+$kApk = Join-Path $cache "linux-virt.apk"
+if (-not (Test-Path $kApk) -or (Get-Item $kApk).Length -lt 1000000) {
+    $u = "https://dl-cdn.alpinelinux.org/alpine/latest-stable/main/x86_64/linux-virt-6.18.57-r0.apk"
+    Write-Host "GET $u"
+    & curl.exe -fL --retry 2 -o $kApk $u
+    if ($LASTEXITCODE -ne 0) { Write-Host "Nie pobrano linux-virt."; exit 2 }
 }
+$vmlinuz = Join-Path $cache "vmlinuz-virt-6.18.57"
+$mods = Join-Path $Repo "out\linux-modules"
+python (Join-Path $Repo "scripts\extract_virt_kernel.py") $kApk $vmlinuz $mods virtio_blk
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 $out = Join-Path $Repo "out"
 New-Item -ItemType Directory -Force -Path $out | Out-Null
 $initrd = Join-Path $out "initramfs.cpio"
-python (Join-Path $Repo "scripts\pack_initramfs.py") $elf $initrd --dir "lua_bin=$(Join-Path $Repo 'lua_bin')"
+python (Join-Path $Repo "scripts\pack_initramfs.py") $elf $initrd --dir "lua_bin=$(Join-Path $Repo 'lua_bin')" --dir "lib/modules=$mods"
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 $grub = $env:GRUB_DIR

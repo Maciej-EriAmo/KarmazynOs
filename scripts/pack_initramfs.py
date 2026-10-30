@@ -1,6 +1,7 @@
 """Składa initramfs newc: `init` (statyczny ELF shella) i opcjonalne katalogi.
 
 Katalog `--dir lua_bin=<ścieżka>` trafia płasko pod /lua_bin (bez podkatalogów).
+Nazwa może mieć ukośniki (`lib/modules`); katalogi nadrzędne powstają same.
 """
 import sys
 from pathlib import Path
@@ -60,12 +61,20 @@ def main() -> int:
     blob = _entry(1, "init", elf, 0o100755)
     ino = 2
     files = 0
+    made = set()
     for name, src in dirs:
         if not src.is_dir():
             print(f"brak katalogu: {src}", file=sys.stderr)
             return 1
-        blob += _entry(ino, name, b"", 0o040755)
-        ino += 1
+        # katalogi nadrzędne (lib/modules → lib, lib/modules)
+        parts = name.split("/")
+        for k in range(1, len(parts) + 1):
+            d = "/".join(parts[:k])
+            if d in made:
+                continue
+            made.add(d)
+            blob += _entry(ino, d, b"", 0o040755)
+            ino += 1
         for f in sorted(src.iterdir()):
             if not f.is_file():
                 continue

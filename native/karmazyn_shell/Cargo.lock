@@ -90,6 +90,7 @@ dependencies = [
  "karmazyn_lisp",
  "karmazyn_lua",
  "karmazyn_substrate",
+ "libc",
 ]
 
 [[package]]
