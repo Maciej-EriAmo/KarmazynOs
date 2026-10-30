@@ -18,6 +18,8 @@ karmazyn_lua = { path = "../karmazyn_lua" }
 # świat DBase (KAFD/KAFX) jako trwałość Store
 karmazyn_kafd = { path = "../karmazyn_kafd", features = ["substrate"] }
 getrandom = "0.2"
+# dedykowane połączenie z Karmin_DB (Cynober-Secure-1.2 + HSL)
+karmazyn_cynober = { path = "../karmazyn_cynober" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = "0.2"

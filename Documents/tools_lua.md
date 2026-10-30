@@ -65,6 +65,7 @@ Most Lorentza: [MAZUR_CRYSTAL.md](MAZUR_CRYSTAL.md) · `KARMAZYN_MAZUR=0` wyłą
 | `edit <katalog>/<plik>` (polecenie shella) | edytor z kursorem na płycie: strzałki, Home/End, PgUp/PgDn, ^S zapis, ^Q wyjście, ^K usuń linię, ^L odśwież; rysuje tylko zmienione wiersze; w bin/ i lib/ sprawdza składnię |
 | autosync | shell sam zapisuje Store na dysk po każdym poleceniu, które zmieniło treść (atomy S/E/token/payload, bąble, powiązania); samo grzanie odczytem nie pisze, temperaturę zapisuje `sync`; `KARMAZYN_AUTOSYNC=0` wyłącza |
 | trwałość (płyta) | Store zapisywany jako świat DBase (KAFD w kopercie KAFX) w `/data/cynober/worlds/karmazyn.kafd` na ext4 (`/dev/vda` → `/data`); pusty dysk dostaje ext2 sam, inny tylko przez `disk format`; klucz węzła `/data/cynober/master.key`; na hoście `KARMAZYN_WORLD=<plik.kafd>` |
+| `db` (polecenie shella) | połączenie z Karmin_DB: `db connect <host> [port]`, `db <zapytanie KarminQL>`, `db info`, `db close`; tunel Cynober-Secure-1.2 (ECDH albo HSS przy `KARM_HSS_PROFILE=standard\|production`, + HSL, PSK, QKD); na płycie sieć z `KARMAZYN_IP` / `KARMAZYN_GW` (grub.cfg, QEMU: host = 10.0.2.2) |
 | `cache.read/write` | mini cache w pamięci sesji |
 
 ### Proxy atomu

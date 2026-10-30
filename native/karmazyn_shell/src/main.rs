@@ -12,6 +12,7 @@ mod console;
 mod disk;
 mod editor;
 mod ext2;
+mod net;
 
 use disk::Storage;
 use std::cell::RefCell;
@@ -54,6 +55,8 @@ struct App {
     storage: RefCell<Option<Storage>>,
     /// Urządzenie, którego nie dało się podłączyć (do `disk format`).
     pending_device: RefCell<Option<String>>,
+    /// Tunel do Karmin_DB (`db connect`).
+    db: RefCell<Option<karmazyn_cynober::Client>>,
     /// Po każdym poleceniu zapis na dysk, jeśli Store się zmienił.
     autosync: bool,
     /// Skrót ostatniego snapshotu na dysku (albo wczytanego z dysku).
@@ -86,10 +89,12 @@ fn main() {
         lua,
         storage: RefCell::new(None),
         pending_device: RefCell::new(None),
+        db: RefCell::new(None),
         autosync: autosync_on,
         synced: std::cell::Cell::new(0),
     };
     let disk_line = open_disk(&mut app);
+    let net_line = if is_pid1() { open_net() } else { None };
     let args: Vec<String> = env::args().skip(1).collect();
 
     // batch: -e "cmd" ...  and/or trailing script file of commands
@@ -160,7 +165,7 @@ fn main() {
     }
 
     app.lua.enable_stdin(true);
-    print_boot(tools, &disk_line, &console_line);
+    print_boot(tools, &disk_line, &console_line, &net_line);
     println!("karmazyn_shell {VERSION} — Stage 2 (native, no Python)");
     println!("thermal={thermal}  lisp: (   lua: `lua <chunk>`   tool: `tool <name> [args]`   type `help`");
 
@@ -217,6 +222,13 @@ fn dispatch(app: &App, line: &str) -> Outcome {
     }
     if let Some(rest) = t.strip_prefix("lua ").or_else(|| t.strip_prefix("lua\t")) {
         return eval_lua(app, rest.trim());
+    }
+    // zapytanie do bazy idzie dosłownie (spacje, cudzysłowy, @ bez zmian)
+    if t == "db" {
+        return db_cmd(app, "");
+    }
+    if let Some(rest) = t.strip_prefix("db ").or_else(|| t.strip_prefix("db\t")) {
+        return db_cmd(app, rest);
     }
     if t == "tool" || t == ":tool" || t == ":tools" {
         return run_tool(app, "");
@@ -334,6 +346,7 @@ fn print_boot(
     tools: usize,
     disk: &Option<(bool, String)>,
     console: &Option<Result<Vec<String>, String>>,
+    net: &Option<Result<String, String>>,
 ) {
     let color = console::is_terminal();
     match console {
@@ -351,6 +364,132 @@ fn print_boot(
     }
     if let Some((ok, detail)) = disk {
         boot_line(color, if *ok { "ok" } else { "warn" }, "disk", detail);
+    }
+    match net {
+        Some(Ok(l)) => boot_line(color, "ok", "net", l),
+        Some(Err(e)) => boot_line(color, "warn", "net", e),
+        None => {}
+    }
+}
+
+/// PID 1: sterownik sieci (moduły) i adres z `KARMAZYN_IP`. `None` = bez sieci.
+fn open_net() -> Option<Result<String, String>> {
+    let cfg = match net::config_from_env() {
+        Ok(Some(c)) => c,
+        Ok(None) => return None,
+        Err(e) => return Some(Err(e)),
+    };
+    let _ = disk::load_modules();
+    Some(net::bring_up(&cfg))
+}
+
+/// `db connect [host[:port]] [port]` · `db info` · `db close` · `db <zapytanie>`.
+/// Zapytanie idzie tunelem Cynober-Secure-1.2 (HSS/ECDH + HSL) do Karmin_DB.
+/// Bez `db connect` pierwsze zapytanie łączy z `KARMAZYN_DB=host:port`.
+fn db_cmd(app: &App, rest: &str) -> Outcome {
+    let rest = rest.trim();
+    let (head, tail) = rest.split_once(char::is_whitespace).unwrap_or((rest, ""));
+    match head.to_ascii_lowercase().as_str() {
+        "" | "info" => {
+            match app.db.borrow().as_ref() {
+                Some(c) => {
+                    let i = &c.info;
+                    println!(
+                        "db {} {}{} hsl={} psk={} qkd={} epoch={} {} → {}",
+                        i.remote_version,
+                        i.crypto_mode,
+                        i.hss_profile.as_deref().map(|p| format!("/{p}")).unwrap_or_default(),
+                        i.hsl,
+                        i.psk,
+                        i.qkd_hybrid,
+                        i.epoch.map(|e| e.to_string()).unwrap_or_else(|| "-".into()),
+                        i.node_local,
+                        i.node_remote
+                    );
+                }
+                None => println!("db: brak połączenia (`db connect <host> [port]` albo KARMAZYN_DB)"),
+            }
+            Outcome::Ok
+        }
+        "close" => {
+            *app.db.borrow_mut() = None;
+            println!("db: zamknięto");
+            Outcome::Ok
+        }
+        "connect" => {
+            let mut it = tail.split_whitespace();
+            let target = it.next().map(str::to_string).or_else(|| env::var("KARMAZYN_DB").ok());
+            let Some(target) = target else {
+                println!("usage: db connect <host> [port]   (albo KARMAZYN_DB=host:port)");
+                return Outcome::Err;
+            };
+            db_connect(app, &target, it.next())
+        }
+        _ => {
+            if app.db.borrow().is_none() {
+                let Ok(target) = env::var("KARMAZYN_DB") else {
+                    println!("db: brak połączenia (`db connect <host> [port]` albo KARMAZYN_DB)");
+                    return Outcome::Err;
+                };
+                if db_connect(app, &target, None) == Outcome::Err {
+                    return Outcome::Err;
+                }
+            }
+            let res = app.db.borrow_mut().as_mut().expect("połączono").query(rest);
+            match res {
+                Ok(v) => {
+                    if let Some(e) = v.get("error") {
+                        println!("db error: {e}");
+                        return Outcome::Err;
+                    }
+                    let results = v.get("results").and_then(|r| r.as_array()).cloned().unwrap_or_default();
+                    for r in &results {
+                        println!("{r}");
+                    }
+                    let failed = results
+                        .iter()
+                        .any(|r| r.get("status").and_then(|s| s.as_str()) == Some("error"));
+                    if failed { Outcome::Err } else { Outcome::Ok }
+                }
+                Err(e) => {
+                    // po błędzie tunel jest niewiarygodny (jak w cynober_client)
+                    *app.db.borrow_mut() = None;
+                    println!("db: {e} — tunel zamknięty");
+                    Outcome::Err
+                }
+            }
+        }
+    }
+}
+
+fn db_connect(app: &App, target: &str, port: Option<&str>) -> Outcome {
+    let (host, port) = match (target.rsplit_once(':'), port) {
+        (_, Some(p)) => (target.to_string(), p.parse().ok()),
+        (Some((h, p)), None) if !h.contains(':') => (h.to_string(), p.parse().ok()),
+        _ => (target.to_string(), Some(karmazyn_cynober::DEFAULT_PORT)),
+    };
+    let Some(port) = port else {
+        println!("db: zły port");
+        return Outcome::Err;
+    };
+    match karmazyn_cynober::Client::connect(&host, port, Duration::from_secs(30)) {
+        Ok(c) => {
+            let i = &c.info;
+            println!(
+                "db: {host}:{port} {}{}{} hsl={} {}",
+                i.crypto_mode,
+                i.hss_profile.as_deref().map(|p| format!("/{p}")).unwrap_or_default(),
+                if i.psk { "+psk" } else { "" },
+                i.hsl,
+                i.node_remote
+            );
+            *app.db.borrow_mut() = Some(c);
+            Outcome::Ok
+        }
+        Err(e) => {
+            println!("db: {host}:{port}: {e}");
+            Outcome::Err
+        }
     }
 }
 
@@ -1264,6 +1403,8 @@ fn print_help() {
                                 (KARMAZYN_AUTOSYNC=0 wyłącza)
   edit <katalog>/<plik>         edytor z kursorem (^S zapis, ^Q wyjście, ^K linia, ^L odśwież)
   disk / disk format            stan świata / ext2 na dysku z nieznanymi danymi
+  db connect <host> [port]      tunel Cynober-Secure-1.2 (HSS/ECDH + HSL) do Karmin_DB
+  db <zapytanie>                KarminQL przez tunel (np. db ZDROWIE); db info / db close
   (define x 10) / lisp <expr>   mini-Lisp guest (atoms = vars)
   lua <chunk>                   Lua guest (mlua). return karmazyn._VERSION
                                 limit instrukcji na chunk: KARMAZYN_LUA_BUDGET (0 = brak)

@@ -83,8 +83,9 @@ if (-not (Test-Path $kApk) -or (Get-Item $kApk).Length -lt 1000000) {
 }
 $vmlinuz = Join-Path $cache "vmlinuz-virt-6.18.57"
 $mods = Join-Path $Repo "out\linux-modules"
-# virtio_blk (dysk) i ext4 z zależnościami: świat KAFD leży jako plik na ext4
-python (Join-Path $Repo "scripts\extract_virt_kernel.py") $kApk $vmlinuz $mods virtio_blk crc16 mbcache jbd2 ext4
+# virtio_blk (dysk), ext4 z zależnościami (świat KAFD jako plik) i virtio_net
+# z zależnościami (połączenie Cynober z Karmin_DB)
+python (Join-Path $Repo "scripts\extract_virt_kernel.py") $kApk $vmlinuz $mods virtio_blk crc16 mbcache jbd2 ext4 failover net_failover virtio_net
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 $out = Join-Path $Repo "out"

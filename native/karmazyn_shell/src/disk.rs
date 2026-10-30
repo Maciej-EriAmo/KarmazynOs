@@ -149,19 +149,43 @@ pub fn mount_dev() -> Option<String> {
     .clone()
 }
 
-/// PID 1 na Linuksie: `/dev` (devtmpfs) i moduły z `/lib/modules` w kolejności
-/// nazw (prefiks `NN-` ustala zależności), potem czeka chwilę na urządzenie.
-/// Zwraca opis kroków, które się nie udały.
+/// PID 1 na Linuksie: `/dev` (devtmpfs) i moduły (raz), potem czeka chwilę
+/// na urządzenie. Zwraca opis kroków, które się nie udały.
 #[cfg(target_os = "linux")]
 pub fn prepare(device: &Path) -> Vec<String> {
-    use std::ffi::CString;
     use std::time::{Duration, Instant};
 
     let mut warn = Vec::new();
     if let Some(e) = mount_dev() {
         warn.push(e);
     }
+    warn.extend(load_modules().iter().cloned());
 
+    let end = Instant::now() + Duration::from_secs(3);
+    while !device.exists() && Instant::now() < end {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    warn
+}
+
+/// Moduły z `/lib/modules` w kolejności nazw (prefiks `NN-` ustala
+/// zależności), raz na proces — dysk i sieć wołają to oba.
+#[cfg(target_os = "linux")]
+pub fn load_modules() -> &'static [String] {
+    use std::sync::OnceLock;
+    static DONE: OnceLock<Vec<String>> = OnceLock::new();
+    DONE.get_or_init(load_modules_once)
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn load_modules() -> &'static [String] {
+    &[]
+}
+
+#[cfg(target_os = "linux")]
+fn load_modules_once() -> Vec<String> {
+    use std::ffi::CString;
+    let mut warn = Vec::new();
     if let Ok(dir) = std::fs::read_dir("/lib/modules") {
         let mut mods: Vec<PathBuf> = dir
             .filter_map(|e| e.ok().map(|e| e.path()))
@@ -190,11 +214,6 @@ pub fn prepare(device: &Path) -> Vec<String> {
                 }
             }
         }
-    }
-
-    let end = Instant::now() + Duration::from_secs(3);
-    while !device.exists() && Instant::now() < end {
-        std::thread::sleep(Duration::from_millis(50));
     }
     warn
 }
