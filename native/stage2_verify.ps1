@@ -1,4 +1,6 @@
 # Stage 2 gate — native shell + KSUB_SNAP (no Python).
+# Bąble po etykiecie (@r, @root, @child): shell sam zakłada bąble sesji
+# repl i lua, więc id bąbli użytkownika nie zaczynają się od 0.
 # Usage:
 #   .\native\stage2_verify.ps1
 #   .\native\stage2_verify.ps1 -SkipBuild
@@ -19,6 +21,15 @@ Write-Host "=== KarmazynOS Stage 2 verify (shell, no Python) ===" -ForegroundCol
 Write-Host "shell: $Shell"
 
 New-Item -ItemType Directory -Force -Path $Out | Out-Null
+
+# MSVC bez link.exe w PATH (zwykły PowerShell) → toolchain GNU, jak build_linux_shell.ps1.
+if (-not $env:RUSTUP_TOOLCHAIN -and -not (Get-Command link.exe -ErrorAction SilentlyContinue)) {
+    $gnu = "stable-x86_64-pc-windows-gnu"
+    if ((rustup toolchain list) -match [regex]::Escape($gnu)) {
+        Write-Host "Brak link.exe, host = $gnu"
+        $env:RUSTUP_TOOLCHAIN = $gnu
+    }
+}
 
 Push-Location $Shell
 try {
@@ -45,8 +56,8 @@ try {
     & $exe `
         -e "atom var x 50" `
         -e "bubble r" `
-        -e "root 0" `
-        -e "bind 0 v 0" `
+        -e "root @r" `
+        -e "bind @r v 0" `
         -e "save $Snap" `
         -e quit
     if ($LASTEXITCODE -ne 0) { throw "save batch failed" }
@@ -54,7 +65,7 @@ try {
     $sz = (Get-Item $Snap).Length
     if ($sz -lt 16) { throw "snapshot too small: $sz bytes" }
 
-    & $exe -e "load $Snap" -e stats -e "lookup 0 v" -e "has 0" -e quit
+    & $exe -e "load $Snap" -e stats -e "lookup @r v" -e "has 0" -e quit
     if ($LASTEXITCODE -ne 0) { throw "load batch failed" }
 
     Write-Host "`n[4] script file smoke.ksh (cwd=repo root)"
@@ -88,15 +99,15 @@ try {
     & $exe `
         -e "atom var a 80" `
         -e "bubble r" `
-        -e "root 0" `
-        -e "bind 0 name 0" `
+        -e "root @r" `
+        -e "bind @r name 0" `
         -e "assert has 0" `
-        -e "assert lookup 0 name 0" `
+        -e "assert lookup @r name 0" `
         -e "assert t 0 ge 70" `
         -e "list" `
         -e "set_t 0 40" `
         -e "assert t 0 lt 50" `
-        -e "unbind 0 name" `
+        -e "unbind @r name" `
         -e "assert nohas 99" `
         -e quit
     if ($LASTEXITCODE -ne 0) { throw "assert/list batch failed" }
@@ -108,17 +119,17 @@ try {
     }
     Write-Host "  ok (exit $LASTEXITCODE)"
 
-    Write-Host "`n[9] bubbles/binds/info/upsert/assert stats (shell 0.3.2)"
+    Write-Host "`n[9] bubbles/binds/info/upsert/assert stats (bubbles = repl + lua + root + child)"
     & $exe `
         -e "atom var p 50" `
         -e "bubble root" `
-        -e "root 0" `
-        -e "bubble child 0" `
-        -e "bind 1 x 0" `
-        -e "assert root 0" `
-        -e "assert noroot 1" `
-        -e "assert lookup 1 x 0" `
-        -e "binds 1" `
+        -e "root @root" `
+        -e "bubble child @root" `
+        -e "bind @child x 0" `
+        -e "assert root @root" `
+        -e "assert noroot @child" `
+        -e "assert lookup @child x 0" `
+        -e "binds @child" `
         -e "bubbles" `
         -e "roots" `
         -e "info 0" `
@@ -126,7 +137,7 @@ try {
         -e "assert has 7" `
         -e "assert val 7 5" `
         -e "assert stats total ge 2" `
-        -e "assert stats bubbles eq 2" `
+        -e "assert stats bubbles eq 4" `
         -e quit
     if ($LASTEXITCODE -ne 0) { throw "bubbles/info batch failed" }
 

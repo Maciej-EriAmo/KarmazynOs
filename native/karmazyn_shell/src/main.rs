@@ -213,6 +213,14 @@ fn dispatch(app: &App, line: &str) -> Outcome {
     {
         return run_tool(app, rest.trim());
     }
+    let resolved = match resolve_labels(&app.store, t) {
+        Ok(r) => r,
+        Err(e) => {
+            println!("{e}");
+            return Outcome::Err;
+        }
+    };
+    let t = resolved.as_str();
     let parts: Vec<&str> = t.split_whitespace().collect();
     let head = parts.first().copied().unwrap_or("");
     if head.eq_ignore_ascii_case("load") {
@@ -247,7 +255,7 @@ fn dispatch(app: &App, line: &str) -> Outcome {
     } else if head.eq_ignore_ascii_case("settle") {
         shell_settle(app, &parts)
     } else {
-        dispatch_cmd(&app.store, line)
+        dispatch_cmd(&app.store, t)
     }
 }
 
@@ -569,6 +577,30 @@ fn eval_lua(app: &App, src: &str) -> Outcome {
         println!("{s}");
     }
     Outcome::Ok
+}
+
+/// `@etykieta` w poleceniu powłoki → id najnowszego bąbla z tą etykietą.
+/// Skrypty nie zależą od tego, ile bąbli założyły sesje (repl, lua, fs).
+fn resolve_labels(s: &Store, line: &str) -> Result<String, String> {
+    if !line.contains('@') {
+        return Ok(line.to_string());
+    }
+    let mut out = Vec::new();
+    for word in line.split_whitespace() {
+        match word.strip_prefix('@').filter(|l| !l.is_empty()) {
+            Some(label) => {
+                let bid = s
+                    .bubble_ids()
+                    .into_iter()
+                    .filter(|b| s.bubble_label(*b).as_deref() == Some(label))
+                    .max()
+                    .ok_or_else(|| format!("brak bąbla @{label}"))?;
+                out.push(bid.to_string());
+            }
+            None => out.push(word.to_string()),
+        }
+    }
+    Ok(out.join(" "))
 }
 
 fn dispatch_cmd(s: &Store, line: &str) -> Outcome {
@@ -1154,6 +1186,7 @@ fn print_help() {
   tick [n]                      n store ticks and the same lua epoch
   settle <n>                    n ticks and the same lua epoch
   bubble [label] [parent]       new bubble (optional parent)
+  @label                        w każdym poleceniu: id najnowszego bąbla z etykietą
   root <bid> / unroot <bid>     root set
   bind <bid> <name> <aid>       bind name → atom
   unbind <bid> <name>           remove binding
@@ -1183,6 +1216,21 @@ batch: non-zero exit if a command fails (assert/save/bind/…)"
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn label_refs_resolve_to_newest_bubble() {
+        let s = Store::new(true);
+        let first = s.bubble_new("r", None);
+        let other = s.bubble_new("x", None);
+        assert_eq!(resolve_labels(&s, "bind @r v 0").unwrap(), format!("bind {first} v 0"));
+        let newer = s.bubble_new("r", Some(other));
+        assert_eq!(
+            resolve_labels(&s, "bubble c @x  @r").unwrap(),
+            format!("bubble c {other} {newer}")
+        );
+        assert_eq!(resolve_labels(&s, "echo a@b @").unwrap(), "echo a@b @");
+        assert!(resolve_labels(&s, "root @brak").unwrap_err().contains("@brak"));
+    }
 
     #[test]
     fn content_hash_ignores_heat_not_content() {

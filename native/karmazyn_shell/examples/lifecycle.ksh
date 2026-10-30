@@ -14,17 +14,17 @@ assert stats reaped ge 1
 echo === root retains TOMB ===
 atom var keep 50
 bubble r
-root 0
-bind 0 k 1
-assert lookup 0 k 1
+root @r
+bind @r k 1
+assert lookup @r k 1
 settle 80
 assert has 1
 assert dead 1
 assert stats retained ge 1
 
 echo === unroot then reap ===
-unroot 0
-assert noroot 0
+unroot @r
+assert noroot @r
 settle 4
 assert nohas 1
 
