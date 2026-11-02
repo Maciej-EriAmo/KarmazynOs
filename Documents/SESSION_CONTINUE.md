@@ -1,9 +1,13 @@
 # SESSION_CONTINUE — KarmazynOs (kontynuacja)
 
-**Data:** 2026-10-30  
-**Repo Os:** `main`, kontynuacja od `4b0f9ec` (opis jedzie w commicie tej sesji)  
-**DBase:** `master` @ **`39f696e`** (2 commity przed originem: `4eca597`, `39f696e`; push DBase czeka na prośbę)  
+**Data:** 2026-11-02  
+**Repo Os:** `main` @ **`4b62776`** (+ commit z tym plikiem), bez push  
+**DBase:** `master` @ **`39f696e`**, zsynchronizowany z originem  
 **Kanon:** [`KANON.md`](KANON.md) — jądro Linuksa jest nośnikiem (proces, sterowniki). System plików to bąble i atomy w KAFD. Sieć to Cynober-Secure/HSL do Karmin_DB.
+
+**Zasada konstrukcji (2026-11-02):** tylko jądro jest z Linuksa. Element systemu jest bąblem i atomami w Store, a jego życiem rządzi T×reach. Plik, katalog, proces potomny, sygnał, kod wyjścia, ścieżka XDG to szczegóły nośnika — nie model i nie to, co widać w UI. Budowa zgodna z Linuksem jest błędem konstrukcyjnym. Przemianowanie nie jest naprawą.
+
+**Słownik:** to, co w Linuksie byłoby demonem albo usługą, to **servitor** (polecenie `servitor`, korzeń `servitory`).
 
 ---
 
@@ -12,11 +16,15 @@
 | Obszar | Stan |
 |--------|------|
 | Konsola | ekran VGA (tty1) + serial (ttyS0) naraz, `KARMAZYN_CONSOLE=auto\|vga\|serial\|none` |
-| Trwałość | Store = świat DBase `karmazyn_store_v1.4_kafx`: KAFD w kopercie KAFX w `/data/cynober/worlds/karmazyn.kafd` na ext4 (`/dev/vda` → `/data`); pusty dysk dostaje ext2 sam, inny tylko `disk format`; świat nieczytelny = zapis wstrzymany; autosync po zmianie treści |
+| Trwałość | Store = świat DBase `karmazyn_store_v1.4_kafx`: KAFD w kopercie KAFX w `/data/cynober/worlds/karmazyn.kafd` na ext4 (`/dev/vda` → `/data`); pusty dysk dostaje ext2 sam, inny tylko `disk format`; świat nieczytelny = zapis wstrzymany; autosync po zmianie treści; po zapisie `syncfs` (bitmapy ext2 bez dziennika przeżywają twarde wyłączenie) |
 | KAFD natywnie | `native/karmazyn_kafd`: v2.0/v2.1/KTIX/v1-odczyt, KAFS, dziennik, compact, KAFX/KX1, świat DBase (`world`, cecha `substrate`) — bajt w bajt z Pythonem |
 | Sieć | `KARMAZYN_IP` / `KARMAZYN_GW` (grub.cfg: QEMU, host = 10.0.2.2), virtio_net; `KARM_PSK` i `KARM_HSS_PROFILE` z aktywnego profilu w `/data/cynober/client.json` (obok `master.key`); brak pliku = ECDH |
 | Karmin_DB | `native/karmazyn_cynober` (ECDH, HSS standard/production, HSL-1.1, PSK, QKD); w shellu `db connect / db <KarminQL> / db info / db close` |
-| Narzędzia | bąbel kodu: etykieta = nazwa, źródło w atomie `src` (E=`lua`, payload = bajty), bąbel jest korzeniem. `tool <etykieta>` woła najnowszy taki bąbel. `require` widzi bibliotekę z wołającego: powiązanie `code.link` albo etykieta na drodze rodzica. `nano <etykieta>` i `edit <etykieta>` edytują to źródło. `lua_bin/` jest ziarnem: PID 1 wchłania brakujące etykiety po wczytaniu świata (`narzędzia — N bąbli`). Skórka `karmazyn>` nadal odpala pliki z `lua_bin/`. `karmazyn.fs` zostaje na dokumenty |
+| Narzędzia | bąbel kodu: etykieta = nazwa, źródło w atomie `src` (E=`lua`), bąbel jest korzeniem. `tool <etykieta>`, `require` po `code.link` albo w górę rodziców, `nano`/`edit` na źródle. `lua_bin/` jest ziarnem wchłanianym przez PID 1 |
+| Epoki | PID 1 ma zegar epok: `KARMAZYN_TICK_MS=2000` w `grub.cfg` (0 = tylko `tick`/`settle`; na hoście domyślnie wyłączony). Epoka = tick Store + epoka sesji Lua + krok servitorów. Wejście czyta wątek, jedna linia na żądanie (`edit`, `nano` mają klawiaturę dla siebie). Linia startowa `epoki — co 2000 ms` |
+| Servitory | bąbel kodu w gościu Lua, nie proces. `servitor up <etykieta>` wiąże `src` z korzeniem `servitory` (reach = czy) i daje T_INIT; `servitor down` odpina. Krok w epoce, gdy `src` HOT/WARM (T = kiedy). Chunk zwraca `true` = pracował (grzeje), nic = bezczynny (stygnie, zasypia), `false` = skończył (poza zasięgiem); błąd nie grzeje. `karmazyn.code.wake(etykieta)` budzi przez T. Krok nie czyta klawiatury |
+| Dziennik | `dziennik [n]`: wpisy startu, poleceń i servitorów to atomy (E=`dziennik`) w korzeniu `dziennik`; ponad 200 odpięte i zbierane przez vacuum; nie budzą autosync, na dysk idą z najbliższym zapisem świata. Tylko PID 1 i tryb interaktywny (batch na hoście liczy id od zera) |
+| Czas | `czas`: stempel jako atom `stempel` w korzeniu `czas`, w świecie KAFD; cofnięty zegar = ostrzeżenie; opcjonalne SNTP przez `KARMAZYN_NTP=host[:port]` (odrzuca kiss-o'-death). Drugi rozruch zapisuje dysk raz: nowy stempel |
 
 ## Bramki / testy
 
@@ -24,7 +32,7 @@
 cd C:\Users\drwis\KarmazynOs
 .\scripts\build_linux_shell.ps1          # płyta (toolchain GNU wybiera sam)
 .\boot\linux\qemu_serial.ps1             # shell, Lisp, Lua, limit instrukcji
-.\boot\linux\qemu_disk.ps1               # ext4 + świat KAFX przez restart (14+ punktów)
+.\boot\linux\qemu_disk.ps1               # ext4 + świat KAFX przez restart; servitor, dziennik, stempel, zegar epok
 .\boot\linux\qemu_vga.ps1                # ekran + serial, zrzut out\karmazyn-vga.png
 .\boot\linux\qemu_net.ps1                # sieć + db do żywego cynober_server.py
 .\native\stage2_verify.ps1               # bramka shella (bąble po @etykiecie)
@@ -32,34 +40,53 @@ python native\karmazyn_kafd\cross\cross_check.py      # KAFD/KAFX/świat vs DBas
 python native\karmazyn_cynober\cross\live_check.py    # klient vs żywy serwer DBase
 ```
 
+Skrypty `.ps1` uruchamiać z PowerShella, nie przez `pwsh` z Git Basha (tam `link` z coreutils psuje wybór toolchainu). Ostatni przebieg 2026-11-02: `qemu_serial`, `qemu_disk`, `stage2_verify` zielone; `qemu_vga` i `qemu_net` w tej sesji nie były puszczane.
+
 ---
 
-## Domknięte w tej sesji
+## Domknięte w tej sesji (2026-11-02)
 
-1. **Narzędzia są bąblami substratu.** Kod = bąbel-korzeń o etykiecie plus atom `src`. `tool` woła bąbel, `require` idzie po powiązaniu albo w górę rodziców. Ziarno `lua_bin` wchodzi do świata tylko jako PID 1, po wczytaniu świata, i tylko dla etykiet bez `src`. Stare pliki `bin/` i `lib/` w `karmazyn.fs` zostają dokumentami. Bramki: `stage2_verify.ps1`, `qemu_serial.ps1`, `qemu_disk.ps1`.
-2. **Sekrety sieci są w pliku.** `KARM_PSK` i `KARM_HSS_PROFILE` z aktywnego profilu w `/data/cynober/client.json` (obok `master.key`). Brak pliku zostawia ECDH. Profil `proto` i pusty profil też zostawiają ECDH; `standard` przy serwerze na `proto` zrywa tunel. Środowisko ma pierwszeństwo przed plikiem. `KARMAZYN_IP` / `KARMAZYN_GW` zostają w `grub.cfg`. Bramki: `qemu_net.ps1` (ECDH, linii jądra bez tych sekretów) i `live_check.py`.
+1. **Servitory, dziennik i stempel czasu z prawa substratu.** Pierwsza wersja (katalogi usług à la runit/s6 z plikami `run`/`down`/`needs`, procesy potomne i sygnały, plik dziennika z rotacją, `clock.stamp` w `$HOME/.local/share`) była konstrukcją Linuksa — cofnięta trzema revertami (`a84e3a0`, `3b55d54`, `449d9f8`) i zbudowana od nowa (`841c913`, nazwa `f814194`). Bramki: `qemu_disk.ps1` (przetrwanie restartu), `stage2_verify.ps1`.
+2. **Zegar epok PID 1 i grzanie tylko pracą** (`4b62776`). Krok na każde zdarzenie odrzucony: omijałby T = kiedy. Zdarzenie działa przez T (`code.wake`).
+3. **Dysk: `syncfs` po zapisie świata** (`3e2b8af`). Po twardym wyłączeniu następny zapis trafiał na i-węzeł zajęty („doubly allocated”, potem I/O error i ENOSPC). Ujawniło się, gdy drugi rozruch zaczął pisać stempel.
+4. **Jednorodne nazewnictwo.** `servitor` w shellu, `tools_lua.md` i `grub_loader_plan.md` (`cf50ddf`). HSS w mapie, `ARCHITECTURE*`, `README` to servitor w gościu, nie demon (`6005371`).
 
-Szczegół narzędzi: [tools_lua.md](tools_lua.md).
+Szczegół poleceń: [tools_lua.md](tools_lua.md). HSS: [linux_hss_roadmap.md](linux_hss_roadmap.md), faza 3.
 
 ## Do zrobienia w następnej sesji
 
-1. **Dziennik na dysku.** Formater w `native/karmazyn_shell/src/ext2.rs` robi ext2 rev 1. Jądro montuje to jako ext4 i po twardym wyłączeniu pisze `mounting unchecked fs`. Dodać mały journal ext4 w tym samym formaterze (`disk format` i pierwszy pusty dysk). Istniejący świat ext2 zostaje czytelny. Bramka: `qemu_disk.ps1` plus twardy reset bez ostrzeżenia o niesprawdzonym systemie plików.
-2. **Przyrostowy zapis KAFS.** `append_atom` i `compact_journal` już są w `native/karmazyn_kafd`. Autosync płyty nadal podmienia cały świat. Dopisywać zmiany do dziennika `.kafs` i robić compact po progu. Po compact treść świata ma być bajt w bajt z Pythonem. Bramka: `cross_check.py`, `qemu_disk.ps1`, test że zmiana jednego atomu nie przepisuje całej koperty.
+1. **Dziennik ext4 na dysku.** Formater w `native/karmazyn_shell/src/ext2.rs` robi ext2 rev 1; jądro montuje to jako ext4 i po twardym wyłączeniu pisze `mounting unchecked fs`. `syncfs` usunął uszkodzenie bitmap, ostrzeżenie zostało. Dodać mały journal ext4 w tym samym formaterze (`disk format` i pierwszy pusty dysk). Istniejący świat ext2 zostaje czytelny. Bramka: `qemu_disk.ps1` bez ostrzeżenia o niesprawdzonym systemie plików.
+2. **Przyrostowy zapis KAFS.** `append_atom` i `compact_journal` już są w `native/karmazyn_kafd`. Autosync płyty nadal podmienia cały świat — teraz także po epoce zegara, gdy zmieniła się treść (vacuum, servitor zapisujący do Store). Dopisywać zmiany do dziennika `.kafs` i robić compact po progu. Po compact treść świata ma być bajt w bajt z Pythonem. Bramka: `cross_check.py`, `qemu_disk.ps1`, test że zmiana jednego atomu nie przepisuje całej koperty.
 3. **Polskie znaki na VGA.** Czcionka konsoli nie ma ąęćłńóśźż. Wczytać font Lat2 do VGA przy starcie. Serial zostaje. Bramka: `qemu_vga.ps1` i odczyt `out/karmazyn-vga.png`.
-4. **Dwa braki klienta Cynober** (po dysku, bo zmieniają kontrakt na drucie). W `native/karmazyn_cynober`: profil HSS `proto` (macierz z PCG64, jak NumPy w DBase) i ramki KAFS (media put/get). Dziś `proto` spada do ECDH, a ramka KAFS jest odrzucana. Bramka: `python native/karmazyn_cynober/cross/live_check.py` przeciw żywemu `cynober_server.py`, w tym `proto` i jeden media put/get.
+4. **Dwa braki klienta Cynober** (po dysku, bo zmieniają kontrakt na drucie). W `native/karmazyn_cynober`: profil HSS `proto` (macierz z PCG64, jak NumPy w DBase) i ramki KAFS (media put/get). Dziś `proto` spada do ECDH, a ramka KAFS jest odrzucana. Bramka: `live_check.py` przeciw żywemu `cynober_server.py`, w tym `proto` i jeden media put/get.
+
+## Do decyzji (przed fazą 3 HSS)
+
+- **Długość epoki płyty.** Decyzja HSS przychodzi najpóźniej po jednej epoce; 2000 ms to za wolno dla dostępu do pliku. Krótsza epoka przyspiesza też stygnięcie całego świata (przy 200 ms osierocony atom znika po kilku sekundach zamiast ~80 s). Alternatywa: dłuższy limit czasu w module HSL.
+- **API hosta dla servitora HSS:** HMAC na kluczu z keyringu PID (bez bajtów klucza w gościu), odczyt pytania, zapis odpowiedzi. Kanał `/dev/hss` → PID 1 → atom pytania w bąblu `hss` → `code.wake('hss')`.
 
 ## Na prośbę, poza tą kolejką
 
-- DBase: czerwony test `tests.test_kernel TestStore.test_nested_tick_is_noop` (był wcześniej). Wzmianka o natywnym KAFD w `DBase/docs/KAFD.md`. Dwa lokalne commity czekają. Push DBase osobno.
+- Servitor HSS (upcall HSL), faza 3 `linux_hss_roadmap.md` — bąbel kodu w gościu, nie demon; zegar epok już jest, reszta w „Do decyzji”.
+- DBase: czerwony test `tests.test_kernel TestStore.test_nested_tick_is_noop` (był wcześniej). Wzmianka o natywnym KAFD w `DBase/docs/KAFD.md`.
 - DHCP i klawiatura USB na prawdziwym sprzęcie. Moduły `virt` pod to nie były sprawdzane.
 - `rustc` na płycie, samobudowa ISO, własne jądro, faza G Store bez nośnika.
-- Servitor HSS (upcall HSL) z mapy 19 października — od 2026-11-02 bąbel kodu w gościu, nie demon; otwarte punkty w `linux_hss_roadmap.md`, faza 3.
 - Dopieszczanie gościa Lua 1.1.3 (`puc_subset`) — to host, nie ta płyta.
 - `generate_from_idea` zostaje `nil`. `ThermalSurface.write(..., visible=True)` nie grzeje macierzy.
+- `Documents/grub_loader_plan.md` ma domyślne `tick_ms=2000` — zgodne z płytą; przy zmianie długości epoki poprawić oba miejsca.
 
 ---
 
-# Poprzednia sesja (2026-08-07) — archiwum
+# Sesja 2026-10-30 — archiwum
+
+**Repo Os:** `main` @ `546cf72`. **DBase:** `39f696e` (potem wypchnięty).
+
+1. **Narzędzia są bąblami substratu.** Kod = bąbel-korzeń o etykiecie plus atom `src`. `tool` woła bąbel, `require` idzie po powiązaniu albo w górę rodziców. Ziarno `lua_bin` wchodzi do świata tylko jako PID 1, po wczytaniu świata, i tylko dla etykiet bez `src`. Stare pliki `bin/` i `lib/` w `karmazyn.fs` zostają dokumentami.
+2. **Sekrety sieci są w pliku.** `KARM_PSK` i `KARM_HSS_PROFILE` z aktywnego profilu w `/data/cynober/client.json` (obok `master.key`). Brak pliku zostawia ECDH. Środowisko ma pierwszeństwo przed plikiem.
+
+---
+
+# Sesja 2026-08-07 — archiwum
 
 ## SESSION_CONTINUE z 2026-08-07
 
