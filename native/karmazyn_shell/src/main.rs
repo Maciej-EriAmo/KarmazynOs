@@ -5,14 +5,17 @@
 //!   cargo run --release -- -e "atom var x 50" -e stats -e quit
 //!   cargo run --release -- examples/smoke.ksh
 //!
-//! Commands: help | version | stats | atom | … | save | load | quit
+//! Commands: help | version | stats | atom | … | save | load | dziennik | czas | usluga | quit
 //! Lisp guest: line starting with `(` → karmazyn_lisp::Evaluator::eval_line.
 
 mod console;
+mod czas;
 mod disk;
+mod dziennik;
 mod editor;
 mod ext2;
 mod net;
+mod uslugi;
 
 use disk::Storage;
 use std::cell::RefCell;
@@ -61,6 +64,9 @@ struct App {
     autosync: bool,
     /// Skrót ostatniego snapshotu na dysku (albo wczytanego z dysku).
     synced: std::cell::Cell<u64>,
+    /// Dziennik pisze do świata. Wyłączony w batchu na hoście: bramka
+    /// stage2 liczy bąble i id atomów od zera.
+    journal: std::cell::Cell<bool>,
 }
 
 fn main() {
@@ -91,6 +97,7 @@ fn main() {
         db: RefCell::new(None),
         autosync: autosync_on,
         synced: std::cell::Cell::new(0),
+        journal: std::cell::Cell::new(false),
     };
     let disk_line = open_disk(&mut app);
     // Ziarno wchodzi do świata tylko na płycie (PID 1). Na hoście shell
@@ -167,7 +174,11 @@ fn main() {
     }
 
     app.lua.enable_stdin(true);
-    print_boot(tools, &disk_line, &console_line, &net_line);
+    app.journal.set(true);
+    let czas_report = czas::check(&app.store);
+    print_boot(&app, tools, &disk_line, &console_line, &net_line, &czas_report);
+    // stempel czasu jest treścią świata: zapis od razu, nie po pierwszym poleceniu
+    autosync(&app);
     println!("karmazyn_shell {VERSION} — Stage 2 (native, no Python)");
     println!("thermal={thermal}  lisp: (   lua: `lua <chunk>`   tool: `tool <etykieta> [args]`   type `help`");
 
@@ -212,6 +223,9 @@ fn main() {
 
 fn dispatch(app: &App, line: &str) -> Outcome {
     let t = line.trim();
+    if app.journal.get() {
+        dziennik::record(&app.store, app.lua.epoch(), "shell", &clip(t, 200));
+    }
     if t.starts_with('(') {
         return eval_lisp(app, t);
     }
@@ -280,6 +294,12 @@ fn dispatch(app: &App, line: &str) -> Outcome {
         disk_sync(app)
     } else if head.eq_ignore_ascii_case("disk") {
         disk_status(app, &parts)
+    } else if head.eq_ignore_ascii_case("dziennik") {
+        dziennik_cmd(app, &parts)
+    } else if head.eq_ignore_ascii_case("czas") {
+        czas_cmd(app)
+    } else if head.eq_ignore_ascii_case("usluga") {
+        usluga_cmd(app, &parts)
     } else if head.eq_ignore_ascii_case("tick") {
         shell_tick(app, &parts)
     } else if head.eq_ignore_ascii_case("settle") {
@@ -293,12 +313,7 @@ fn dispatch(app: &App, line: &str) -> Outcome {
 fn shell_tick(app: &App, parts: &[&str]) -> Outcome {
     let n = parts.get(1).and_then(|x| x.parse::<u32>().ok()).unwrap_or(1);
     let steps = if n <= 1 { 1 } else { n };
-    if steps == 1 {
-        app.store.tick();
-    } else {
-        app.store.settle(steps);
-    }
-    app.lua.add_epoch(u64::from(steps));
+    run_epochs(app, steps);
     println!("tick x{n}");
     Outcome::Ok
 }
@@ -308,10 +323,92 @@ fn shell_settle(app: &App, parts: &[&str]) -> Outcome {
         println!("usage: settle <n>");
         return Outcome::Err;
     };
-    app.store.settle(n);
-    app.lua.add_epoch(u64::from(n));
+    run_epochs(app, n);
     println!("settle {n}");
     Outcome::Ok
+}
+
+/// Epoka po epoce: tick Store (chłodzenie, vacuum), epoka sesji Lua i krok
+/// usług. Usługa ma swoją epokę dopiero po ticku, więc T z tej epoki
+/// decyduje, czy wstaje.
+fn run_epochs(app: &App, n: u32) {
+    for _ in 0..n {
+        app.store.tick();
+        app.lua.add_epoch(1);
+        for (name, note) in uslugi::step(&app.store, &app.lua) {
+            println!("usługa {name}: {note}");
+            if app.journal.get() {
+                dziennik::record(&app.store, app.lua.epoch(), &format!("usluga:{name}"), &note);
+            }
+        }
+    }
+}
+
+fn clip(s: &str, n: usize) -> String {
+    if s.chars().count() <= n {
+        return s.to_string();
+    }
+    let head: String = s.chars().take(n).collect();
+    format!("{head}…")
+}
+
+fn dziennik_cmd(app: &App, parts: &[&str]) -> Outcome {
+    let n = match parts.get(1).map(|p| p.parse::<usize>()) {
+        None => 30,
+        Some(Ok(n)) if n > 0 => n,
+        _ => {
+            println!("usage: dziennik [n]");
+            return Outcome::Err;
+        }
+    };
+    let lines = dziennik::tail(&app.store, n);
+    if lines.is_empty() {
+        println!("dziennik: pusto");
+    }
+    for line in lines {
+        println!("{line}");
+    }
+    Outcome::Ok
+}
+
+fn czas_cmd(app: &App) -> Outcome {
+    let r = czas::check(&app.store);
+    println!("czas: {}", r.detail);
+    if r.ok {
+        Outcome::Ok
+    } else {
+        Outcome::Err
+    }
+}
+
+fn usluga_cmd(app: &App, parts: &[&str]) -> Outcome {
+    let verb = parts.get(1).copied().unwrap_or("");
+    let label = parts.get(2).copied().unwrap_or("");
+    let result = match (verb, label) {
+        ("", _) => {
+            let lines = uslugi::list(&app.store);
+            if lines.is_empty() {
+                println!("usługi: żadna nie jest w zasięgu");
+            }
+            for line in lines {
+                println!("{line}");
+            }
+            return Outcome::Ok;
+        }
+        ("up", l) if !l.is_empty() => uslugi::up(&app.store, &app.lua, l),
+        ("down", l) if !l.is_empty() => uslugi::down(&app.store, l),
+        _ => Err("usage: usluga | usluga up <etykieta> | usluga down <etykieta>".into()),
+    };
+    match result {
+        Ok(msg) => {
+            println!("{msg}");
+            Outcome::Ok
+        }
+        Err(e) => {
+            println!("{e}");
+            Outcome::Err
+        }
+    }
 }
 
 fn eval_lisp(app: &App, src: &str) -> Outcome {
@@ -356,34 +453,51 @@ fn absorb_seeds(app: &App) -> Option<usize> {
     Some(app.lua.all_tool_names(&app.store).len())
 }
 
+/// Linie startowe na ekran i do dziennika.
 fn print_boot(
+    app: &App,
     tools: Option<usize>,
     disk: &Option<(bool, String)>,
     console: &Option<Result<Vec<String>, String>>,
     net: &Option<Result<String, String>>,
+    czas: &czas::Report,
 ) {
     let color = console::is_terminal();
+    let earlier = dziennik::count(&app.store);
+    let line = |ok: bool, name: &str, detail: &str| {
+        let code = if ok { "ok" } else { "warn" };
+        boot_line(color, code, name, detail);
+        let text = if detail.is_empty() {
+            format!("{code} {name}")
+        } else {
+            format!("{code} {name} — {detail}")
+        };
+        dziennik::record(&app.store, app.lua.epoch(), "start", &text);
+    };
     match console {
-        Some(Ok(names)) => boot_line(color, "ok", "console", &names.join(" + ")),
-        Some(Err(e)) => boot_line(color, "warn", "console", &format!("/dev/console ({e})")),
+        Some(Ok(names)) => line(true, "console", &names.join(" + ")),
+        Some(Err(e)) => line(false, "console", &format!("/dev/console ({e})")),
         None => {}
     }
-    boot_line(color, "ok", "store", "");
-    boot_line(color, "ok", "lisp", "");
-    boot_line(color, "ok", "lua", "");
+    line(true, "store", "");
+    line(true, "lisp", "");
+    line(true, "lua", "");
     match tools {
-        Some(n) if n > 0 => boot_line(color, "ok", "narzędzia", &format!("{n} bąbli")),
-        Some(_) => boot_line(color, "warn", "narzędzia", "brak bąbli kodu"),
+        Some(n) if n > 0 => line(true, "narzędzia", &format!("{n} bąbli")),
+        Some(_) => line(false, "narzędzia", "brak bąbli kodu"),
         None => {}
     }
     if let Some((ok, detail)) = disk {
-        boot_line(color, if *ok { "ok" } else { "warn" }, "disk", detail);
+        line(*ok, "disk", detail);
     }
     match net {
-        Some(Ok(l)) => boot_line(color, "ok", "net", l),
-        Some(Err(e)) => boot_line(color, "warn", "net", e),
+        Some(Ok(l)) => line(true, "net", l),
+        Some(Err(e)) => line(false, "net", e),
         None => {}
     }
+    line(czas.ok, "czas", &czas.detail);
+    line(true, "dziennik", &format!("{earlier} wpisów z poprzednich sesji"));
+    line(true, "usługi", &format!("{} w zasięgu", uslugi::count(&app.store)));
 }
 
 /// PID 1: sterownik sieci (moduły) i adres z `KARMAZYN_IP`. `None` = bez sieci.
@@ -574,16 +688,29 @@ fn attach_world(app: &App, st: Storage, detail: &mut String) -> bool {
 /// powiązania, korzenie. Bez T i liczników META, więc odczyt, który tylko
 /// grzeje atom, nie pisze na dysk. Temperaturę zapisuje `sync` albo
 /// następna zmiana treści.
+/// Wpisy dziennika (atomy `E = dziennik` i ich powiązania) nie liczą się:
+/// jadą na dysk z najbliższą prawdziwą zmianą albo `sync`.
 fn content_hash(snap: &StoreSnapshot) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
-    for a in &snap.atoms {
+    for a in snap.atoms.iter().filter(|a| a.e != dziennik::E) {
         (a.id, &a.s, &a.e, a.value_token, &a.payload).hash(&mut h);
     }
     for b in &snap.bubbles {
         (b.id, &b.label, b.parent).hash(&mut h);
     }
-    let mut binds: Vec<_> = snap.binds.iter().map(|b| (b.bid, &b.name, b.aid)).collect();
+    let journal: std::collections::HashSet<_> = snap
+        .bubbles
+        .iter()
+        .filter(|b| b.label == dziennik::LABEL)
+        .map(|b| b.id)
+        .collect();
+    let mut binds: Vec<_> = snap
+        .binds
+        .iter()
+        .filter(|b| !journal.contains(&b.bid))
+        .map(|b| (b.bid, &b.name, b.aid))
+        .collect();
     binds.sort();
     binds.hash(&mut h);
     let mut roots = snap.roots.clone();
@@ -1418,6 +1545,12 @@ fn print_help() {
   lua <chunk>                   Lua guest (mlua). return karmazyn._VERSION
                                 limit instrukcji na chunk: KARMAZYN_LUA_BUDGET (0 = brak)
   tool <etykieta> [args] | :tool  bąbel kodu po etykiecie. samo tool wypisuje etykiety
+  usluga                        usługi w zasięgu: stan i T atomu src ich bąbla kodu
+  usluga up|down <etykieta>     wiąże / odpina bąbel kodu z bąblem uslugi; krok w każdej
+                                epoce (tick), gdy src jest HOT/WARM; błąd nie grzeje, więc
+                                usługa, która pada, stygnie; chunk zwraca false = koniec
+  dziennik [n]                  wpisy startu, poleceń i usług (atomy w bąblu dziennik)
+  czas                          stempel w świecie (bąbel czas) + SNTP z KARMAZYN_NTP
   help | quit
 
 batch: non-zero exit if a command fails (assert/save/bind/…)"

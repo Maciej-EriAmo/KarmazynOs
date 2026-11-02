@@ -44,6 +44,11 @@ pub fn find(store: &Store, label: &str) -> Option<BubbleId> {
         .max()
 }
 
+/// Atom `src` najnowszego bąbla kodu z etykietą.
+pub fn src_of(store: &Store, label: &str) -> Option<AtomId> {
+    src_aid(store, find(store, label)?)
+}
+
 pub fn read(store: &Store, label: &str) -> Option<Vec<u8>> {
     let bid = find(store, label)?;
     store.atom_payload(src_aid(store, bid)?)

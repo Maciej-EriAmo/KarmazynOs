@@ -234,6 +234,11 @@ impl Evaluator {
             .set(self.guest.epoch.get().saturating_add(n));
     }
 
+    /// Epoka sesji (ta sama, którą widzi `karmazyn.get_epoch()`).
+    pub fn epoch(&self) -> u64 {
+        self.guest.epoch.get()
+    }
+
     /// Wchłania `katalog/*.lua` do bąbli kodu. Etykieta, która już ma źródło,
     /// zostaje (świat wygrywa z ziarnem). Zwraca liczbę nowo założonych bąbli.
     /// Katalog nie wchodzi do `package.preload`.
@@ -300,6 +305,26 @@ impl Evaluator {
         })
     }
 
+    /// Jeden krok usługi: bąbel kodu wołany bez argumentów, z limitem
+    /// instrukcji. `Ok((dalej, wypisane))`: `dalej == false`, gdy chunk zwrócił
+    /// `false` (usługa skończyła). Błąd Lua to `Err` z jego treścią.
+    pub fn run_service(&self, store: &Store, label: &str) -> Result<(bool, String), String> {
+        let bid = code::find(store, label).ok_or_else(|| format!("brak bąbla kodu {label}"))?;
+        let src = code::read(store, label).ok_or_else(|| format!("brak źródła {label}"))?;
+        let func = self
+            .lua
+            .load(src)
+            .set_name(label)
+            .into_function()
+            .map_err(|e| e.to_string())?;
+        self.prints.borrow_mut().clear();
+        self.arm_budget.call::<()>(()).map_err(|e| e.to_string())?;
+        let _caller = CallerPush::new(&self.caller, Some(bid));
+        let values = func.call::<MultiValue>(()).map_err(|e| e.to_string())?;
+        let done = matches!(values.iter().next(), Some(Value::Boolean(false)));
+        Ok((!done, self.prints.borrow().clone()))
+    }
+
     /// Etykiety bąbli kodu, posortowane, bez powtórzeń.
     pub fn all_tool_names(&self, store: &Store) -> Vec<String> {
         code::labels(store)
@@ -308,6 +333,11 @@ impl Evaluator {
     /// Etykieta bąbla kodu (bez spacji, ukośników i `@`).
     pub fn code_label(name: &str) -> bool {
         code::is_label(name)
+    }
+
+    /// Atom `src` bąbla kodu (usługa wiąże właśnie ten atom).
+    pub fn code_src(&self, store: &Store, label: &str) -> Option<AtomId> {
+        code::src_of(store, label)
     }
 
     /// Źródło bąbla kodu. Brak bąbla to `None`.
