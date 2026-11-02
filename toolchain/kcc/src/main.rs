@@ -8,12 +8,7 @@
 //!   cargo run --release -- examples/thermal.k0 --cc -o out/thermal
 //!   cargo run --release -- examples/store_mini.k0 --safe --cc -o out/store_mini
 
-mod ast;
-mod codegen_c;
-mod lex;
-mod parse;
-mod preprocess;
-mod sem;
+use kcc::{codegen_c, parse, preprocess, sem};
 
 use std::env;
 use std::fs;
@@ -176,9 +171,9 @@ See: Documents/TOR_B_TOOLCHAIN.pl.md
 
 #[cfg(test)]
 mod tests {
-    use crate::codegen_c::emit_c;
-    use crate::parse::parse;
-    use crate::sem;
+    use kcc::codegen_c::emit_c;
+    use kcc::parse::parse;
+    use kcc::sem;
 
     #[test]
     fn parse_thermal_and_emit() {

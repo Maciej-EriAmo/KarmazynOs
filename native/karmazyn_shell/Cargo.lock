@@ -364,6 +364,7 @@ dependencies = [
  "karmazyn_lisp",
  "karmazyn_lua",
  "karmazyn_substrate",
+ "kcc",
  "libc",
 ]
 
@@ -377,6 +378,10 @@ version = "0.1.0"
 dependencies = [
  "karmazyn_slab",
 ]
+
+[[package]]
+name = "kcc"
+version = "0.6.2"
 
 [[package]]
 name = "libc"

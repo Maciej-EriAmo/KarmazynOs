@@ -57,6 +57,47 @@ fn load_rec(path: &Path, seen: &mut HashSet<PathBuf>, depth: u32) -> Result<Stri
     Ok(out)
 }
 
+/// `#include` bez systemu plików: `load(nazwa)` zwraca tekst modułu (np. z
+/// bąbla kodu o tej etykiecie). Nazwy są płaskie, bez łączenia ścieżek.
+pub fn load_with_loader(
+    entry: &str,
+    load: &dyn Fn(&str) -> Result<String, String>,
+) -> Result<String, String> {
+    fn rec(
+        name: &str,
+        load: &dyn Fn(&str) -> Result<String, String>,
+        seen: &mut HashSet<String>,
+        depth: u32,
+    ) -> Result<String, String> {
+        if depth > 32 {
+            return Err("include nesting too deep (>32)".into());
+        }
+        if !seen.insert(name.to_string()) {
+            return Err(format!("circular include: {name}"));
+        }
+        let text = load(name)?;
+        let mut out = String::new();
+        for (lineno, line) in text.lines().enumerate() {
+            if let Some(rest) = line.trim().strip_prefix("#include") {
+                let child = parse_include_path(rest).map_err(|e| format!("{name}:{}: {e}", lineno + 1))?;
+                let nested = rec(&child, load, seen, depth + 1)
+                    .map_err(|e| format!("{name}:{}: {e}", lineno + 1))?;
+                out.push_str(&format!("// --- begin include {child} ---\n"));
+                out.push_str(&nested);
+                if !nested.ends_with('\n') {
+                    out.push('\n');
+                }
+                out.push_str(&format!("// --- end include {child} ---\n"));
+            } else {
+                out.push_str(line);
+                out.push('\n');
+            }
+        }
+        Ok(out)
+    }
+    rec(entry, load, &mut HashSet::new(), 0)
+}
+
 fn parse_include_path(rest: &str) -> Result<String, String> {
     let rest = rest.trim();
     if let Some(s) = rest.strip_prefix('"').and_then(|s| s.strip_suffix('"')) {
@@ -96,5 +137,22 @@ mod tests {
         let _ = fs::remove_file(&lib);
         let _ = fs::remove_file(&main);
         let _ = fs::remove_dir(&dir);
+    }
+
+    #[test]
+    fn loader_includes_by_name_and_refuses_cycles() {
+        let load = |name: &str| -> Result<String, String> {
+            match name {
+                "main.k0" => Ok("#include \"lib.k0\"\nfn main() -> i32 { return one(); }\n".into()),
+                "lib.k0" => Ok("fn one() -> i32 { return 1; }\n".into()),
+                "a.k0" => Ok("#include \"b.k0\"\n".into()),
+                "b.k0" => Ok("#include \"a.k0\"\n".into()),
+                other => Err(format!("brak {other}")),
+            }
+        };
+        let s = load_with_loader("main.k0", &load).unwrap();
+        assert!(s.contains("fn one()") && s.contains("fn main()"));
+        assert!(load_with_loader("a.k0", &load).unwrap_err().contains("circular"));
+        assert!(load_with_loader("x.k0", &load).unwrap_err().contains("brak x.k0"));
     }
 }

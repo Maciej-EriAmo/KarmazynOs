@@ -14,6 +14,7 @@ mod disk;
 mod dziennik;
 mod editor;
 mod ext2;
+mod kompilator;
 mod net;
 mod servitor;
 
@@ -352,6 +353,8 @@ fn dispatch(app: &App, line: &str) -> Outcome {
         disk_sync(app)
     } else if head.eq_ignore_ascii_case("disk") {
         disk_status(app, &parts)
+    } else if head.eq_ignore_ascii_case("kcc") {
+        kcc_cmd(app, &parts)
     } else if head.eq_ignore_ascii_case("dziennik") {
         dziennik_cmd(app, &parts)
     } else if head.eq_ignore_ascii_case("czas") {
@@ -411,6 +414,36 @@ fn clip(s: &str, n: usize) -> String {
     }
     let head: String = s.chars().take(n).collect();
     format!("{head}…")
+}
+
+/// `kcc <etykieta> [--safe] [--c]`: K0 z bąbla kodu → C99 w atomie `c`.
+fn kcc_cmd(app: &App, parts: &[&str]) -> Outcome {
+    let label = parts.iter().skip(1).find(|p| !p.starts_with("--")).copied();
+    let flag = |f: &str| parts.contains(&f);
+    let Some(label) = label else {
+        println!("kcc {} — K0 → C99. usage: kcc <etykieta> [--safe] [--c]", kcc::VERSION);
+        println!("  źródło: bąbel kodu (np. edit hello.k0), #include \"lib.k0\" = bąbel lib.k0");
+        return Outcome::Err;
+    };
+    match kompilator::compile(&app.store, &app.lua, label, flag("--safe")) {
+        Ok(w) => {
+            println!(
+                "kcc: {label} → C99 {} B (atom {} `{}` w bąblu {label}){}",
+                w.c.len(),
+                w.atom,
+                kompilator::C_BIND,
+                if flag("--safe") { ", --safe" } else { "" }
+            );
+            if flag("--c") {
+                print!("{}", w.c);
+            }
+            Outcome::Ok
+        }
+        Err(e) => {
+            println!("kcc: {e}");
+            Outcome::Err
+        }
+    }
 }
 
 fn dziennik_cmd(app: &App, parts: &[&str]) -> Outcome {
@@ -1621,6 +1654,9 @@ fn print_help() {
                                 błąd nie grzeje. karmazyn.code.wake(etykieta) budzi
   epoki                         same co KARMAZYN_TICK_MS (PID 1 domyślnie 2000 ms, 0 = tylko
                                 tick); tick / settle dokładają epoki ręcznie
+  kcc <etykieta> [--safe] [--c] własny kompilator K0 → C99 (minister kcc): źródło z bąbla
+                                kodu, #include \"lib.k0\" = bąbel lib.k0, wynik w atomie c bąbla;
+                                --c wypisuje C. Uruchomienia na płycie jeszcze nie ma (brak cc)
   dziennik [n]                  wpisy startu, poleceń i servitorów (atomy w bąblu dziennik)
   czas                          stempel w świecie (bąbel czas) + SNTP z KARMAZYN_NTP
   help | quit

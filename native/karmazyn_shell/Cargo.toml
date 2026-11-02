@@ -20,6 +20,8 @@ karmazyn_kafd = { path = "../karmazyn_kafd", features = ["substrate"] }
 getrandom = "0.2"
 # dedykowane połączenie z Karmin_DB (Cynober-Secure-1.2 + HSL)
 karmazyn_cynober = { path = "../karmazyn_cynober" }
+# minister kcc: własny kompilator K0 → C99 (Tor B), jako biblioteka
+kcc = { path = "../../toolchain/kcc" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = "0.2"
