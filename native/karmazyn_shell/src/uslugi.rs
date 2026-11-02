@@ -1027,6 +1027,10 @@ fn status_code(status: i32) -> i32 {
 mod tests {
     use super::*;
 
+    /// Testy, które tworzą procesy: odbiorca `waitpid(-1)` jednego zabrałby
+    /// dziecko drugiego, gdyby szły równolegle w tym samym procesie.
+    static SPAWNS: Mutex<()> = Mutex::new(());
+
     fn temp(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("kuslugi-{name}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
@@ -1103,24 +1107,32 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
+    /// Odbiorca nadzoru (`waitpid(-1)` na Uniksie) chodzi w tle, a
+    /// `run_command` i tak dostaje kod swojego dziecka. Dzieckiem jest samo
+    /// binarium testów: na płycie nie ma `/bin/sh`.
     #[test]
-    fn run_command_returns_exit_code() {
-        let mut cmd = if cfg!(windows) {
-            let mut c = Command::new(std::env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".into()));
-            c.args(["/C", "exit 3"]);
-            c
-        } else if Path::new("/bin/sh").exists() {
-            let mut c = Command::new("/bin/sh");
-            c.args(["-c", "exit 3"]);
-            c
-        } else {
-            return;
-        };
-        assert_eq!(run_command(&mut cmd).unwrap().code(), Some(3));
+    fn run_command_keeps_code_under_reaper() {
+        let _serial = SPAWNS.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = temp("reaper");
+        let mut n = Nadzor::open(dir.clone());
+        n.spawn_thread(Arc::new(Log::memory()));
+        // PID 1 nie montuje /proc, więc na płycie zostaje argv[0].
+        let exe = std::env::current_exe()
+            .unwrap_or_else(|_| PathBuf::from(std::env::args_os().next().unwrap()));
+        for _ in 0..8 {
+            let ok = run_command(Command::new(&exe).args(["--list", "--exact", "nic-takiego"]))
+                .unwrap();
+            assert_eq!(ok.code(), Some(0));
+            let bad = run_command(Command::new(&exe).arg("--karmazyn-zla-flaga")).unwrap();
+            assert!(matches!(bad.code(), Some(c) if c != 0), "{bad:?}");
+        }
+        drop(n);
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn oneshot_reaches_warm() {
+        let _serial = SPAWNS.lock().unwrap_or_else(|e| e.into_inner());
         let line = if cfg!(windows) {
             let com = std::env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".into());
             format!("\"{com}\" /C exit 0")
