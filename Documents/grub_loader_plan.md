@@ -15,7 +15,7 @@ Ustalić **GRUB** (GNU GRUB / Multiboot) jako **program ładujący (stage-0/1)**
 firmware (UEFI/BIOS)
   → GRUB                          ← program ładujący (ten dokument)
   → karmazyn_kentry / obraz       ← entry jądra (substrat + init)
-  → usługi                        ← gość, shell, scheduler, (HSS/HSL), …
+  → servitory                     ← gość, shell, scheduler, (HSS/HSL), …
 ```
 
 **Zasada rozdziału (twarda):**
@@ -24,7 +24,7 @@ firmware (UEFI/BIOS)
 |---------|--------|-----------|
 | **GRUB** | znaleźć nośnik, wybrać obraz, przekazać parametry, chainload | znać atomy, T, reach-GC, Lua, HRR |
 | **Jądro** | Store, prawo T×reach, fasada, montaż szwów | zależeć od menu GRUB / składni `grub.cfg` |
-| **Usługi** | gość, host API, lua_bin, shell, tick | startować przed gotowym Store |
+| **Servitory** | gość, host API, lua_bin, shell, tick | startować przed gotowym Store |
 
 Obecny `karmazyn_boot.py` **nie znika** — zostaje **stage-2 (userspace/init)** albo **dev-boot** na hoście Python, dopóki nie ma samodzielnego `kentry`.
 
@@ -66,24 +66,24 @@ Obecny `karmazyn_boot.py` **nie znika** — zostaje **stage-2 (userspace/init)**
 
 ## 2. Mapowanie na obecną sekwencję bootu
 
-Dzisiejszy raport usług w `boot()` mapuje się tak:
+Dzisiejszy raport servitorów w `boot()` mapuje się tak:
 
 | Dziś (`karmazyn_boot`) | Po wprowadzeniu GRUB | Gdzie żyje |
 |------------------------|----------------------|------------|
 | proces hosta / `start.py` / Docker `bin/karmazyn` | **GRUB** ładuje obraz | firmware → GRUB |
 | fasada jądra | init jądra po entry | `karmazyn_kernel` / `kentry` |
-| HRR (opcjonalnie) | usługa / lib w jądrze | po Store |
+| HRR (opcjonalnie) | servitor / lib w jądrze | po Store |
 | substrat Store (native default) | **rdzeń po skoku z GRUB** | Rust `native/` |
-| warstwa wykonawcza (Lua) | usługa stage-2 | `LUA/` |
-| narzędzia / projekt / host API / lua_bin | usługi | software |
+| warstwa wykonawcza (Lua) | servitor stage-2 | `LUA/` |
+| narzędzia / projekt / host API / lua_bin | servitory | software |
 | shell + scheduler | init / pid1-like w userspace runtime | `karmazyn_boot` lub następca |
 
-**Skrót:** GRUB = *kto wstawia jądro w pamięć*; `karmazyn_boot` = *jak jądro budzi usługi*.
+**Skrót:** GRUB = *kto wstawia jądro w pamięć*; `karmazyn_boot` = *jak jądro budzi servitory*.
 
 ```
 [ GRUB ]  ──load──►  [ kentry + Store ]  ──mount──►  [ gość + shell + tick ]
    ↑                        ↑                              ↑
- program ładujący      jądro (minimal)              kolejne usługi
+ program ładujący      jądro (minimal)              kolejne servitory
 ```
 
 ---
@@ -107,7 +107,7 @@ GRUB → vmlinuz + initrd → systemd/init → python|karmazyn → karmazyn_boot
 GRUB ładuje **własny obraz Multiboot2**:
 
 ```
-GRUB → karmazyn.elf (Multiboot2) → kentry → Store (Rust) → init usług
+GRUB → karmazyn.elf (Multiboot2) → kentry → Store (Rust) → init servitorów
 ```
 
 - Cel: Karmazyn jako *własny* ładunek, nie tylko app na Linuxie.
@@ -130,7 +130,7 @@ GRUB → karmazyn.elf (Multiboot2) → kentry → Store (Rust) → init usług
 | G4 | `kentry` (Rust) | B | entry Multiboot2, early log (serial/VGA) |
 | G5 | linker script + Multiboot2 header | B | zgodność z GRUB |
 | G6 | obraz `karmazyn.elf` / `.bin` | B | wynik `cargo build` freestanding |
-| G7 | init stage-2 | A: `karmazyn_boot`; B: `kinit` | sekwencja usług jak dziś BootLog |
+| G7 | init stage-2 | A: `karmazyn_boot`; B: `kinit` | sekwencja servitorów jak dziś BootLog |
 | G8 | rescue entry | A+B | fallback reference / shell GRUB |
 | G9 | test QEMU | A+B | `qemu-system-x86_64 -cdrom …` smoke |
 | G10 | CI gate | A+B | „ISO bootuje do promptu / do serial marker” |
@@ -151,8 +151,8 @@ Wspólny zestaw (implementacja mapuje 1:1 w Tor A na env, w Tor B na tablicę ar
 | `project=` | — | root projektu Lua |
 | `verbose` | off | BootLog szczegółowy |
 | `quiet` | off | mniej logów |
-| `tick_ms=` | 2000 | scheduler (gdy usługa wstanie) |
-| `rescue` | off | pomiń usługi niekrytyczne |
+| `tick_ms=` | 2000 | scheduler (gdy servitor wstanie) |
+| `rescue` | off | pomiń servitory niekrytyczne |
 
 **Zasada:** GRUB *tylko przekazuje string*; parsowanie w `kentry` / `karmazyn_boot`.
 
@@ -161,7 +161,7 @@ Wspólny zestaw (implementacja mapuje 1:1 w Tor A na env, w Tor B na tablicę ar
 ## 5b. Żeby to wypaliło — elementy poza samym GRUB
 
 GRUB bez domkniętych szwów poniżej to tylko menu.  
-**Product boot = GRUB + cmdline + I/O + pamięć/czas + init usług.**
+**Product boot = GRUB + cmdline + I/O + pamięć/czas + init servitorów.**
 
 ### Mapa zależności (minimalny łańcuch)
 
@@ -298,7 +298,7 @@ Bez tych punktów cold-boot padnie mimo GRUB + cmdline + I/O:
 | CAPS1 | Capabilities gościa | sandbox (już szkic `caps=` w mount) | A+B | P1 |
 | EVT1 | EventBus vacuum_decay | diagnostyka, verbose | A jest | P2 |
 | NET0 | L0 / sieć | poza minimum bootu | — | P3 |
-| HSS0 | HSS/HSL daemony | po shell | — | P3 |
+| HSS0 | HSS/HSL servitory | po shell | — | P3 |
 | SEC1 | Secure Boot / podpis | F5 | — | P3 |
 
 ---
@@ -349,7 +349,7 @@ Bez tego ISO z GRUB i tak nie da kontrolowanego Product bootu.
 | **Z Fazą 1 (ISO)** | CL cmdline z grub.cfg → BootConfig; console=stdio; FS1 rootfs |
 | **Z Fazą 2 (kentry)** | IO5 SerialIo early; CL z Multiboot info |
 | **Z Fazą 3 (Store)** | MEM*, TIME1, LOCK1, LOG na serial |
-| **Z Fazą 4 (usługi)** | IO4 host, CAPS1, shell na IoPort |
+| **Z Fazą 4 (servitory)** | IO4 host, CAPS1, shell na IoPort |
 | **Później** | ID1, NET0, HSS0, SEC1 |
 
 ---
@@ -364,7 +364,7 @@ Bez tego ISO z GRUB i tak nie da kontrolowanego Product bootu.
 - [ ] Wydzielić w `karmazyn_boot` (lub cienkim `karmazyn_loader.py`) etapy nazwane:
   - `stage0` — proces/host (odpowiednik firmware)
   - `stage1` — fasada + Store (odpowiednik jądra)
-  - `stage2` — gość + shell + scheduler (usługi)
+  - `stage2` — gość + shell + scheduler (servitory)
 - [ ] Utrzymać istniejący `BootLog` `[ OK ]/[WARN]/[FAIL]`
 - [ ] Spisać mapowanie stage ↔ GRUB (ten dokument §2)
 - [ ] Gate: `python karmazyn_boot.py --demo` bez regresji
@@ -395,7 +395,7 @@ Bez tego ISO z GRUB i tak nie da kontrolowanego Product bootu.
 
 ### Faza 2 — Kontrakt Multiboot2 + szkielet `kentry` (Tor B, szkielet) (1–2 tyg.)
 
-**Cel:** GRUB *potrafi* załadować własny ELF; jeszcze bez pełnych usług.
+**Cel:** GRUB *potrafi* załadować własny ELF; jeszcze bez pełnych servitorów.
 
 - [x] Crate `boot/kentry`:
   - Multiboot2 header
@@ -429,9 +429,9 @@ Bez tego ISO z GRUB i tak nie da kontrolowanego Product bootu.
 
 ---
 
-### Faza 4 — Usługi stage-2 na native path (3–6 tyg.)
+### Faza 4 — Servitory stage-2 na native path (3–6 tyg.)
 
-**Cel:** po jądrze montują się **kolejne usługi** jak w kanonie.
+**Cel:** po jądrze montują się **kolejne servitory** jak w kanonie.
 
 Kolejność montażu (ta sama co dziś, twarda):
 
@@ -485,9 +485,9 @@ Kolejność montażu (ta sama co dziś, twarda):
 9. Serial marker smoke.  
 10. Store freestanding MVP.
 
-**P3 — usługi**
+**P3 — servitory**
 
-11. Kolejność usług jak BootLog.  
+11. Kolejność servitorów jak BootLog.  
 12. Gość + shell.  
 13. Scheduler.  
 14. HSS/HSL poza minimum.
@@ -502,7 +502,7 @@ Kolejność montażu (ta sama co dziś, twarda):
 | **L1 GRUB hosted** | ISO/QEMU: GRUB menu → Karmazyn prompt (Tor A) |
 | **L2 GRUB native entry** | GRUB → ELF → `KARMAZYN_KENTRY_OK` (Tor B) |
 | **L3 Kernel after GRUB** | Store tick/stats bez Pythona w ścieżce cold-boot |
-| **L4 Services** | gość + shell + scheduler po kentry |
+| **L4 Servitory** | gość + shell + scheduler po kentry |
 
 Samowystarczalność Product w sensie loadera = **co najmniej L1**, cel strategiczny **L3+**.
 
@@ -570,6 +570,6 @@ KarmazynOs/
 
 ## 13. Jednozdaniowe podsumowanie
 
-> **GRUB ładuje obraz i podaje string; `BootConfig` go interpretuje; `IoPort` daje konsolę; jądro budzi Store; init montuje usługi — bez cmdline i I/O loader nie „wypala”.**
+> **GRUB ładuje obraz i podaje string; `BootConfig` go interpretuje; `IoPort` daje konsolę; jądro budzi Store; init montuje servitory — bez cmdline i I/O loader nie „wypala”.**
 
 *Dokument żywy — aktualizować przy domknięciu faz (checkboxy + data gate).*
