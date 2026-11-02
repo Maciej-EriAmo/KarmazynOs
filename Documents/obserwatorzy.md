@@ -30,11 +30,11 @@ Podstawa: [bubble_network_assumptions.md](bubble_network_assumptions.md) — bą
 
 **Przyjęte 2026-11-02:** nikt nie może w nieskończoność podgrzewać superobserwatora. Tryb wygasa zaraz po wykonaniu zadań.
 
-W prawie Store znaczy to:
+W prawie przestrzeni Φ to działanie warunkowe, nie zakaz grzania. Tryb superobserwatora to pytanie **CZY** (reach), nie **KIEDY** (T):
 
-- **Atom sesji jest niegrzewalny.** Nic go nie podgrzewa: ani odczyt (`HEAT_READ`, `lookup`), ani zapis, ani `heat`, `set_t`, `code.wake`, `servitor up` — niezależnie od tego, kto woła, także sam superobserwator. T może tylko maleć.
-- **Wygasa po zadaniach, nie po czasie.** Sesja otwiera się dla zadań nazwanych przy otwarciu (np. instalacja, konfiguracja wstępna, rotacja kluczy). Po wykonaniu ostatniego zadania atom sesji jest odpinany od razu — tryb się zamyka, nie czeka na stygnięcie.
-- **Stygnięcie to tylko górny limit.** Gdy zadanie utknie, atom sesji i tak schodzi do COLD w ustalonej liczbie epok i tryb się zamyka. Przedłużyć się go nie da.
+- **Brama zamiast temperatury.** Jak w warunku przeżycia KarmazynMatrix (`k·⟨S, Trace⟩ > λτ + f`, [genesis5_pl.md](genesis5_pl.md)) o życiu decyduje warunek, a nie samo T. Tryb trwa, dopóki atom sesji jest w zasięgu, a w zasięgu jest tylko, póki są otwarte zadania nazwane przy otwarciu (np. instalacja, konfiguracja wstępna, rotacja kluczy). Podgrzewanie atomu sesji niczego nie przedłuża, bo T w tym warunku nie występuje — nie trzeba go zakazywać.
+- **Wygasa zaraz po zadaniach.** Po wykonaniu ostatniego zadania warunek przestaje być spełniony: atom sesji wypada z zasięgu i tryb kończy się od razu, nie czeka na stygnięcie.
+- **`max_age` jako twardy limit.** Gdy zadanie utknie, sesja i tak się kończy po `M` epokach od otwarcia, niezależnie od T — to „jedyna gwarantowana ścieżka rozpadu” z [bubble_lifecycle.md](bubble_lifecycle.md). Przedłużyć się jej nie da.
 - **Nowe zadanie = nowe otwarcie.** Zamkniętej sesji nie można wznowić; kolejna wymaga ponownego otwarcia z konsoli.
 
 Propozycja do potwierdzenia (sposób otwarcia i ślad):
@@ -47,14 +47,14 @@ Propozycja do potwierdzenia (sposób otwarcia i ślad):
 1. **Reach i `lookup` idą w górę przez rodziców.** Bąbel użytkownika z rodzicem w drzewie systemu widziałby powiązania rodzica. `B_u` musi być korzeniem bez rodzica, a widok musi zatrzymywać się na jego granicy — potrzebny jest widok w dół, którego substrat dziś nie ma.
 2. **Jeden gość Lua na cały shell.** Wspólne zmienne globalne zdradziłyby jednego użytkownika drugiemu. Potrzebny osobny stan Lua na tożsamość, z `caller = B_u` i API przefiltrowanym do widoku.
 3. **Shell działa zawsze jako superobserwator** — dokładnie odwrotnie niż zasada 4. Nie ma logowania ani tożsamości. Docelowo shell po starcie jest obserwatorem, a tryb nadzwyczajny trzeba otworzyć.
-4. **Substrat nie zna atomu niegrzewalnego.** Dziś każdy odczyt (`lookup`, `heat`) i zapis podnosi T, a `set_t` ustawia dowolne. Atom sesji superobserwatora potrzebuje flagi w prawie Store: T tylko maleje, żadna ścieżka go nie podnosi.
+4. **Natywny substrat nie ma `max_age`.** Prawo Store zna zanik T i reach-GC, a warunkowy zasięg da się wyrazić hakiem `extra_reach` (jest w `karmazyn_substrate`). Brakuje rozpadu po wieku w epokach, niezależnego od T, który `bubble_lifecycle.md` opisuje jako jedyną gwarantowaną ścieżkę rozpadu.
 5. **Szyfrowanie treści kluczem `s_A`** zależy od fazy 3 HSS ([linux_hss_roadmap.md](linux_hss_roadmap.md)). Bez niego granica użytkownika jest logiczna (widok), a nie kryptograficzna.
 
 ## 4. Kolejność
 
 1. **Tożsamości jako atomy.** Bąbel `tożsamości`, widoczny tylko dla superobserwatora; atom tożsamości: rola, id `B_u`, weryfikator klucza (nie hasło).
 2. **Widok w substracie.** Każda operacja shella i gościa przez widok z korzeniem: użytkownik — drzewo `B_u` z treścią; obserwator — kształt całości (istnienie, rozmiar, T, reach) bez treści bąbli użytkowników i bez kluczy, odczyt bez grzania; superobserwator — wszystko.
-3. **Tryb nadzwyczajny** superobserwatora: atom niegrzewalny w substracie, atom sesji w `tożsamości` z listą zadań, zamknięcie po ostatnim zadaniu, stygnięcie jako górny limit, wpisy w dzienniku.
+3. **Tryb nadzwyczajny** superobserwatora: `max_age` w prawie Store; atom sesji w `tożsamości` z listą zadań, w zasięgu tylko przy otwartych zadaniach (warunkowy reach); zamknięcie po ostatnim zadaniu; wpisy w dzienniku.
 4. **Logowanie na konsoli** i znak zachęty zależny od roli (np. `u$` / `o$` / `k$`).
 5. **Osobny gość Lua na tożsamość**; biblioteka oprogramowania ogólnego i instalacja jednostkowa w `B_u`.
 6. **Pryzmat i szyfrowanie treści `B_u` kluczem `s_A`** — razem z fazą 3 HSS; pryzmat udostępniony przez użytkownika daje obserwatorowi wgląd w treść.
@@ -67,7 +67,7 @@ Propozycja do potwierdzenia (sposób otwarcia i ślad):
 - Obserwator widzi tylko kształt (istnienie, rozmiar, T) — samą strukturę. Treść tylko przez pryzmat udostępniony przez użytkownika. Obserwator zarządza, ale nie czyta.
 - Superobserwator widzi wszystko, dlatego nie pracuje ciągle — tylko w sytuacjach nadzwyczajnych: instalacja systemu i konfiguracja wstępna, bezpieczeństwo na poziomie enterprise.
 - Oprogramowanie ogólne instaluje obserwator, jednostkowe — użytkownik.
-- Nikt nie może w nieskończoność podgrzewać superobserwatora; tryb wygasa zaraz po wykonaniu zadań (§ 2, tryb nadzwyczajny).
+- Nikt nie może w nieskończoność podgrzewać superobserwatora; tryb wygasa zaraz po wykonaniu zadań. Konstrukcja: działanie warunkowe przestrzeni Φ — tryb żyje warunkiem (otwarte zadania, reach), nie temperaturą; `max_age` jako twardy limit (§ 2, tryb nadzwyczajny).
 
 **Otwarte:**
 
