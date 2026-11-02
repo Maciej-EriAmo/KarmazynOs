@@ -178,6 +178,11 @@ foreach ($try in 1..20) {
 if ($null -eq $raw) { throw "dysk zajęty: $disk" }
 $rawText = [Text.Encoding]::GetEncoding(28591).GetString($raw)
 $checks = [ordered]@{
+    # formater zakłada dziennik JBD2: jądro montuje z księgowaniem, a po twardym
+    # wyłączeniu (Stop-Process między rozruchami) nie widzi niesprawdzonego fs
+    'dziennik ext4'        = ($one -match 'EXT4-fs \(vda\): mounted filesystem .* r/w with ordered data mode') -and
+                             ($two -match 'EXT4-fs \(vda\): mounted filesystem .* r/w with ordered data mode') -and
+                             ($two -notmatch 'mounting unchecked fs') -and ($two -notmatch 'EXT4-fs error')
     'pusty dysk → ext4'    = $one -match 'disk — /dev/vda ext4 → /data, sformatowano, nowy świat /data/cynober/worlds/karmazyn\.kafd, autosync'
     'sync'                 = $one -match 'sync /data/cynober/worlds/karmazyn\.kafd dokumenty=\d+'
     'nano bąbel razy'      = $one -match 'Zapisano razy \(3 linii\)'

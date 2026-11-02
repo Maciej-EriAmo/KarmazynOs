@@ -16,7 +16,7 @@
 | Obszar | Stan |
 |--------|------|
 | Konsola | ekran VGA (tty1) + serial (ttyS0) naraz, `KARMAZYN_CONSOLE=auto\|vga\|serial\|none` |
-| Trwałość | Store = świat DBase `karmazyn_store_v1.4_kafx`: KAFD w kopercie KAFX w `/data/cynober/worlds/karmazyn.kafd` na ext4 (`/dev/vda` → `/data`); pusty dysk dostaje ext2 sam, inny tylko `disk format`; świat nieczytelny = zapis wstrzymany; autosync po zmianie treści; po zapisie `syncfs` (bitmapy ext2 bez dziennika przeżywają twarde wyłączenie) |
+| Trwałość | Store = świat DBase `karmazyn_store_v1.4_kafx`: KAFD w kopercie KAFX w `/data/cynober/worlds/karmazyn.kafd` na ext4 (`/dev/vda` → `/data`); pusty dysk dostaje sam ext3 z dziennikiem JBD2 (`ext2.rs`, rozmiar jak `mke2fs`; po twardym wyłączeniu `recovery complete`, bez `mounting unchecked fs`), inny tylko `disk format`; świat nieczytelny = zapis wstrzymany; autosync po zmianie treści; po zapisie `syncfs` (chroni też dyski ext2 sprzed dziennika) |
 | KAFD natywnie | `native/karmazyn_kafd`: v2.0/v2.1/KTIX/v1-odczyt, KAFS, dziennik, compact, KAFX/KX1, świat DBase (`world`, cecha `substrate`) — bajt w bajt z Pythonem |
 | Sieć | `KARMAZYN_IP` / `KARMAZYN_GW` (grub.cfg: QEMU, host = 10.0.2.2), virtio_net; `KARM_PSK` i `KARM_HSS_PROFILE` z aktywnego profilu w `/data/cynober/client.json` (obok `master.key`); brak pliku = ECDH |
 | Karmin_DB | `native/karmazyn_cynober` (ECDH, HSS standard/production, HSL-1.1, PSK, QKD); w shellu `db connect / db <KarminQL> / db info / db close` |
@@ -55,7 +55,7 @@ Szczegół poleceń: [tools_lua.md](tools_lua.md). HSS: [linux_hss_roadmap.md](l
 
 ## Do zrobienia w następnej sesji
 
-1. **Dziennik ext4 na dysku.** Formater w `native/karmazyn_shell/src/ext2.rs` robi ext2 rev 1; jądro montuje to jako ext4 i po twardym wyłączeniu pisze `mounting unchecked fs`. `syncfs` usunął uszkodzenie bitmap, ostrzeżenie zostało. Dodać mały journal ext4 w tym samym formaterze (`disk format` i pierwszy pusty dysk). Istniejący świat ext2 zostaje czytelny. Bramka: `qemu_disk.ps1` bez ostrzeżenia o niesprawdzonym systemie plików.
+1. ~~Dziennik ext4 na dysku.~~ **Zrobione 2026-11-02:** formater zakłada dziennik JBD2 (i-węzeł 8). `qemu_disk.ps1` sprawdza `with ordered data mode` i brak `mounting unchecked fs` po twardym wyłączeniu. CI (`gate.yml`): krok kentry padał od 2026-10-29, bo cargo czyta `.cargo/config.toml` z katalogu wywołania — poprawione (`8c49e6d`), potwierdzić zielony run po pushu.
 2. **Przyrostowy zapis KAFS.** `append_atom` i `compact_journal` już są w `native/karmazyn_kafd`. Autosync płyty nadal podmienia cały świat — teraz także po epoce zegara, gdy zmieniła się treść (vacuum, servitor zapisujący do Store). Dopisywać zmiany do dziennika `.kafs` i robić compact po progu. Po compact treść świata ma być bajt w bajt z Pythonem. Bramka: `cross_check.py`, `qemu_disk.ps1`, test że zmiana jednego atomu nie przepisuje całej koperty.
 3. **Polskie znaki na VGA.** Czcionka konsoli nie ma ąęćłńóśźż. Wczytać font Lat2 do VGA przy starcie. Serial zostaje. Bramka: `qemu_vga.ps1` i odczyt `out/karmazyn-vga.png`.
 4. **Dwa braki klienta Cynober** (po dysku, bo zmieniają kontrakt na drucie). W `native/karmazyn_cynober`: profil HSS `proto` (macierz z PCG64, jak NumPy w DBase) i ramki KAFS (media put/get). Dziś `proto` spada do ECDH, a ramka KAFS jest odrzucana. Bramka: `live_check.py` przeciw żywemu `cynober_server.py`, w tym `proto` i jeden media put/get.

@@ -1,8 +1,8 @@
 //! Trwałość shella: świat DBase (KAFD w kopercie KAFX) jako plik na ext4.
 //!
 //! Na płycie (PID 1): dysk `KARMAZYN_DISK` (domyślnie `/dev/vda`) montowany
-//! jako ext4 pod `/data`. Pusty dysk (same zera na początku) dostaje ext2
-//! z [`crate::ext2`]; dysk z nieznanymi danymi czeka na jawne `disk format`.
+//! jako ext4 pod `/data`. Pusty dysk (same zera na początku) dostaje ext3
+//! z dziennikiem JBD2 z [`crate::ext2`]; dysk z nieznanymi danymi czeka na jawne `disk format`.
 //! `CYNOBER_DATA_HOME` = `/data/cynober` (klucz węzła `master.key`, sekrety
 //! sieci w `client.json`), świat w `worlds/<KARMAZYN_WORLD_NAME albo
 //! karmazyn>.kafd` — jak `cynober_worlds`.
@@ -79,8 +79,8 @@ impl Storage {
     }
 }
 
-/// Dysk bez dziennika (nasz ext2, montowany jako ext4): fsync pliku i
-/// katalogu nie utrwala bitmap ani deskryptorów grup. Po twardym wyłączeniu
+/// Dysk bez dziennika (ext2 sformatowany przed 2026-11-02, montowany jako
+/// ext4): fsync pliku i katalogu nie utrwala bitmap ani deskryptorów grup. Po twardym wyłączeniu
 /// następny zapis trafiał na i-węzeł wolny według dysku, a zajęty naprawdę
 /// („doubly allocated”). `syncfs` spłukuje cały system plików świata.
 #[cfg(target_os = "linux")]
@@ -124,7 +124,7 @@ pub fn is_blank(device: &Path) -> std::io::Result<bool> {
     Ok(buf[..n].iter().all(|b| *b == 0))
 }
 
-/// Zakłada ext2 na całym urządzeniu (albo pliku obrazu).
+/// Zakłada ext3 z dziennikiem na całym urządzeniu (albo pliku obrazu).
 pub fn format(device: &Path) -> Result<crate::ext2::Layout, String> {
     use std::io::{Seek, SeekFrom};
     let mut f = std::fs::OpenOptions::new()
@@ -251,8 +251,8 @@ pub fn mount_ext4(device: &Path, target: &Path) -> Result<(), String> {
     let src = CString::new(device.as_os_str().as_bytes()).map_err(|e| e.to_string())?;
     let dst = CString::new(target.as_os_str().as_bytes()).map_err(|e| e.to_string())?;
     let fs = CString::new("ext4").unwrap();
-    // ext2 bez księgowania: zapisy i metadane od razu na dysk (MS_SYNCHRONOUS),
-    // bez aktualizacji czasu odczytu (MS_NOATIME)
+    // zapisy i metadane od razu na dysk (MS_SYNCHRONOUS) — dziennik chroni nowe
+    // dyski, a ext2 sprzed dziennika nie ma innej ochrony; bez czasu odczytu (MS_NOATIME)
     let flags = libc::MS_SYNCHRONOUS | libc::MS_NOATIME;
     // SAFETY: wskaźniki na żywe CString; data = NULL.
     let rc = unsafe { libc::mount(src.as_ptr(), dst.as_ptr(), fs.as_ptr(), flags, std::ptr::null()) };
@@ -284,7 +284,7 @@ pub fn attach_device(device: &str, allow_format: bool) -> (Option<Storage>, Resu
         if !blank && !allow_format {
             return (
                 None,
-                Err(format!("{device}: nie ext4 i nie pusty — `disk format` wyczyści go i założy ext2")),
+                Err(format!("{device}: nie ext4 i nie pusty — `disk format` wyczyści go i założy ext3 z dziennikiem")),
             );
         }
         if let Err(e) = format(dev) {

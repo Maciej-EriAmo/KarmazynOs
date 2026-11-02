@@ -878,7 +878,7 @@ fn disk_status(app: &App, parts: &[&str]) -> Outcome {
     let guard = app.storage.borrow();
     let Some(st) = guard.as_ref() else {
         match app.pending_device.borrow().as_deref() {
-            Some(d) => println!("disk: {d} niepodłączony (`disk format` założy ext2)"),
+            Some(d) => println!("disk: {d} niepodłączony (`disk format` założy ext3 z dziennikiem)"),
             None => println!("disk: brak (KARMAZYN_DISK albo KARMAZYN_WORLD)"),
         }
         return Outcome::Err;
@@ -902,7 +902,7 @@ fn disk_status(app: &App, parts: &[&str]) -> Outcome {
 }
 
 /// `disk format`: tylko dysk, którego nie podłączono (nieznane dane).
-/// Czyści go, zakłada ext2, montuje i zaczyna nowy świat.
+/// Czyści go, zakłada ext3 z dziennikiem, montuje i zaczyna nowy świat.
 fn disk_format(app: &App) -> Outcome {
     if app.storage.borrow().is_some() {
         println!("disk format: dysk już podłączony — format usunąłby świat");
@@ -1603,7 +1603,7 @@ fn print_help() {
                                 po każdym poleceniu sam, gdy zmieniła się treść
                                 (KARMAZYN_AUTOSYNC=0 wyłącza)
   edit <etykieta>               edytor źródła bąbla (^S zapis, ^Q wyjście, ^K linia, ^L odśwież)
-  disk / disk format            stan świata / ext2 na dysku z nieznanymi danymi
+  disk / disk format            stan świata / ext3 z dziennikiem na dysku z nieznanymi danymi
   db connect <host> [port]      tunel Cynober-Secure-1.2 (HSS/ECDH + HSL) do Karmin_DB
                                 PSK i profil HSS: /data/cynober/client.json; brak pliku = ECDH
   db <zapytanie>                KarminQL przez tunel (np. db ZDROWIE); db info / db close
