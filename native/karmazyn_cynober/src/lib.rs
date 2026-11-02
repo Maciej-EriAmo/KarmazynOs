@@ -2,7 +2,7 @@
 //!
 //! ```text
 //! TCP (L0) → caps (JSON, sort_keys) → anty-replay (ts ±300 s, session_id)
-//!          → klucz sesji: HSS (Ring-LWE, standard|production) albo ECDH (X25519)
+//!          → klucz sesji: HSS (Ring-LWE, proto|standard|production) albo ECDH (X25519)
 //!            [+ KARM_PSK: key = SHA-256(key ‖ psk)]
 //!            PSK i profil HSS: środowisko, a gdy puste — aktywny profil
 //!            w `{data_home}/client.json` (na płycie `/data/cynober/client.json`,
@@ -14,8 +14,12 @@
 //! ```
 //!
 //! Ramka TCP: u32 BE długość + dane (≤ 64 MiB). Szyfrogram: nonce 12 B ‖ AES-GCM.
-//! Tryb `simple` (PBKDF2 + XOR) i ramki KAFS (media) nie są obsługiwane: klient
-//! nie ogłasza ich w caps.
+//! Media (`features: kafs-stream, media:put, media:stream`): ramka KAFS to
+//! `0x02 ‖ [typ:1][xfer_id:16][seq:4][total:8][len:4][dane]` (BE) tym samym
+//! kluczem co RPC. `put_media`: `MEDIA PUT START` (RPC), ramki DATA bez
+//! odpowiedzi, `MEDIA PUT END`. `get_media`: `MEDIA GET` (RPC z `stream`),
+//! potem DATA aż do END albo ERR. Tryb `simple` (PBKDF2 + XOR) nie jest
+//! obsługiwany: klient nie ogłasza go w caps.
 
 pub mod hss;
 
@@ -38,6 +42,17 @@ pub const HSL_VERSION: &str = "HSL-1.1";
 pub const HSL_TASK: &str = "cynober-rpc";
 pub const HSL_PRISMS: [&str; 1] = ["karminql"];
 pub const CAP_RPC_QUERY: &str = "rpc:query";
+/// `DEFAULT_FEATURES` z `cynober_rpc.py`: KAFS i media.
+pub const FEATURES: [&str; 3] = ["kafs-stream", "media:put", "media:stream"];
+pub const FEATURE_KAFS: &str = "kafs-stream";
+/// `KAFS_CHUNK_MAX`: 1 MiB na ramkę DATA.
+pub const KAFS_CHUNK_MAX: usize = 1024 * 1024;
+const FRAME_RPC: u8 = 0x01;
+const FRAME_KAFS: u8 = 0x02;
+const KAFS_DATA: u8 = 1;
+const KAFS_END: u8 = 2;
+const KAFS_ERR: u8 = 3;
+const KAFS_XFER_ID_BYTES: usize = 16;
 pub const FRAME_MAX: usize = 64 * 1024 * 1024;
 pub const REPLAY_WINDOW_SEC: f64 = 300.0;
 pub const DEFAULT_PORT: u16 = 8080;
@@ -478,7 +493,91 @@ pub struct Client {
     sock: TcpStream,
     key: [u8; 32],
     hsl: Option<HslLink>,
+    /// Obie strony ogłosiły `kafs-stream`: wolno wysyłać ramki KAFS.
+    kafs: bool,
     pub info: SessionInfo,
+}
+
+/// Ramka odpowiedzi: JSON RPC albo ciało KAFS.
+enum Frame {
+    Rpc(Value),
+    Kafs(Vec<u8>),
+}
+
+/// Ciało KAFS po `decode_kafs_body`.
+#[derive(Debug, Clone, PartialEq)]
+struct KafsMsg {
+    kind: u8,
+    xfer_id: String,
+    data: Vec<u8>,
+}
+
+/// `kafs_wire_id`: id do 16 B UTF-8 bez NUL idzie wprost, dłuższe jako
+/// pierwsze 16 znaków hex SHA-256 (serwer indeksuje obie postacie).
+pub fn kafs_wire_id(atom_id: &str) -> String {
+    let s = atom_id.trim();
+    if s.len() <= KAFS_XFER_ID_BYTES && !s.contains('\0') {
+        return s.to_string();
+    }
+    hex(&sha256(&[s.as_bytes()]))[..KAFS_XFER_ID_BYTES].to_string()
+}
+
+fn pack_xfer_id(id: &str) -> [u8; KAFS_XFER_ID_BYTES] {
+    let mut out = [0u8; KAFS_XFER_ID_BYTES];
+    let wid = kafs_wire_id(id);
+    let b = wid.as_bytes();
+    let n = b.len().min(KAFS_XFER_ID_BYTES);
+    out[..n].copy_from_slice(&b[..n]);
+    out
+}
+
+/// `encode_kafs_data`.
+fn kafs_data(id: &str, seq: u32, total: u64, chunk: &[u8]) -> Vec<u8> {
+    let mut b = Vec::with_capacity(33 + chunk.len());
+    b.push(KAFS_DATA);
+    b.extend_from_slice(&pack_xfer_id(id));
+    b.extend(seq.to_be_bytes());
+    b.extend(total.to_be_bytes());
+    b.extend((chunk.len() as u32).to_be_bytes());
+    b.extend_from_slice(chunk);
+    b
+}
+
+/// `decode_kafs_body`.
+fn decode_kafs(b: &[u8]) -> Result<KafsMsg> {
+    if b.len() < 33 {
+        return err("KAFS: za krótka ramka");
+    }
+    let id = &b[1..17];
+    let id = &id[..id.iter().position(|&x| x == 0).unwrap_or(16)];
+    let clen = u32::from_be_bytes(b[29..33].try_into().unwrap()) as usize;
+    let data = b.get(33..33 + clen).ok_or_else(|| Error("KAFS: niepełny chunk".into()))?;
+    Ok(KafsMsg { kind: b[0], xfer_id: String::from_utf8_lossy(id).into_owned(), data: data.to_vec() })
+}
+
+/// Base64 (RFC 4648) dla `data_b64` z `MEDIA GET` bez strumienia.
+fn b64decode(s: &str) -> Result<Vec<u8>> {
+    let val = |c: u8| -> Option<u32> {
+        Some(match c {
+            b'A'..=b'Z' => c - b'A',
+            b'a'..=b'z' => c - b'a' + 26,
+            b'0'..=b'9' => c - b'0' + 52,
+            b'+' => 62,
+            b'/' => 63,
+            _ => return None,
+        } as u32)
+    };
+    let clean: Vec<u8> = s.bytes().filter(|c| !c.is_ascii_whitespace() && *c != b'=').collect();
+    let mut out = Vec::with_capacity(clean.len() * 3 / 4);
+    for chunk in clean.chunks(4) {
+        let mut acc = 0u32;
+        for (i, c) in chunk.iter().enumerate() {
+            acc |= val(*c).ok_or_else(|| Error("data_b64: zły znak".into()))? << (18 - 6 * i);
+        }
+        let bytes = acc.to_be_bytes();
+        out.extend_from_slice(&bytes[1..chunk.len()]);
+    }
+    Ok(out)
 }
 
 fn caps_crypto(hss: Option<hss::Profile>) -> Vec<&'static str> {
@@ -512,7 +611,7 @@ fn select_mode(local: &[&str], remote: &Value) -> Result<&'static str> {
         }
     }
     err(format!(
-        "Brak wspólnego trybu krypto: lokalny={local:?} zdalny={remote:?} (simple nieobsługiwany; HSS natywnie: KARM_HSS_PROFILE=standard|production)"
+        "Brak wspólnego trybu krypto: lokalny={local:?} zdalny={remote:?} (simple nieobsługiwany; HSS natywnie: KARM_HSS_PROFILE=proto|standard|production)"
     ))
 }
 
@@ -582,7 +681,7 @@ impl Client {
             "node_id": local_id,
             "ts": local_ts,
             "session_id": session_id,
-            "features": [],
+            "features": FEATURES,
         });
 
         // Faza 0: serwer mówi pierwszy
@@ -649,7 +748,11 @@ impl Client {
             node_remote: remote_id,
             remote_version: remote_ver,
         };
-        Ok(Client { sock: s, key, hsl, info })
+        let kafs = remote_caps
+            .get("features")
+            .and_then(Value::as_array)
+            .is_some_and(|f| f.iter().any(|x| x.as_str() == Some(FEATURE_KAFS)));
+        Ok(Client { sock: s, key, hsl, kafs, info })
     }
 
     fn hsl_link(
@@ -740,6 +843,46 @@ impl Client {
         })
     }
 
+    /// Szyfrowanie w stronę serwera (klucz ramki HSL albo klucz sesji).
+    fn seal_request(&mut self, clear: &[u8]) -> Result<Vec<u8>> {
+        match self.hsl.as_mut() {
+            Some(h) => {
+                h.ensure_epoch();
+                let aad = h.aad_request();
+                seal(&h.frame_key(&aad), clear, &aad)
+            }
+            None => seal(&self.key, clear, b""),
+        }
+    }
+
+    /// Następna ramka od serwera: RPC (zlib JSON) albo KAFS (`0x02 ‖ ciało`).
+    fn recv_any(&mut self) -> Result<Frame> {
+        let resp = recv_frame(&mut self.sock)?;
+        if resp.is_empty() {
+            return err("Pusta odpowiedź — serwer zamknął tunel");
+        }
+        let raw = match self.hsl.as_mut() {
+            Some(h) => {
+                h.ensure_epoch();
+                let aad = h.aad_response();
+                open(&h.frame_key(&aad), &resp, &aad)?
+            }
+            None => open(&self.key, &resp, b"")?,
+        };
+        let payload = match raw.first() {
+            Some(&FRAME_KAFS) => return Ok(Frame::Kafs(raw[1..].to_vec())),
+            Some(&FRAME_RPC) => &raw[1..],
+            _ => &raw[..],
+        };
+        let mut out = Vec::new();
+        flate2::read::ZlibDecoder::new(payload)
+            .read_to_end(&mut out)
+            .map_err(|e| Error(format!("Uszkodzona odpowiedź RPC: {e}")))?;
+        serde_json::from_slice(&out)
+            .map(Frame::Rpc)
+            .map_err(|e| Error(format!("Uszkodzona odpowiedź RPC: {e}")))
+    }
+
     /// Jedno zapytanie KarminQL. Zwraca JSON odpowiedzi (`{"results": [...]}`
     /// albo `{"error": ...}`).
     pub fn query(&mut self, text: &str) -> Result<Value> {
@@ -752,36 +895,105 @@ impl Client {
         let mut z = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::new(6));
         z.write_all(&serde_json::to_vec(&req).expect("JSON"))?;
         let clear = z.finish()?;
-        let enc = match &self.hsl {
-            Some(h) => {
-                let aad = h.aad_request();
-                seal(&h.frame_key(&aad), &clear, &aad)?
-            }
-            None => seal(&self.key, &clear, b"")?,
-        };
+        let enc = self.seal_request(&clear)?;
         send_frame(&mut self.sock, &enc)?;
-
-        let resp = recv_frame(&mut self.sock)?;
-        if resp.is_empty() {
-            return err("Pusta odpowiedź — serwer zamknął tunel");
+        match self.recv_any()? {
+            Frame::Rpc(v) => Ok(v),
+            Frame::Kafs(_) => err("Oczekiwano ramki RPC, otrzymano KAFS"),
         }
-        let raw = match &self.hsl {
-            Some(h) => {
-                let aad = h.aad_response();
-                open(&h.frame_key(&aad), &resp, &aad)?
+    }
+
+    /// `query_line`: ostatni wiersz `results` (pusty obiekt, gdy brak).
+    pub fn query_line(&mut self, text: &str) -> Result<Value> {
+        let v = self.query(text)?;
+        if let Some(e) = v.get("error") {
+            return err(format!("Serwer: {e}"));
+        }
+        Ok(v.get("results")
+            .and_then(Value::as_array)
+            .and_then(|r| r.last().cloned())
+            .unwrap_or_else(|| json!({})))
+    }
+
+    /// Czy sesja wynegocjowała `kafs-stream` (media przez ramki KAFS).
+    pub fn kafs_enabled(&self) -> bool {
+        self.kafs
+    }
+
+    fn send_kafs(&mut self, body: &[u8]) -> Result<()> {
+        if !self.kafs {
+            return err("KAFS niedostępne na tej sesji");
+        }
+        let mut clear = Vec::with_capacity(1 + body.len());
+        clear.push(FRAME_KAFS);
+        clear.extend_from_slice(body);
+        let enc = self.seal_request(&clear)?;
+        send_frame(&mut self.sock, &enc)
+    }
+
+    /// `put_media`: `MEDIA PUT START`, ramki DATA po `KAFS_CHUNK_MAX`,
+    /// `MEDIA PUT END`. `bubble` = (bąbel, nazwa powiązania) po stronie bazy.
+    pub fn put_media(&mut self, atom_id: &str, data: &[u8], mime: &str, bubble: Option<(&str, &str)>) -> Result<Value> {
+        if !self.kafs {
+            return err("put_media wymaga negocjacji kafs-stream po obu stronach");
+        }
+        let id = atom_id.trim();
+        if id.is_empty() {
+            return err("put_media: atom_id nie może być puste");
+        }
+        let mut q = format!("MEDIA PUT START \"{id}\" MIME \"{mime}\" SIZE {}", data.len());
+        if let Some((b, name)) = bubble {
+            q.push_str(&format!(" BĄBEL \"{b}\" JAKO \"{name}\""));
+        }
+        let start = self.query_line(&q)?;
+        if start.get("status").and_then(Value::as_str) != Some("ok") {
+            return err(text_field(&start, "message").unwrap_or_else(|| "MEDIA PUT START nieudany".into()));
+        }
+        let chunks: Vec<&[u8]> = if data.is_empty() { vec![&[][..]] } else { data.chunks(KAFS_CHUNK_MAX).collect() };
+        for (seq, chunk) in chunks.into_iter().enumerate() {
+            self.send_kafs(&kafs_data(id, seq as u32, data.len() as u64, chunk))?;
+        }
+        let end = self.query_line(&format!("MEDIA PUT END \"{id}\""))?;
+        if end.get("status").and_then(Value::as_str) != Some("ok") {
+            return err(text_field(&end, "message").unwrap_or_else(|| "MEDIA PUT END nieudany".into()));
+        }
+        Ok(end)
+    }
+
+    /// `get_media`: (dane, mime, wiersz odpowiedzi). Strumień KAFS albo
+    /// `data_b64`, gdy serwer nie strumieniuje.
+    pub fn get_media(&mut self, atom_id: &str) -> Result<(Vec<u8>, String, Value)> {
+        let row = self.query_line(&format!("MEDIA GET \"{}\"", atom_id.trim()))?;
+        if row.get("status").and_then(Value::as_str) != Some("ok") {
+            return err(text_field(&row, "message").unwrap_or_else(|| "MEDIA GET nieudany".into()));
+        }
+        let mime = text_field(&row, "mime").unwrap_or_else(|| "application/octet-stream".into());
+        if row.get("stream").and_then(Value::as_bool).unwrap_or(false) && self.kafs {
+            let id = text_field(&row, "id").unwrap_or_else(|| atom_id.trim().to_string());
+            let expect = kafs_wire_id(&id);
+            let mut data = Vec::new();
+            loop {
+                let body = match self.recv_any()? {
+                    Frame::Kafs(b) => b,
+                    Frame::Rpc(v) => return err(format!("RPC w trakcie KAFS: {v}")),
+                };
+                let m = decode_kafs(&body)?;
+                if !expect.is_empty() && !m.xfer_id.is_empty() && m.xfer_id != expect {
+                    return err(format!("KAFS: obca ramka „{}”, oczekiwano „{expect}”", m.xfer_id));
+                }
+                match m.kind {
+                    KAFS_ERR => return err(String::from_utf8_lossy(&m.data).into_owned()),
+                    KAFS_END => break,
+                    KAFS_DATA => data.extend_from_slice(&m.data),
+                    _ => {}
+                }
             }
-            None => open(&self.key, &resp, b"")?,
-        };
-        let payload = match raw.first() {
-            Some(0x02) => return err("Oczekiwano ramki RPC, otrzymano KAFS"),
-            Some(0x01) => &raw[1..],
-            _ => &raw[..],
-        };
-        let mut out = Vec::new();
-        flate2::read::ZlibDecoder::new(payload)
-            .read_to_end(&mut out)
-            .map_err(|e| Error(format!("Uszkodzona odpowiedź RPC: {e}")))?;
-        serde_json::from_slice(&out).map_err(|e| Error(format!("Uszkodzona odpowiedź RPC: {e}")))
+            return Ok((data, mime, row));
+        }
+        match text_field(&row, "data_b64") {
+            Some(b) if !b.is_empty() => Ok((b64decode(&b)?, mime, row)),
+            _ => err("MEDIA GET: brak streamu KAFS i data_b64"),
+        }
     }
 }
 
@@ -841,14 +1053,34 @@ mod tests {
     }
 
     #[test]
-    fn env_wins_and_proto_stays_ecdh() {
+    fn kafs_body_wire_id_and_base64_match_python() {
+        // encode_kafs_data("plik", 2, 10, b"abc") z cynober_media_rpc.py
+        let b = kafs_data("plik", 2, 10, b"abc");
+        assert_eq!(b[0], KAFS_DATA);
+        assert_eq!(&b[1..17], b"plik\0\0\0\0\0\0\0\0\0\0\0\0");
+        assert_eq!(&b[17..21], &2u32.to_be_bytes());
+        assert_eq!(&b[21..29], &10u64.to_be_bytes());
+        assert_eq!(&b[29..33], &3u32.to_be_bytes());
+        let m = decode_kafs(&b).unwrap();
+        assert_eq!((m.kind, m.xfer_id.as_str(), m.data.as_slice()), (KAFS_DATA, "plik", &b"abc"[..]));
+        assert!(decode_kafs(&b[..20]).is_err());
+        // długie id: 16 znaków hex SHA-256
+        let long = "studio:snap:snap_2026_11_02";
+        assert_eq!(kafs_wire_id(long), hex(&sha256(&[long.as_bytes()]))[..16].to_string());
+        assert_eq!(kafs_wire_id("krótkie"), "krótkie");
+        assert_eq!(b64decode("emHFvMOzxYLEhyBnxJnFm2zEhQ==").unwrap(), "zażółć gęślą".as_bytes());
+        assert_eq!(b64decode("").unwrap(), b"");
+    }
+
+    #[test]
+    fn env_wins_and_proto_is_hss() {
         let s = client_secrets_from_value(&json!({
             "active": "lokalny",
             "profiles": {"lokalny": {"psk": "z-pliku", "hss_profile": "proto"}}
         }));
         assert_eq!(pick(Some("z-env"), s.psk.as_deref()), Some("z-env"));
         assert_eq!(pick(Some("   "), s.psk.as_deref()), Some("z-pliku"));
-        assert!(hss::profile_from_name("proto").is_none());
+        assert_eq!(hss::profile_from_name("proto").unwrap().name, "proto");
         assert!(hss::profile_from_name("").is_none());
         assert_eq!(hss::profile_from_name("production").unwrap().name, "production");
     }

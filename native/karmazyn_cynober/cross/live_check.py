@@ -3,9 +3,10 @@
   python native/karmazyn_cynober/cross/live_check.py [ścieżka do DBase]
 
 Serwer i klient mają osobne katalogi danych (różne node_id, Φ², klucze) —
-jak dwie maszyny. Scenariusze: ECDH, HSS standard, HSS production,
-PSK (zgodny i zły), seed QKD, kilka zapytań na jednym tunelu,
-serwer z CYNOBER_MIN_CRYPTO=hss bez profilu po stronie klienta (odmowa).
+jak dwie maszyny. Scenariusze: ECDH, HSS proto (macierz z PCG64 NumPy),
+HSS standard, HSS production, PSK (zgodny i zły), seed QKD, kilka zapytań na
+jednym tunelu, media przez ramki KAFS (put i get, także kilka ramek), serwer
+z CYNOBER_MIN_CRYPTO=hss bez profilu po stronie klienta (odmowa).
 Exit 0 = wszystko zgodnie z oczekiwaniem.
 """
 import json
@@ -94,6 +95,26 @@ def results_ok(answer):
     return isinstance(answer, dict) and "results" in answer and answer["results"]
 
 
+def big_sha(n):
+    import hashlib
+    return hashlib.sha256(bytes(i % 251 for i in range(n))).hexdigest()
+
+
+BIG = 2_500_000  # trzy ramki KAFS po 1 MiB
+
+
+def media_ok(o):
+    a = o.get("answers", [])
+    if len(a) != 4 or not o.get("session", {}).get("kafs"):
+        return False
+    put_small, got_small, put_big, got_big = a
+    return (put_small.get("status") == "ok"
+            and got_small.get("media", {}).get("text") == "zażółć gęślą jaźń"
+            and put_big.get("status") == "ok"
+            and got_big.get("media", {}).get("size") == BIG
+            and got_big["media"].get("sha256") == big_sha(BIG))
+
+
 def main():
     exe = build_client()
     root = tempfile.mkdtemp(prefix="cynober_live_")
@@ -104,6 +125,14 @@ def main():
         ("ecdh", {}, {}, ["ZDROWIE"],
          lambda o: o.get("session", {}).get("crypto_mode") == "ecdh"
          and o["session"]["hsl"] and results_ok(o["answers"][0])),
+        ("hss_proto", {"KARM_HSS_PROFILE": "proto"}, {"KARM_HSS_PROFILE": "proto"},
+         ["ZDROWIE", "LISTA ŚWIATÓW", "ZDROWIE"],
+         lambda o: o.get("session", {}).get("hss_profile") == "proto"
+         and all(results_ok(a) for a in o["answers"])),
+        ("media_kafs", {}, {},
+         ["@put:notatka:zażółć gęślą jaźń", "@get:notatka",
+          f"@putbig:obraz.bin:{BIG}", "@get:obraz.bin"],
+         media_ok),
         ("hss_standard", {"KARM_HSS_PROFILE": "standard"}, {"KARM_HSS_PROFILE": "standard"},
          ["ZDROWIE", "LISTA ŚWIATÓW", "ZDROWIE"],
          lambda o: o.get("session", {}).get("hss_profile") == "standard"

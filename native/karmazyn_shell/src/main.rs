@@ -592,7 +592,7 @@ fn db_cmd(app: &App, rest: &str) -> Outcome {
                 Some(c) => {
                     let i = &c.info;
                     println!(
-                        "db {} {}{} hsl={} psk={} qkd={} epoch={} {} → {}",
+                        "db {} {}{} hsl={} psk={} qkd={} epoch={} {} → {} kafs={}",
                         i.remote_version,
                         i.crypto_mode,
                         i.hss_profile.as_deref().map(|p| format!("/{p}")).unwrap_or_default(),
@@ -601,7 +601,8 @@ fn db_cmd(app: &App, rest: &str) -> Outcome {
                         i.qkd_hybrid,
                         i.epoch.map(|e| e.to_string()).unwrap_or_else(|| "-".into()),
                         i.node_local,
-                        i.node_remote
+                        i.node_remote,
+                        c.kafs_enabled()
                     );
                 }
                 None => println!("db: brak połączenia (`db connect <host> [port]` albo KARMAZYN_DB)"),

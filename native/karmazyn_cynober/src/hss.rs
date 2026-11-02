@@ -4,8 +4,10 @@
 //! Profile `standard` (n=128, q=3329) i `production` (n=512, q=12289) liczą
 //! klucz publiczny i iloczyn przez NTT z wielomianem `a` z SHA-256 seeda —
 //! deterministycznie, więc da się je odtworzyć dokładnie. Profil `proto`
-//! losuje macierz generatorem NumPy (PCG64) i tu nie jest obsługiwany:
-//! klient wtedy nie ogłasza `hss` i rozmowa idzie przez ECDH.
+//! (n=15, q=256) liczy zwykły iloczyn macierzowy z symetryczną macierzą `A`,
+//! którą Python losuje generatorem NumPy (PCG64) ze stałego ziarna
+//! `KARMAZYN_HSS_KEM_A_v2_proto`. Ziarno jest stałą protokołu, więc i `A`
+//! jest stałą: `PROTO_A` niżej to wynik `_kem_matrix_a` (NumPy 2.5).
 //!
 //! Transformata jest odtworzona krok w krok tak, jak w Pythonie (ta sama
 //! kolejność operacji, ten sam pierwiastek z `_primitive_root`), bo obie
@@ -15,9 +17,19 @@ use sha2::{Digest, Sha256};
 
 pub const SHARED_SALT: &[u8] = b"KARMAZYN_HSS_KEM_SHARED_v3";
 
+/// Jak liczony jest klucz publiczny i iloczyn KEM.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Kem {
+    /// Wielomiany negacykliczne przez NTT (`standard`, `production`).
+    Ntt,
+    /// Macierz `PROTO_A` i iloczyn skalarny (`proto`).
+    Matrix,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Profile {
     pub name: &'static str,
+    pub kem: Kem,
     pub n: usize,
     pub q: i64,
     pub sk_max: i64,
@@ -36,8 +48,40 @@ impl Profile {
     }
 }
 
+pub const PROTO: Profile = Profile {
+    name: "proto",
+    kem: Kem::Matrix,
+    n: 15,
+    q: 256,
+    sk_max: 8,
+    buckets: 8,
+    recon_tolerance: 4,
+    a_seed: b"KARMAZYN_HSS_KEM_A_v2_proto",
+};
+
+/// `_kem_matrix_a(PROFILES["proto"])`: `default_rng(seed)` z pierwszych 4 B
+/// SHA-256(a_seed) (LE), `integers(0, 256, (15, 15))`, potem `(M + M.T) // 2`.
+pub const PROTO_A: [[i64; 15]; 15] = [
+    [219, 118, 57, 96, 91, 173, 203, 182, 166, 71, 175, 140, 210, 132, 160],
+    [118, 5, 184, 137, 19, 129, 100, 59, 124, 126, 118, 119, 58, 66, 57],
+    [57, 184, 111, 124, 117, 115, 146, 116, 190, 218, 133, 50, 151, 203, 98],
+    [96, 137, 124, 73, 138, 51, 74, 137, 63, 18, 133, 131, 95, 54, 130],
+    [91, 19, 117, 138, 181, 136, 88, 47, 131, 119, 93, 69, 150, 19, 159],
+    [173, 129, 115, 51, 136, 160, 49, 225, 138, 160, 148, 118, 108, 123, 155],
+    [203, 100, 146, 74, 88, 49, 214, 114, 170, 123, 21, 72, 85, 157, 194],
+    [182, 59, 116, 137, 47, 225, 114, 168, 165, 147, 216, 123, 127, 56, 118],
+    [166, 124, 190, 63, 131, 138, 170, 165, 82, 228, 228, 106, 177, 65, 155],
+    [71, 126, 218, 18, 119, 160, 123, 147, 228, 128, 137, 96, 111, 188, 136],
+    [175, 118, 133, 133, 93, 148, 21, 216, 228, 137, 95, 161, 109, 232, 124],
+    [140, 119, 50, 131, 69, 118, 72, 123, 106, 96, 161, 198, 125, 140, 175],
+    [210, 58, 151, 95, 150, 108, 85, 127, 177, 111, 109, 125, 152, 191, 181],
+    [132, 66, 203, 54, 19, 123, 157, 56, 65, 188, 232, 140, 191, 248, 101],
+    [160, 57, 98, 130, 159, 155, 194, 118, 155, 136, 124, 175, 181, 101, 96],
+];
+
 pub const STANDARD: Profile = Profile {
     name: "standard",
+    kem: Kem::Ntt,
     n: 128,
     q: 3329,
     sk_max: 3,
@@ -48,6 +92,7 @@ pub const STANDARD: Profile = Profile {
 
 pub const PRODUCTION: Profile = Profile {
     name: "production",
+    kem: Kem::Ntt,
     n: 512,
     q: 12289,
     sk_max: 3,
@@ -56,17 +101,18 @@ pub const PRODUCTION: Profile = Profile {
     a_seed: b"KARMAZYN_HSS_KEM_A_v3_n512",
 };
 
-/// Nazwa profilu → parametry. `standard` i `production` są natywne.
-/// `proto`, puste i nieznane dają `None`: klient nie ogłasza HSS.
+/// Nazwa profilu → parametry. Puste i nieznane dają `None`: klient nie
+/// ogłasza HSS i rozmowa idzie przez ECDH (natywnie nie ma domyślnego `proto`).
 pub fn profile_from_name(raw: &str) -> Option<Profile> {
     match raw.trim().to_lowercase().as_str() {
+        "proto" => Some(PROTO),
         "standard" => Some(STANDARD),
         "production" => Some(PRODUCTION),
         _ => None,
     }
 }
 
-/// Profil z `KARM_HSS_PROFILE`. Puste i `proto` → `None` (rozmowa idzie ECDH).
+/// Profil z `KARM_HSS_PROFILE`. Puste → `None` (rozmowa idzie ECDH).
 pub fn profile_from_env() -> Option<Profile> {
     profile_from_name(&std::env::var("KARM_HSS_PROFILE").unwrap_or_default())
 }
@@ -167,6 +213,13 @@ fn poly_a(p: &Profile) -> Vec<i64> {
 
 fn pubkey(sk: &[i64], p: &Profile) -> Vec<i64> {
     let sk: Vec<i64> = sk.iter().map(|v| v.rem_euclid(p.q)).collect();
+    if p.kem == Kem::Matrix {
+        // (A @ sk) % q, kem_noise = 0
+        return PROTO_A
+            .iter()
+            .map(|row| row.iter().zip(&sk).map(|(a, s)| a * s).sum::<i64>().rem_euclid(p.q))
+            .collect();
+    }
     // kem_noise = 0 we wszystkich profilach: pk = a·sk
     poly_mul(&poly_a(p), &sk, p).iter().map(|v| v % p.q).collect()
 }
@@ -174,6 +227,10 @@ fn pubkey(sk: &[i64], p: &Profile) -> Vec<i64> {
 fn dot(sk: &[i64], pk: &[i64], p: &Profile) -> i64 {
     let sk: Vec<i64> = sk.iter().map(|v| v.rem_euclid(p.q)).collect();
     let pk: Vec<i64> = pk.iter().map(|v| v.rem_euclid(p.q)).collect();
+    if p.kem == Kem::Matrix {
+        // int(np.dot(sk, pk) % q)
+        return sk.iter().zip(&pk).map(|(a, b)| a * b).sum::<i64>().rem_euclid(p.q);
+    }
     poly_mul(&sk, &pk, p)[0] % p.q
 }
 
@@ -265,8 +322,21 @@ mod tests {
     }
 
     #[test]
-    fn kem_agrees_on_both_profiles() {
-        for p in [STANDARD, PRODUCTION] {
+    fn proto_matrix_is_symmetric_and_seeded() {
+        for (i, row) in PROTO_A.iter().enumerate() {
+            for (j, v) in row.iter().enumerate() {
+                assert_eq!(*v, PROTO_A[j][i]);
+                assert!((0..256).contains(v));
+            }
+        }
+        assert_eq!(PROTO.pk_bytes(), 120);
+        assert_eq!(profile_from_name(" Proto "), Some(PROTO));
+        assert_eq!(profile_from_name(""), None);
+    }
+
+    #[test]
+    fn kem_agrees_on_all_profiles() {
+        for p in [PROTO, STANDARD, PRODUCTION] {
             for _ in 0..5 {
                 let (init, pk_a) = Initiator::new(p).unwrap();
                 let mut raw = vec![0u8; p.n];
