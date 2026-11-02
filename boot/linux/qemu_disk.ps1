@@ -199,6 +199,10 @@ $checks = [ordered]@{
     'tool z nano'          = ($two -match '(?m)^54\s*$') -and ($two -match 'local a, b = \.\.\.\r?\n\r?\nreturn')
     'tool z edit'          = $two -match '(?m)^Hej kursor'
     'autosync po sync'     = $two -match '(?m)^autosync ok'
+    # zapis przyrostowy: po `sync` dziennik pusty (8 B), autosync dopisuje tylko
+    # zmianę do .kafs, koperta .kafd zostaje; rozruch 2 odtwarza ją z dziennika
+    'dziennik zmian KAFS'  = ([regex]::Matches($one, 'dziennik=(\d+)') | ForEach-Object { [int]$_.Groups[1].Value } |
+                              Select-Object -Last 1) -gt 8
     # servitor, dziennik i stempel są treścią świata: przechodzą przez restart
     'servitor krok'        = $one -match '(?m)^servitor licznik: krok \d+'
     # rozruch 2 nie woła tick: kroki robi zegar epok PID 1 (KARMAZYN_TICK_MS)
@@ -208,7 +212,7 @@ $checks = [ordered]@{
     'stempel po restarcie' = ($one -match 'czas — pierwszy stempel') -and ($two -match 'czas — stempel zgodny')
     # rozruch 2 tylko czyta i uruchamia narzędzia: jedyny zapis to nowy stempel czasu
     # (heat, krok servitora i wpisy dziennika nie są treścią dla autosync)
-    'odczyt bez zapisu'    = $two -match 'świat=/data/cynober/worlds/karmazyn\.kafd KAFX \(AES-GCM\) bytes=\d+ zapisy=1'
+    'odczyt bez zapisu'    = $two -match 'świat=/data/cynober/worlds/karmazyn\.kafd KAFX \(AES-GCM\) bytes=\d+ dziennik=\d+ zapisy=1'
     # surowy dysk: superblok ext2/ext4, świat w kopercie KAFX, bez jawnych programów
     'ext na dysku'         = $raw.Length -gt 1081 -and $raw[1080] -eq 0x53 -and $raw[1081] -eq 0xEF
     'KAFX na dysku'        = $rawText.Contains('KAFX')

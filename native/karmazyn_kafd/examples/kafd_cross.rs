@@ -123,6 +123,21 @@ fn write(dir: &Path) -> karmazyn_kafd::Result<()> {
     s.bind(fs_root, "x", a).map_err(|e| karmazyn_kafd::Error(e.into()))?;
     let crypt = Crypt { world: None, encrypt: Some(true), master: None };
     world::save_store(&s, &dir.join("rust_world.kafd"), &crypt)?;
+
+    // świat z dziennikiem: migawka, potem jedna zmiana dopisana do .kafs;
+    // kopia odtworzona i skompaktowana (świat „wlog” dla obu plików)
+    let wl = Crypt { world: Some("wlog".into()), encrypt: Some(true), master: None };
+    let mut log = world::WorldLog::new(&dir.join("rust_wlog.kafd"), &wl);
+    log.save(&s)?;
+    s.atom_set_guest(a, 0, Some(b"zmiana".to_vec()));
+    log.save(&s)?;
+    drop(log);
+    std::fs::copy(dir.join("rust_wlog.kafd"), dir.join("rust_wlog_c.kafd"))?;
+    std::fs::copy(dir.join("rust_wlog.kafs"), dir.join("rust_wlog_c.kafs"))?;
+    let t = Store::new(true);
+    let mut back = world::WorldLog::new(&dir.join("rust_wlog_c.kafd"), &wl);
+    back.load(&t)?;
+    back.compact(&t)?;
     Ok(())
 }
 

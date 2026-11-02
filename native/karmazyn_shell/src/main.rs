@@ -795,7 +795,7 @@ fn write_if_changed(app: &App) -> Option<Result<usize, String>> {
     if h == app.synced.get() {
         return None;
     }
-    let r = st.save(&app.store);
+    let r = st.save(&app.store).map(|r| r.docs);
     if r.is_ok() {
         app.synced.set(h);
     }
@@ -857,11 +857,11 @@ fn disk_sync(app: &App) -> Outcome {
         return Outcome::Err;
     };
     let snap = app.store.export_snapshot();
-    match st.save(&app.store) {
-        Ok(n) => {
+    match st.compact(&app.store) {
+        Ok(r) => {
             app.synced.set(content_hash(&snap));
             let bytes = std::fs::metadata(&st.world).map(|m| m.len()).unwrap_or(0);
-            println!("sync {} dokumenty={n} bytes={bytes}", st.world.display());
+            println!("sync {} dokumenty={} bytes={bytes}", st.world.display(), r.docs);
             Outcome::Ok
         }
         Err(e) => {
@@ -891,9 +891,10 @@ fn disk_status(app: &App, parts: &[&str]) -> Outcome {
         None => (0, "brak pliku"),
     };
     println!(
-        "disk {} świat={} {kind} bytes={bytes} zapisy={} autosync={}{}",
+        "disk {} świat={} {kind} bytes={bytes} dziennik={} zapisy={} autosync={}{}",
         st.device.as_deref().unwrap_or("-"),
         st.world.display(),
+        st.journal_bytes(),
         st.saves(),
         if app.autosync { "on" } else { "off" },
         if st.writable() { "" } else { " ZAPIS WSTRZYMANY" }
@@ -1599,7 +1600,8 @@ fn print_help() {
   assert has|nohas|dead|nodead|lookup|t|val|stats|root|noroot …
   echo <text>
   save <path> / load <path>     KSUB_SNAP v1. load remounts lisp and lua
-  sync                          świat KAFD (KAFX) na dysk: /data/cynober/worlds/*.kafd
+  sync                          pełna migawka świata KAFD (KAFX, z T): /data/cynober/worlds/*.kafd
+                                i pusty dziennik *.kafs; autosync dopisuje do dziennika tylko zmiany
                                 po każdym poleceniu sam, gdy zmieniła się treść
                                 (KARMAZYN_AUTOSYNC=0 wyłącza)
   edit <etykieta>               edytor źródła bąbla (^S zapis, ^Q wyjście, ^K linia, ^L odśwież)

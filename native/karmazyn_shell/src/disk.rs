@@ -11,11 +11,15 @@
 //!
 //! Gdy istniejącego świata nie da się wczytać (zły klucz, uszkodzenie),
 //! zapis zostaje wstrzymany, żeby go nie nadpisać pustym Store.
+//!
+//! Zapis jest przyrostowy (`WorldLog`): autosync dopisuje zmienione
+//! dokumenty do `<świat>.kafs`, a `sync` i próg rozmiaru dziennika robią
+//! pełną migawkę `<świat>.kafd` (z temperaturami) i zerują dziennik.
 
-use karmazyn_kafd::world::{load_store, save_store};
+use karmazyn_kafd::world::{SaveReport, WorldLog};
 use karmazyn_kafd::Crypt;
 use karmazyn_substrate::Store;
-use std::cell::Cell;
+use std::cell::{Cell, RefCell, RefMut};
 use std::path::{Path, PathBuf};
 
 pub const DEFAULT_DEVICE: &str = "/dev/vda";
@@ -27,6 +31,8 @@ pub struct Storage {
     pub world: PathBuf,
     pub device: Option<String>,
     crypt: Crypt,
+    /// Migawka + dziennik; zakładany przy pierwszym użyciu z `crypt`.
+    log: RefCell<Option<WorldLog>>,
     writable: Cell<bool>,
     saves: Cell<u64>,
 }
@@ -37,19 +43,24 @@ impl Storage {
             world,
             device,
             crypt: Crypt::default(),
+            log: RefCell::new(None),
             writable: Cell::new(true),
             saves: Cell::new(0),
         }
     }
 
+    fn log(&self) -> RefMut<'_, WorldLog> {
+        RefMut::map(self.log.borrow_mut(), |l| {
+            l.get_or_insert_with(|| WorldLog::new(&self.world, &self.crypt))
+        })
+    }
+
     /// Wczytuje świat, gdy plik istnieje. `Ok(None)` = świata jeszcze nie ma.
     /// Błąd blokuje zapis.
     pub fn load(&self, store: &Store) -> Result<Option<(usize, usize)>, String> {
-        if !self.world.exists() {
-            return Ok(None);
-        }
-        match load_store(store, &self.world, &self.crypt) {
-            Ok(n) => Ok(Some(n)),
+        match self.log().load(store) {
+            Ok(None) => Ok(None),
+            Ok(Some(r)) => Ok(Some((r.atoms, r.bubbles))),
             Err(e) => {
                 self.writable.set(false);
                 Err(format!("{}: {e} — zapis wstrzymany", self.world.display()))
@@ -57,17 +68,39 @@ impl Storage {
         }
     }
 
-    pub fn save(&self, store: &Store) -> Result<usize, String> {
-        if !self.writable.get() {
-            return Err(format!(
+    fn guard(&self) -> Result<(), String> {
+        if self.writable.get() {
+            Ok(())
+        } else {
+            Err(format!(
                 "{}: świata nie dało się wczytać, zapis wstrzymany (nie nadpisuję)",
                 self.world.display()
-            ));
+            ))
         }
-        let n = save_store(store, &self.world, &self.crypt).map_err(|e| e.to_string())?;
+    }
+
+    /// Zapis przyrostowy: zmienione dokumenty do dziennika (pełny, gdy
+    /// świata jeszcze nie ma albo dziennik przerósł migawkę).
+    pub fn save(&self, store: &Store) -> Result<SaveReport, String> {
+        self.guard()?;
+        let r = self.log().save(store).map_err(|e| e.to_string())?;
         sync_fs(&self.world);
         self.saves.set(self.saves.get() + 1);
-        Ok(n)
+        Ok(r)
+    }
+
+    /// Pełna migawka (z T) i pusty dziennik — polecenie `sync`.
+    pub fn compact(&self, store: &Store) -> Result<SaveReport, String> {
+        self.guard()?;
+        let r = self.log().compact(store).map_err(|e| e.to_string())?;
+        sync_fs(&self.world);
+        self.saves.set(self.saves.get() + 1);
+        Ok(r)
+    }
+
+    /// Bajty dziennika zmian (8 = pusty, 0 = brak pliku).
+    pub fn journal_bytes(&self) -> u64 {
+        self.log().journal_bytes()
     }
 
     pub fn writable(&self) -> bool {

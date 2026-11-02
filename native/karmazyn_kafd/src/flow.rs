@@ -435,6 +435,16 @@ impl Journal {
         Ok(())
     }
 
+    /// Utrwala dopisane ramki (flush + fsync) niezależnie od `fsync` z
+    /// `open`: seria `append_atom` bez fsync na ramkę, jeden fsync na końcu.
+    pub fn commit(&mut self) -> Result<()> {
+        if let Some(f) = self.file.as_mut() {
+            f.flush()?;
+            f.sync_all()?;
+        }
+        Ok(())
+    }
+
     fn file(&mut self) -> Result<&mut File> {
         self.file.as_mut().ok_or_else(|| Error("KAFDJournal zamknięty".into()))
     }
@@ -629,6 +639,15 @@ pub fn compact_journal(
         f.sync_all()?;
     }
     Ok(CompactReport { atoms: atoms.len(), bytes: blob.len(), empty: false, recovered_frames })
+}
+
+/// Pusty dziennik: sam nagłówek KAFS (F_STREAMING), fsync. Jak
+/// `reset_journal=True` w `compact_journal`.
+pub fn reset_journal(path: &Path) -> Result<()> {
+    let mut f = File::create(path)?;
+    f.write_all(&stream_header(F_PHI_NATIVE | F_STREAMING))?;
+    f.sync_all()?;
+    Ok(())
 }
 
 /// fsync katalogu: utrwala `rename`/utworzenie wpisu (Unix). Na Windows

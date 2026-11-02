@@ -236,7 +236,10 @@ pub fn write_world(
 }
 
 #[cfg(feature = "substrate")]
-pub use store::{load_store, save_store, snapshot_from_world, world_from_snapshot};
+pub use store::{
+    journal_path, load_store, save_store, snapshot_from_world, world_from_snapshot, LoadReport, SaveReport,
+    WorldLog, COMPACT_MIN, NATIVE_FRAME,
+};
 
 #[cfg(feature = "substrate")]
 mod store {
@@ -428,6 +431,252 @@ mod store {
         store.import_snapshot(&snap);
         Ok(counts)
     }
+
+    /// Id ramki z licznikami `native` (następne id, `reaped`) w dzienniku.
+    pub const NATIVE_FRAME: &str = "@native";
+    /// Dziennik nie mniejszy niż tyle bajtów, zanim próg wymusi compact.
+    pub const COMPACT_MIN: u64 = 256 * 1024;
+
+    /// Wynik `WorldLog::load`.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub struct LoadReport {
+        pub atoms: usize,
+        pub bubbles: usize,
+        /// Ramki dziennika odtworzone na migawce.
+        pub replayed: u64,
+        /// Ogon dziennika obcięty (urwana ramka po twardym wyłączeniu).
+        pub truncated: bool,
+    }
+
+    /// Wynik `WorldLog::save`.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub struct SaveReport {
+        /// Ramki dopisane do dziennika (0 przy compact i bez zmian).
+        pub frames: usize,
+        /// Pełny zapis migawki i wyzerowany dziennik.
+        pub compacted: bool,
+        /// Dokumenty świata po zapisie.
+        pub docs: usize,
+    }
+
+    /// Klucz treści dokumentu bez T: zmienia się, gdy zmienia się to, co
+    /// autosync uważa za treść. Samo stygnięcie nie przepisuje dokumentu.
+    fn doc_keys(snap: &StoreSnapshot) -> HashMap<String, u64> {
+        use std::hash::{Hash, Hasher};
+        let mut keys = HashMap::with_capacity(snap.atoms.len() + snap.bubbles.len());
+        for a in &snap.atoms {
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            (&a.s, &a.e, a.value_token, &a.payload).hash(&mut h);
+            keys.insert(atom_sid(a.id), h.finish());
+        }
+        for b in &snap.bubbles {
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            let mut binds: Vec<_> = snap
+                .binds
+                .iter()
+                .filter(|x| x.bid == b.id)
+                .map(|x| (&x.name, x.aid))
+                .collect();
+            binds.sort();
+            (&b.label, b.parent, binds, snap.roots.contains(&b.id)).hash(&mut h);
+            keys.insert(bubble_sid(b.id), h.finish());
+        }
+        keys
+    }
+
+    /// Dziennik obok migawki: `swiat.kafd` → `swiat.kafs`.
+    pub fn journal_path(kafd: &Path) -> std::path::PathBuf {
+        kafd.with_extension("kafs")
+    }
+
+    /// Świat z dziennikiem zmian. Migawka `<nazwa>.kafd` to pełny zapis jak
+    /// `save_store` (czytelny dla Pythona); `<nazwa>.kafs` to dziennik KAFS
+    /// z dokumentami, które zmieniły się od migawki, w KX1 tym samym kluczem
+    /// świata. Pusta ramka = dokument usunięty; ramka `@native` = liczniki.
+    /// Odczyt: migawka, potem ramki po kolei. Compact: pełny zapis migawki,
+    /// potem pusty dziennik — przerwany w środku zostawia stan do odtworzenia.
+    pub struct WorldLog {
+        kafd: std::path::PathBuf,
+        kafs: std::path::PathBuf,
+        crypt: crate::Crypt,
+        /// Klucze treści tego, co jest na dysku (migawka + dziennik).
+        keys: HashMap<String, u64>,
+        native: Map<String, Value>,
+        journal: Option<crate::Journal>,
+        /// Następny zapis musi być pełny (nowy świat, świat z obcymi id).
+        full: bool,
+    }
+
+    impl WorldLog {
+        pub fn new(kafd: &Path, crypt: &crate::Crypt) -> Self {
+            let mut crypt = crypt.clone();
+            if crypt.world.is_none() {
+                crypt.world = Some(crate::cipher::infer_world_from_path(kafd));
+            }
+            WorldLog {
+                kafd: kafd.to_path_buf(),
+                kafs: journal_path(kafd),
+                crypt,
+                keys: HashMap::new(),
+                native: Map::new(),
+                journal: None,
+                full: true,
+            }
+        }
+
+        pub fn kafd(&self) -> &Path {
+            &self.kafd
+        }
+
+        pub fn kafs(&self) -> &Path {
+            &self.kafs
+        }
+
+        /// Bajty dziennika na dysku (0 = brak albo sam nagłówek).
+        pub fn journal_bytes(&self) -> u64 {
+            std::fs::metadata(&self.kafs).map(|m| m.len()).unwrap_or(0)
+        }
+
+        fn open_journal(&mut self) -> Result<&mut crate::Journal> {
+            if self.journal.is_none() {
+                let mut meta = Map::new();
+                meta.insert("format".into(), Value::from(format!("{STORE_META}-journal")));
+                let j = crate::Journal::open_with(&self.kafs, false, &meta, &self.crypt)?;
+                self.journal = Some(j);
+            }
+            Ok(self.journal.as_mut().expect("dziennik otwarty"))
+        }
+
+        /// Migawka + dziennik → Store. `Ok(None)` = świata jeszcze nie ma
+        /// (osierocony dziennik bez migawki zostanie wyzerowany przy zapisie).
+        pub fn load(&mut self, store: &Store) -> Result<Option<LoadReport>> {
+            if !self.kafd.exists() {
+                self.full = true;
+                return Ok(None);
+            }
+            let mut w = World::read(&self.kafd, self.crypt.world.as_deref(), self.crypt.master.as_deref())?;
+            if w.meta.get("format").and_then(Value::as_str) != Some(STORE_META) {
+                return err(format!("{}: to nie jest świat {STORE_META}", self.kafd.display()));
+            }
+            let (mut replayed, mut truncated) = (0, false);
+            if self.journal_bytes() > 8 {
+                let j = self.open_journal()?;
+                truncated = j.recovered.truncated;
+                for a in j.atoms(0.0)? {
+                    replayed += 1;
+                    if a.id == NATIVE_FRAME {
+                        if let Some(n) = json::loads(&a.data) {
+                            w.meta.insert("native".into(), Value::Object(n));
+                        }
+                    } else if a.data.is_empty() {
+                        w.docs.retain(|d| d.id != a.id);
+                    } else if let Some(doc) = decode_doc(&a.id, &a.data) {
+                        match w.docs.iter_mut().find(|d| d.id == a.id) {
+                            Some(slot) => *slot = doc,
+                            None => w.docs.push(doc),
+                        }
+                    }
+                }
+            }
+            let snap = snapshot_from_world(&w);
+            let report = LoadReport {
+                atoms: snap.atoms.len(),
+                bubbles: snap.bubbles.len(),
+                replayed,
+                truncated,
+            };
+            store.import_snapshot(&snap);
+            // to, co jest na dysku, w id natywnego Store
+            let back = store.export_snapshot();
+            let (_, extra) = world_from_snapshot(&back);
+            self.native = match extra.get("native") {
+                Some(Value::Object(m)) => m.clone(),
+                _ => Map::new(),
+            };
+            self.keys = doc_keys(&back);
+            // świat z obcymi id (zapis Pythona): dziennik nie może dopisywać
+            // `a{n}` obok `cell_…`, więc pierwszy zapis jest pełny
+            let on_disk: std::collections::HashSet<&str> = w.docs.iter().map(|d| d.id.as_str()).collect();
+            self.full = on_disk.len() != self.keys.len()
+                || self.keys.keys().any(|k| !on_disk.contains(k.as_str()));
+            Ok(Some(report))
+        }
+
+        /// Zapis: tylko zmienione dokumenty do dziennika (bez T, bez fsync na
+        /// ramkę, jeden commit). Pełny zapis, gdy świata nie ma, gdy go
+        /// trzeba (obce id) albo gdy dziennik przerósł migawkę.
+        pub fn save(&mut self, store: &Store) -> Result<SaveReport> {
+            if self.full {
+                return self.compact(store);
+            }
+            let snap = store.export_snapshot();
+            let (docs, extra) = world_from_snapshot(&snap);
+            let keys = doc_keys(&snap);
+            let native = match extra.get("native") {
+                Some(Value::Object(m)) => m.clone(),
+                _ => Map::new(),
+            };
+            let mut frames: Vec<crate::Atom> = Vec::new();
+            for (id, data) in &docs {
+                if self.keys.get(id) != keys.get(id) {
+                    frames.push(crate::Atom::new(id.clone(), data.clone(), crate::MIME_DEFAULT, 50.0, 100.0, crate::A_RAW));
+                }
+            }
+            let mut gone: Vec<&String> = self.keys.keys().filter(|id| !keys.contains_key(*id)).collect();
+            gone.sort();
+            for id in gone {
+                frames.push(crate::Atom::new(id.clone(), Vec::new(), crate::MIME_DEFAULT, 50.0, 100.0, crate::A_RAW));
+            }
+            if native != self.native {
+                frames.push(crate::Atom::new(
+                    NATIVE_FRAME,
+                    json::dumps(&native),
+                    "application/json",
+                    50.0,
+                    100.0,
+                    crate::A_RAW,
+                ));
+            }
+            if !frames.is_empty() {
+                let j = self.open_journal()?;
+                for a in &frames {
+                    j.append_atom(a)?;
+                }
+                j.commit()?;
+            }
+            self.keys = keys;
+            self.native = native;
+            let world_bytes = std::fs::metadata(&self.kafd).map(|m| m.len()).unwrap_or(0);
+            if self.journal_bytes() >= world_bytes.max(COMPACT_MIN) {
+                return self.compact(store);
+            }
+            Ok(SaveReport { frames: frames.len(), compacted: false, docs: docs.len() })
+        }
+
+        /// Pełny zapis migawki (jak `save_store`, z T), potem pusty dziennik.
+        pub fn compact(&mut self, store: &Store) -> Result<SaveReport> {
+            let snap = store.export_snapshot();
+            let (docs, extra) = world_from_snapshot(&snap);
+            let saved = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs_f64())
+                .unwrap_or(0.0);
+            let n = write_world(&self.kafd, &docs, extra.clone(), &self.crypt, saved)?;
+            if let Some(mut j) = self.journal.take() {
+                j.close(false)?;
+            }
+            if self.kafs.exists() {
+                crate::reset_journal(&self.kafs)?;
+            }
+            self.keys = doc_keys(&snap);
+            self.native = match extra.get("native") {
+                Some(Value::Object(m)) => m.clone(),
+                _ => Map::new(),
+            };
+            self.full = false;
+            Ok(SaveReport { frames: 0, compacted: true, docs: n })
+        }
+    }
 }
 
 #[cfg(test)]
@@ -485,6 +734,145 @@ mod tests {
         // nowy atom nie koliduje z wczytanymi
         assert!(t.atom_new("nowy", "", 50.0) > b);
         assert!(load_store(&t, &path, &crate::Crypt::with_master(&[4u8; 32])).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(feature = "substrate")]
+    fn tmpdir(name: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("kafd_wlog_{}_{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    /// Zmiana jednego atomu dopisuje ramkę do `.kafs`, a koperty `.kafd`
+    /// nie rusza. Usunięcie i liczniki idą ramkami, odczyt odtwarza stan.
+    #[cfg(feature = "substrate")]
+    #[test]
+    fn worldlog_appends_changes_and_replays() {
+        use karmazyn_substrate::Store;
+        let dir = tmpdir("append");
+        let path = dir.join("swiat.kafd");
+        let crypt = crate::Crypt::with_master(&[3u8; 32]);
+        let s = Store::new(true);
+        let root = s.bubble_new("r", None);
+        s.set_root(root);
+        let mut ids = Vec::new();
+        for i in 0..50 {
+            let a = s.atom_new("var", &format!("x{i}"), 60.0);
+            s.atom_set_guest(a, 0, Some(vec![b'z'; 200]));
+            s.bind(root, &format!("x{i}"), a).unwrap();
+            ids.push(a);
+        }
+        let mut log = WorldLog::new(&path, &crypt);
+        assert_eq!(log.load(&s).unwrap(), None);
+        let first = log.save(&s).unwrap();
+        assert!(first.compacted, "nowy świat: pełny zapis");
+        let kafd_before = std::fs::read(&path).unwrap();
+
+        // bez zmian treści (samo stygnięcie): nic nie idzie na dysk
+        s.settle(3);
+        assert_eq!(log.save(&s).unwrap().frames, 0);
+
+        // jeden atom: jedna ramka, koperta nietknięta
+        s.atom_set_guest(ids[7], 0, Some(b"nowe".to_vec()));
+        let r = log.save(&s).unwrap();
+        assert_eq!((r.frames, r.compacted), (1, false));
+        assert_eq!(std::fs::read(&path).unwrap(), kafd_before, "koperta przepisana");
+        assert!(log.journal_bytes() > 8);
+        let raw = std::fs::read(log.kafs()).unwrap();
+        assert!(!raw.windows(4).any(|w| w == b"nowe"), "dane jawne w dzienniku");
+
+        // nowy atom (+ zmieniony bąbel, + liczniki), usunięty atom (+ bąbel)
+        let extra = s.atom_new("var", "nowy", 70.0);
+        s.bind(root, "nowy", extra).unwrap();
+        s.unbind(root, "x3");
+        s.delete_atom(ids[3]);
+        assert_eq!(log.save(&s).unwrap().frames, 4);
+
+        let t = Store::new(true);
+        let mut back = WorldLog::new(&path, &crypt);
+        let rep = back.load(&t).unwrap().unwrap();
+        assert_eq!((rep.atoms, rep.bubbles, rep.replayed, rep.truncated), (50, 1, 5, false));
+        assert_eq!(t.atom_payload(ids[7]).as_deref(), Some(&b"nowe"[..]));
+        assert!(!t.has_atom(ids[3]));
+        assert_eq!(t.lookup(root, "nowy"), Some(extra));
+        assert!(t.atom_new("kolejny", "", 50.0) > extra, "licznik id z ramki @native");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Compact daje migawkę taką jak pełny zapis (`save_store`) tego samego
+    /// stanu, a urwany ogon dziennika po twardym wyłączeniu odpada.
+    #[cfg(feature = "substrate")]
+    #[test]
+    fn worldlog_compact_equals_full_save_and_survives_torn_tail() {
+        use karmazyn_substrate::Store;
+        let dir = tmpdir("compact");
+        let path = dir.join("swiat.kafd");
+        let crypt = crate::Crypt::with_master(&[3u8; 32]);
+        let s = Store::new(true);
+        let root = s.bubble_new("r", None);
+        s.set_root(root);
+        let a = s.atom_new("var", "x", 60.0);
+        s.bind(root, "x", a).unwrap();
+        let mut log = WorldLog::new(&path, &crypt);
+        log.save(&s).unwrap();
+        s.atom_set_guest(a, 0, Some(b"pierwsza".to_vec()));
+        log.save(&s).unwrap();
+        let good = log.journal_bytes();
+
+        // urwana ramka: dziennik obcięty do ostatniej dobrej
+        {
+            use std::io::Write;
+            let mut f = std::fs::OpenOptions::new().append(true).open(log.kafs()).unwrap();
+            f.write_all(&[crate::FT_ATOM, 0, 0, 0, 99, 1, 2]).unwrap();
+        }
+        let t = Store::new(true);
+        let mut back = WorldLog::new(&path, &crypt);
+        let rep = back.load(&t).unwrap().unwrap();
+        assert!(rep.truncated);
+        assert_eq!(back.journal_bytes(), good);
+        assert_eq!(t.atom_payload(a).as_deref(), Some(&b"pierwsza"[..]));
+
+        // compact = pełny zapis: te same dokumenty i META (bez `saved`)
+        back.compact(&t).unwrap();
+        assert_eq!(back.journal_bytes(), 8);
+        let full = dir.join("pelny.kafd");
+        save_store(&t, &full, &crate::Crypt { world: Some("swiat".into()), ..crypt.clone() }).unwrap();
+        let x = World::read(&path, Some("swiat"), Some(&[3u8; 32])).unwrap();
+        let y = World::read(&full, Some("swiat"), Some(&[3u8; 32])).unwrap();
+        assert_eq!(x.docs, y.docs);
+        let strip = |m: &Map<String, Value>| {
+            let mut m = m.clone();
+            m.remove("saved");
+            m
+        };
+        assert_eq!(strip(&x.meta), strip(&y.meta));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Świat z obcymi id (zapis Pythona) dostaje pełny zapis przy pierwszej
+    /// zmianie, żeby dziennik nie zdublował dokumentów.
+    #[cfg(feature = "substrate")]
+    #[test]
+    fn worldlog_foreign_ids_force_full_save() {
+        use karmazyn_substrate::Store;
+        let dir = tmpdir("foreign");
+        let path = dir.join("swiat.kafd");
+        let crypt = crate::Crypt::with_master(&[3u8; 32]);
+        let docs = vec![("cell_1".to_string(), encode_doc("var", "x", 55.0, Map::new(), b"py"))];
+        let mut extra = Map::new();
+        extra.insert("origin".into(), Value::from("python"));
+        write_world(&path, &docs, extra, &crypt, 1.0).unwrap();
+
+        let s = Store::new(true);
+        let mut log = WorldLog::new(&path, &crypt);
+        assert_eq!(log.load(&s).unwrap().unwrap().atoms, 1);
+        let r = log.save(&s).unwrap();
+        assert!(r.compacted);
+        let w = World::read(&path, Some("swiat"), Some(&[3u8; 32])).unwrap();
+        assert_eq!(w.docs.len(), 1);
+        assert!(w.docs[0].id.starts_with('a'));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -290,6 +290,29 @@ def main():
         if not ok:
             fails.append("python czyta rust_world")
 
+        # świat z dziennikiem (Rust WorldLog): Python odszyfrowuje ramkę .kafs,
+        # migawka bez zmiany, a po compact load_documents widzi zmianę
+        j = K.KAFDJournal(os.path.join(d, "rust_wlog.kafs"), fsync=False,
+                          world="wlog", encrypt=True)
+        frames = [(a.id, a.data) for a in j.iter_atoms()]
+        j.close()
+        ok = (len(frames) == 1 and frames[0][0] == "a0"
+              and karmazyn_store._decode_atom(frames[0][1])[1] == b"zmiana"
+              and b"zmiana" not in open(os.path.join(d, "rust_wlog.kafs"), "rb").read())
+        print(f"{'OK  ' if ok else 'BŁĄD'} Python odszyfrowuje dziennik świata Rusta: "
+              f"{[f[0] for f in frames]}")
+        if not ok:
+            fails.append("python czyta rust_wlog.kafs")
+        for name, want in (("rust_wlog.kafd", b""), ("rust_wlog_c.kafd", b"zmiana")):
+            st = karmazyn_kernel.Store(thermal=True)
+            n = karmazyn_store.load_documents(st, os.path.join(d, name), world="wlog")
+            got = st.get_atom("a0")
+            data = got.metadata.get("data", b"") if got is not None else None
+            ok = n == 4 and data == want
+            print(f"{'OK  ' if ok else 'BŁĄD'} Python wczytuje {name}: {n} dokumentów, a0={data!r}")
+            if not ok:
+                fails.append(f"python czyta {name}")
+
         # Rust czyta pliki Pythona — opis jak u Pythona
         rust = json.loads(cargo("read", d))
         py = py_view(d)
