@@ -305,6 +305,43 @@ impl Evaluator {
         })
     }
 
+    /// Program z wirtualnego systemu plików: `katalog/plik` rodzaju `lua`.
+    /// Reszta `spec` idzie do chunku jako argumenty `...`. Chunk działa w Store
+    /// shella; katalog jest wołającym, więc `require` widzi jego powiązania.
+    pub fn run_file(&self, store: &Store, spec: &str) -> Result<String, String> {
+        let mut parts = spec.split_whitespace();
+        let Some(path) = parts.next() else {
+            return Err("usage: run <katalog>/<plik>".into());
+        };
+        let Some((dir, file)) = vfs::split(path) else {
+            return Err("usage: run <katalog>/<plik>".into());
+        };
+        let Some(src) = vfs::read(store, dir, file) else {
+            return Ok(format!("blad: brak programu {dir}/{file}"));
+        };
+        if vfs::kind(store, dir, file).as_deref() != Some("lua") {
+            return Ok(format!("blad: {dir}/{file} nie jest programem lua"));
+        }
+        let args: Vec<String> = parts.map(str::to_string).collect();
+        let func = match self.lua.load(&src).set_name(format!("{dir}/{file}")).into_function() {
+            Ok(f) => f,
+            Err(e) => return Ok(format!("blad: {e}")),
+        };
+        self.prints.borrow_mut().clear();
+        if let Err(e) = self.arm_budget.call::<()>(()) {
+            return Ok(format!("blad: {e}"));
+        }
+        let _caller = CallerPush::new(&self.caller, vfs::dir_id(store, dir));
+        Ok(match func.call::<MultiValue>(MultiValue::from_iter(
+            args.into_iter()
+                .map(|a| self.lua.create_string(a).map(Value::String))
+                .filter_map(Result::ok),
+        )) {
+            Ok(values) => join_print_and_return(&self.prints.borrow(), &values),
+            Err(e) => format!("blad: {e}"),
+        })
+    }
+
     /// Jeden krok servitora: bąbel kodu wołany bez argumentów, z limitem
     /// instrukcji. `Ok((wynik, wypisane))`: `Some(true)` — chunk zwrócił
     /// `true` (pracował), `Some(false)` — zwrócił `false` (skończył), `None` —
@@ -358,6 +395,26 @@ impl Evaluator {
     pub fn code_write(&self, store: &Store, label: &str, data: &[u8]) -> Result<(), String> {
         code::write(store, label, data)?;
         forget_loaded(&self.lua, label).map_err(|e| e.to_string())
+    }
+
+    /// `katalog/plik` w `karmazyn.fs`.
+    pub fn fs_split(path: &str) -> Option<(&str, &str)> {
+        vfs::split(path)
+    }
+
+    /// Katalogi wirtualnego systemu plików.
+    pub fn fs_dirs(&self, store: &Store) -> Vec<String> {
+        vfs::dirs(store)
+    }
+
+    /// Pliki w katalogu.
+    pub fn fs_files(&self, store: &Store, dir: &str) -> Vec<String> {
+        vfs::files(store, dir)
+    }
+
+    /// Rodzaj pliku (`lua` albo np. `txt`).
+    pub fn fs_kind(&self, store: &Store, dir: &str, file: &str) -> Option<String> {
+        vfs::kind(store, dir, file)
     }
 
     /// `karmazyn.fs.read` for host code (the shell editor).
@@ -1837,6 +1894,20 @@ mod tests {
         let store = Store::new(true);
         let ev = Evaluator::new(&store);
         (store, ev)
+    }
+
+    #[test]
+    fn saved_lua_file_runs_in_the_store() {
+        let (store, ev) = guest();
+        ev.fs_write(&store, "prog", "hej.lua", "lua", b"return 6*7").unwrap();
+        assert_eq!(ev.run_file(&store, "prog/hej.lua").unwrap(), "42");
+        store.settle(80);
+        assert_eq!(ev.run_file(&store, "prog/hej.lua").unwrap(), "42");
+        ev.fs_write(&store, "prog", "notatka", "txt", b"return 1").unwrap();
+        let note = ev.run_file(&store, "prog/notatka").unwrap();
+        assert!(note.contains("nie jest programem"), "{note}");
+        assert!(ev.run_file(&store, "prog/brak").unwrap().contains("brak programu"));
+        assert!(ev.run_file(&store, "../x").is_err());
     }
 
     #[test]

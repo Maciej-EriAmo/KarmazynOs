@@ -26,6 +26,7 @@ use karmazyn_lua::Evaluator as LuaEvaluator;
 use karmazyn_substrate::{state_for_t, Store, StoreSnapshot, T_INIT};
 use std::env;
 use std::io::{self, BufRead, Write};
+use std::path::Path;
 use std::process;
 use std::sync::mpsc;
 use std::thread;
@@ -349,6 +350,8 @@ fn dispatch(app: &App, line: &str) -> Outcome {
         }
     } else if head.eq_ignore_ascii_case("edit") {
         edit_file(app, &parts)
+    } else if head.eq_ignore_ascii_case("run") {
+        run_program(app, &parts)
     } else if head.eq_ignore_ascii_case("sync") {
         disk_sync(app)
     } else if head.eq_ignore_ascii_case("disk") {
@@ -832,8 +835,21 @@ fn write_if_changed(app: &App) -> Option<Result<usize, String>> {
     let r = st.save(&app.store).map(|r| r.docs);
     if r.is_ok() {
         app.synced.set(h);
+        project_programs(app);
     }
     Some(r)
+}
+
+/// Kopia wirtualnego systemu plików na zamontowanym dysku: `/data/fs/...`.
+fn project_programs(app: &App) {
+    let root = Path::new(disk::DATA_MOUNT);
+    for d in app.lua.fs_dirs(&app.store) {
+        for f in app.lua.fs_files(&app.store, &d) {
+            if let Some(bytes) = app.lua.fs_read(&app.store, &d, &f) {
+                let _ = disk::project_program(root, &d, &f, &bytes);
+            }
+        }
+    }
 }
 
 /// Po każdym poleceniu. Cicho, gdy się udało; błąd idzie na ekran.
@@ -850,8 +866,11 @@ fn autosync(app: &App) {
 /// sprawdza przy zapisie (ostrzega, zapisuje mimo to).
 fn edit_file(app: &App, parts: &[&str]) -> Outcome {
     let target = parts.get(1).copied().unwrap_or("");
+    if let Some((dir, file)) = LuaEvaluator::fs_split(target) {
+        return edit_program(app, dir, file);
+    }
     if !LuaEvaluator::code_label(target) {
-        println!("usage: edit <etykieta>   np. edit hej");
+        println!("usage: edit <etykieta> | edit <katalog>/<plik>");
         return Outcome::Err;
     }
     let text = app
@@ -875,6 +894,90 @@ fn edit_file(app: &App, parts: &[&str]) -> Outcome {
     match editor::run(target, &text, &mut save) {
         Ok(()) => {
             println!("edit: zamknięto {target}");
+            Outcome::Ok
+        }
+        Err(e) => {
+            println!("{e}");
+            Outcome::Err
+        }
+    }
+}
+
+/// `edit katalog/plik`: plik w wirtualnym systemie plików. `.lua` jest programem.
+fn edit_program(app: &App, dir: &str, file: &str) -> Outcome {
+    let text = app
+        .lua
+        .fs_read(&app.store, dir, file)
+        .map(|b| String::from_utf8_lossy(&b).into_owned())
+        .unwrap_or_default();
+    let kind = if file.ends_with(".lua") || app.lua.fs_kind(&app.store, dir, file).as_deref() == Some("lua")
+    {
+        "lua".to_string()
+    } else {
+        app.lua
+            .fs_kind(&app.store, dir, file)
+            .unwrap_or_else(|| "txt".into())
+    };
+    let title = format!("{dir}/{file}");
+    let mut save = |text: &str| -> Result<String, String> {
+        let warn = (kind == "lua").then(|| app.lua.check_syntax(&title, text).err()).flatten();
+        app.lua.fs_write(&app.store, dir, file, &kind, text.as_bytes())?;
+        let mirrored = match disk::project_program(Path::new(disk::DATA_MOUNT), dir, file, text.as_bytes()) {
+            Ok(()) if Path::new(disk::DATA_MOUNT).is_dir() => {
+                format!(", plik {}/fs/{dir}/{file}", disk::DATA_MOUNT)
+            }
+            Ok(()) => String::new(),
+            Err(e) => format!(", plik: {e}"),
+        };
+        let disk = match (app.autosync, write_if_changed(app)) {
+            (true, Some(Ok(_))) => ", świat zapisany".to_string(),
+            (true, Some(Err(e))) => format!(", dysk: {e}"),
+            _ => String::new(),
+        };
+        Ok(match warn {
+            Some(e) => format!("Zapisano{disk}{mirrored}, ale błąd składni: {e}"),
+            None => format!("Zapisano {title}{disk}{mirrored}"),
+        })
+    };
+    match editor::run(&title, &text, &mut save) {
+        Ok(()) => {
+            println!("edit: zamknięto {title}");
+            Outcome::Ok
+        }
+        Err(e) => {
+            println!("{e}");
+            Outcome::Err
+        }
+    }
+}
+
+/// `run katalog/plik [arg...]`. Brak w Store, a jest kopia na `/data/fs`, wciąga ją do Store.
+fn run_program(app: &App, parts: &[&str]) -> Outcome {
+    let spec = parts[1..].join(" ");
+    if spec.is_empty() {
+        println!("usage: run <katalog>/<plik> [arg...]");
+        return Outcome::Err;
+    }
+    if let Some((dir, file)) = parts.get(1).and_then(|p| LuaEvaluator::fs_split(p)) {
+        if app.lua.fs_read(&app.store, dir, file).is_none() {
+            if let Some(bytes) = disk::read_program(Path::new(disk::DATA_MOUNT), dir, file) {
+                let kind = if file.ends_with(".lua") { "lua" } else { "txt" };
+                if let Err(e) = app.lua.fs_write(&app.store, dir, file, kind, &bytes) {
+                    println!("{e}");
+                    return Outcome::Err;
+                }
+            }
+        }
+    }
+    match app.lua.run_file(&app.store, &spec) {
+        Ok(s) if s.starts_with("blad:") => {
+            println!("{s}");
+            Outcome::Err
+        }
+        Ok(s) => {
+            if !s.is_empty() {
+                println!("{s}");
+            }
             Outcome::Ok
         }
         Err(e) => {
@@ -1639,6 +1742,9 @@ fn print_help() {
                                 po każdym poleceniu sam, gdy zmieniła się treść
                                 (KARMAZYN_AUTOSYNC=0 wyłącza)
   edit <etykieta>               edytor źródła bąbla (^S zapis, ^Q wyjście, ^K linia, ^L odśwież)
+  edit <katalog>/<plik>         plik w wirtualnym fs (Store). .lua jest programem.
+                                Z dyskiem kopia ląduje w /data/fs i wraca ze światem
+  run <katalog>/<plik> [arg...] uruchamia program lua z tego pliku w tym samym Store
   disk / disk format            stan świata / ext3 z dziennikiem na dysku z nieznanymi danymi
   db connect <host> [port]      tunel Cynober-Secure-1.2 (HSS/ECDH + HSL) do Karmin_DB
                                 PSK i profil HSS: /data/cynober/client.json; brak pliku = ECDH
@@ -1656,7 +1762,8 @@ fn print_help() {
                                 tick); tick / settle dokładają epoki ręcznie
   kcc <etykieta> [--safe] [--c] własny kompilator K0 → C99 (minister kcc): źródło z bąbla
                                 kodu, #include \"lib.k0\" = bąbel lib.k0, wynik w atomie c bąbla;
-                                --c wypisuje C. Uruchomienia na płycie jeszcze nie ma (brak cc)
+                                --c wypisuje C. Wynik C nie jest programem płyty; program lua
+                                zapisuje się jako plik i wstaje przez run
   dziennik [n]                  wpisy startu, poleceń i servitorów (atomy w bąblu dziennik)
   czas                          stempel w świecie (bąbel czas) + SNTP z KARMAZYN_NTP
   help | quit

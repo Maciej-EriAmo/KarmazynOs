@@ -1,7 +1,7 @@
 # SESSION_CONTINUE — KarmazynOs (kontynuacja)
 
 **Data:** 2026-11-02 (koniec sesji)  
-**Repo Os:** `main` @ **`604498c`** (+ commit z tym plikiem), wypchnięte na origin; CI `gate-product` zielone  
+**Repo Os:** `main` @ **`f0a5281`** (+ commit z tym plikiem), wypchnięte na origin  
 **DBase:** `master` @ **`39f696e`**, zsynchronizowany z originem  
 **Kanon:** [`KANON.md`](KANON.md) — jądro Linuksa jest nośnikiem (proces, sterowniki). System plików to bąble i atomy w KAFD. Sieć to Cynober-Secure/HSL do Karmin_DB.
 
@@ -22,6 +22,7 @@
 | Sieć | `KARMAZYN_IP` / `KARMAZYN_GW` (grub.cfg: QEMU, host = 10.0.2.2), virtio_net; `KARM_PSK` i `KARM_HSS_PROFILE` z aktywnego profilu w `/data/cynober/client.json` (obok `master.key`); brak pliku = ECDH, `proto` = HSS proto |
 | Karmin_DB | `native/karmazyn_cynober`: ECDH, HSS `proto`/`standard`/`production`, HSL-1.1, PSK, QKD, media przez ramki KAFS (`put_media`/`get_media` w bibliotece); w shellu `db connect / db <KarminQL> / db info (kafs=) / db close` — poleceń mediów w shellu jeszcze nie ma |
 | Narzędzia | bąbel kodu: etykieta = nazwa, źródło w atomie `src` (E=`lua`), bąbel jest korzeniem. `tool <etykieta>`, `require` po `code.link` albo w górę rodziców, `nano`/`edit` na źródle. `lua_bin/` jest ziarnem wchłanianym przez PID 1 |
+| Program na fs | `edit <katalog>/<plik>` zapisuje plik w bąblu `fs` (katalog = bąbel, plik = atom). `run <katalog>/<plik>` uruchamia rodzaj `lua` w tym samym Store. Z `/dev/vda` kopia jest w `/data/fs` i wraca ze światem. Bez dysku (`qemu_serial`) plik żyje do wyłączenia |
 | Epoki | PID 1 ma zegar epok: `KARMAZYN_TICK_MS=2000` w `grub.cfg` (0 = tylko `tick`/`settle`; na hoście domyślnie wyłączony). Epoka = tick Store + epoka sesji Lua + krok servitorów. Wejście czyta wątek, jedna linia na żądanie (`edit`, `nano` mają klawiaturę dla siebie). Linia startowa `epoki — co 2000 ms` |
 | Servitory | bąbel kodu w gościu Lua, nie proces. `servitor up <etykieta>` wiąże `src` z korzeniem `servitory` (reach = czy) i daje T_INIT; `servitor down` odpina. Krok w epoce, gdy `src` HOT/WARM (T = kiedy). Chunk zwraca `true` = pracował (grzeje), nic = bezczynny (stygnie, zasypia), `false` = skończył (poza zasięgiem); błąd nie grzeje. `karmazyn.code.wake(etykieta)` budzi przez T. Krok nie czyta klawiatury |
 | Dziennik | `dziennik [n]`: wpisy startu, poleceń i servitorów to atomy (E=`dziennik`) w korzeniu `dziennik`; ponad 200 odpięte i zbierane przez vacuum; nie budzą autosync, na dysk idą z najbliższym zapisem świata. Tylko PID 1 i tryb interaktywny (batch na hoście liczy id od zera) |
@@ -41,7 +42,7 @@ python native\karmazyn_kafd\cross\cross_check.py      # KAFD/KAFX/świat/WorldLo
 python native\karmazyn_cynober\cross\live_check.py    # klient vs żywy serwer DBase (w tym proto i media)
 ```
 
-Skrypty `.ps1` uruchamiać z PowerShella, nie przez `pwsh` z Git Basha (tam `link` z coreutils psuje wybór toolchainu). Ostatni przebieg 2026-11-02: wszystkie powyższe zielone.
+Skrypty `.ps1` uruchamiać z PowerShella, nie przez `pwsh` z Git Basha (tam `link` z coreutils psuje wybór toolchainu). Ostatni pełny przebieg 2026-11-02 był zielony. Po `run` przebudowano `out/KarmazynOS.iso` i powtórzono tylko `qemu_serial` (PASS). `qemu_disk`, `qemu_vga` i `qemu_net` nie były powtarzane.
 
 **CI (`.github/workflows/gate.yml`):** `cargo test` dla slab, substrate, lisp, kafd (`--features substrate`), cynober, shell, kcc + build kentry (z katalogu `boot/kentry`). Bez QEMU, bez `cross_check.py` i `live_check.py` (potrzebują DBase).
 
@@ -58,16 +59,24 @@ Skrypty `.ps1` uruchamiać z PowerShella, nie przez `pwsh` z Git Basha (tam `lin
 7. **Klient Cynober:** HSS `proto` i media przez KAFS (`23ffc1b`).
 8. **CI:** krok kentry padał od 2026-10-29 (cargo czyta `.cargo/config.toml` z katalogu wywołania) — naprawione (`8c49e6d`); testy kafd i cynober w gate (`6075447`, `590c4ba`).
 9. **Plan obserwatorów** ([obserwatorzy.md](obserwatorzy.md), `fb84e59`…`604498c`): użytkownik / obserwator / superobserwator, założenia przyjęte; tryb nadzwyczajny jako działanie warunkowe przestrzeni Φ (reach + `max_age`), nie flaga.
+10. **Jedynym prawem T×reach jest crate `native/karmazyn_substrate`** (`f0a5281`). Pythonowy `Store` odmawia. KAFD woła `decay_to_tick` i jawny korzeń. Płyta nazywa się `out/KarmazynOS.iso`.
+11. **Program Lua na wirtualnym systemie plików.** `edit <katalog>/<plik>` i `run <katalog>/<plik>` w bąblu `fs`, ten sam Store. Z dyskiem kopia `/data/fs`. To nie jest kompilacja Rusta.
 
 Szczegół poleceń: [tools_lua.md](tools_lua.md). HSS: [linux_hss_roadmap.md](linux_hss_roadmap.md), faza 3.
 
 ## Do zrobienia w następnej sesji
 
-1. **Media z `k$`.** Klient umie `put_media` / `get_media`, shell nie ma poleceń. Najpierw ustalić źródło i cel danych w pojęciach Karmazyna (np. `db put <id> @bąbel`: payload atomu `src` albo dokumentu `karmazyn.fs`; `db get <id>` do atomu w bąblu), potem polecenia. Bramka: `qemu_net.ps1` z put i get, porównanie treści.
-2. **Python czyta dziennik świata.** `karmazyn_store.load_documents` (DBase) widzi tylko migawkę `.kafd`; zmiany z `.kafs` po ostatnim `sync` są dla Pythona niewidoczne. Dodać w DBase odtwarzanie `{świat}.kafs` (ramki = dokumenty, pusta = usunięty, `@native` = liczniki) przy wczytaniu świata. Bramka: `cross_check.py` (Python wczytuje `rust_wlog.kafd` + `.kafs` bez compact i widzi zmianę) i testy DBase.
-3. **Faza 3 HSS** — po decyzjach niżej: kanał `/dev/hss` → PID 1 → atom pytania w bąblu `hss` → `code.wake('hss')` → krok servitora → odpowiedź do modułu. Bramka z mapy: zgodny hint przechodzi, zły hint i brak sesji nie.
-4. **Bramki zgodności w CI.** `cross_check.py` i `live_check.py` działają tylko lokalnie. Jeśli DBase da się pobrać w CI (repo publiczne albo token), dołożyć krok z checkoutem DBase i obu skryptami.
-5. **Obserwatorzy — fundament w substracie** (nie zależy od otwartych pytań): `max_age` w natywnym prawie Store (rozpad po wieku w epokach, niezależny od T; `karmazyn_substrate` + lustro w `karmazyn_slab`, zgodnie z Pythonem, jeśli tam jest) i widok w dół od korzenia `B_u` (drzewo potomków, granica bez wyjścia do rodzica). Bramki: testy substratu, `stage1_verify.ps1`, `stage2_verify.ps1`. Tożsamości, logowanie i tryb nadzwyczajny — po rozstrzygnięciu pytań niżej.
+1. **Kompilacja Rusta z płyty, zgodnie z kontraktem substratu.** Program Lua już się zapisuje i wstaje. Do Rusta trzeba uzupełnić:
+   - łańcuch na płycie: `rustc`, sysroot, linker i cel, którego jedynym trwałym API jest substrat (hostowy `rustc` składa shell przed budową płyty);
+   - bibliotekę prawa poza statycznym `/init` — budowa musl odrzuca `cdylib`, więc nie ma `libkarmazyn_substrate` do linkowania;
+   - wejście wyniku w ten sam Store: `run` wykonuje tylko plik rodzaju `lua`, tekst C99 z `kcc` zostaje w atomie `c`, a osobny ELF nie rejestruje `env_of` ani `extra_reach`;
+   - katalog `/data/fs` powstaje dopiero z `/dev/vda`. W `qemu_serial` program żyje w Store do wyłączenia.
+   Bramka: program Rust zapisany na płycie woła Store PID 1 i nie zakłada własnego. `qemu_disk` pokazuje plik po restarcie.
+2. **Media z `k$`.** Klient umie `put_media` / `get_media`, shell nie ma poleceń. Najpierw ustalić źródło i cel danych w pojęciach Karmazyna (np. `db put <id> @bąbel`: payload atomu `src` albo dokumentu `karmazyn.fs`; `db get <id>` do atomu w bąblu), potem polecenia. Bramka: `qemu_net.ps1` z put i get, porównanie treści.
+3. **Python czyta dziennik świata.** `karmazyn_store.load_documents` (DBase) widzi tylko migawkę `.kafd`; zmiany z `.kafs` po ostatnim `sync` są dla Pythona niewidoczne. Dodać w DBase odtwarzanie `{świat}.kafs` (ramki = dokumenty, pusta = usunięty, `@native` = liczniki) przy wczytaniu świata. Bramka: `cross_check.py` (Python wczytuje `rust_wlog.kafd` + `.kafs` bez compact i widzi zmianę) i testy DBase.
+4. **Faza 3 HSS** — po decyzjach niżej: kanał `/dev/hss` → PID 1 → atom pytania w bąblu `hss` → `code.wake('hss')` → krok servitora → odpowiedź do modułu. Bramka z mapy: zgodny hint przechodzi, zły hint i brak sesji nie.
+5. **Bramki zgodności w CI.** `cross_check.py` i `live_check.py` działają tylko lokalnie. Jeśli DBase da się pobrać w CI (repo publiczne albo token), dołożyć krok z checkoutem DBase i obu skryptami.
+6. **Obserwatorzy — fundament w substracie** (nie zależy od otwartych pytań): `max_age` w natywnym prawie Store (rozpad po wieku w epokach, niezależny od T; `karmazyn_substrate` + lustro w `karmazyn_slab`, zgodnie z Pythonem, jeśli tam jest) i widok w dół od korzenia `B_u` (drzewo potomków, granica bez wyjścia do rodzica). Bramki: testy substratu, `stage1_verify.ps1`, `stage2_verify.ps1`. Tożsamości, logowanie i tryb nadzwyczajny — po rozstrzygnięciu pytań niżej.
 
 ## Do decyzji
 

@@ -1,5 +1,6 @@
 //! `karmazyn.fs` w Store: katalog to bąbel, plik to atom z treścią w payload.
-//! Dokumenty, nie narzędzia. Kod shella żyje w [`crate::code`].
+//! Plik o rodzaju `lua` jest programem: shell uruchamia go przez `run`.
+//! Narzędzie po samej etykiecie dalej żyje w [`crate::code`].
 //!
 //! ```text
 //! bąbel "fs"            korzeń, bez rodzica
@@ -58,6 +59,33 @@ fn dir(store: &Store, name: &str, create: bool) -> Option<BubbleId> {
     let b = store.bubble_new(name, Some(r));
     store.set_root(b);
     Some(b)
+}
+
+fn name_ok(name: &str) -> bool {
+    !name.is_empty()
+        && name != "."
+        && name != ".."
+        && !name.contains('/')
+        && !name.contains('\\')
+        && !name.contains('@')
+        && !name.chars().any(|c| c.is_whitespace() || c.is_control())
+}
+
+/// `katalog/plik`. Jedna kreska, obie strony są nazwą pliku.
+pub fn split(path: &str) -> Option<(&str, &str)> {
+    let (d, f) = path.split_once('/')?;
+    (name_ok(d) && name_ok(f) && !f.contains('/')).then_some((d, f))
+}
+
+/// Bąbel katalogu, gdy już istnieje.
+pub fn dir_id(store: &Store, name: &str) -> Option<BubbleId> {
+    dir(store, name, false)
+}
+
+/// Rodzaj pliku (pole E atomu): `lua` jest programem.
+pub fn kind(store: &Store, d: &str, f: &str) -> Option<String> {
+    let a = file(store, d, f)?;
+    store.atom_se(a).map(|(_, e)| e)
 }
 
 fn file(store: &Store, d: &str, f: &str) -> Option<AtomId> {

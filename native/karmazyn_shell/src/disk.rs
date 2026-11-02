@@ -26,6 +26,39 @@ pub const DEFAULT_DEVICE: &str = "/dev/vda";
 pub const DATA_MOUNT: &str = "/data";
 pub const DEFAULT_WORLD: &str = "karmazyn";
 
+fn fs_name(name: &str) -> bool {
+    !name.is_empty()
+        && name != "."
+        && name != ".."
+        && !name.contains('/')
+        && !name.contains('\\')
+        && !name.contains('@')
+        && !name.chars().any(|c| c.is_whitespace() || c.is_control())
+}
+
+/// Plik programu na dysku: `<root>/fs/<katalog>/<plik>`. `None`, gdy nazwa wychodzi z katalogu.
+pub fn program_path(root: &Path, dir: &str, file: &str) -> Option<PathBuf> {
+    (fs_name(dir) && fs_name(file)).then(|| root.join("fs").join(dir).join(file))
+}
+
+/// Zapis kopii pliku. Brak katalogu `root` nic nie robi: wirtualny system plików
+/// i tak jest w Store.
+pub fn project_program(root: &Path, dir: &str, file: &str, data: &[u8]) -> Result<(), String> {
+    if !root.is_dir() {
+        return Ok(());
+    }
+    let path = program_path(root, dir, file).ok_or_else(|| "fs: zła ścieżka".to_string())?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(path, data).map_err(|e| e.to_string())
+}
+
+/// Odczyt kopii z dysku. Brak pliku albo zła nazwa to `None`.
+pub fn read_program(root: &Path, dir: &str, file: &str) -> Option<Vec<u8>> {
+    std::fs::read(program_path(root, dir, file)?).ok()
+}
+
 /// Świat na dysku.
 pub struct Storage {
     pub world: PathBuf,
@@ -382,6 +415,21 @@ mod tests {
         assert!(!is_blank(&img).unwrap());
         let head = std::fs::read(&img).unwrap();
         assert!(crate::ext2::has_ext_superblock(&head[..2048]));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn program_file_lands_on_disk_and_refuses_escape() {
+        let dir = std::env::temp_dir().join(format!("shell_fs_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        project_program(&dir, "prog", "hej.lua", b"return 6*7").unwrap();
+        assert_eq!(
+            read_program(&dir, "prog", "hej.lua").as_deref(),
+            Some(&b"return 6*7"[..])
+        );
+        assert!(program_path(&dir, "..", "x").is_none());
+        assert!(read_program(&dir, "..", "hej.lua").is_none());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
