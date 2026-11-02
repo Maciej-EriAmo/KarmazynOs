@@ -53,7 +53,7 @@ Szczegół narzędzi: [tools_lua.md](tools_lua.md).
 - DBase: czerwony test `tests.test_kernel TestStore.test_nested_tick_is_noop` (był wcześniej). Wzmianka o natywnym KAFD w `DBase/docs/KAFD.md`. Dwa lokalne commity czekają. Push DBase osobno.
 - DHCP i klawiatura USB na prawdziwym sprzęcie. Moduły `virt` pod to nie były sprawdzane.
 - `rustc` na płycie, samobudowa ISO, własne jądro, faza G Store bez nośnika.
-- Demon upcall HSL z mapy 19 października.
+- Servitor HSS (upcall HSL) z mapy 19 października — od 2026-11-02 bąbel kodu w gościu, nie demon; otwarte punkty w `linux_hss_roadmap.md`, faza 3.
 - Dopieszczanie gościa Lua 1.1.3 (`puc_subset`) — to host, nie ta płyta.
 - `generate_from_idea` zostaje `nil`. `ThermalSurface.write(..., visible=True)` nie grzeje macierzy.
 

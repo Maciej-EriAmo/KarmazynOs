@@ -31,9 +31,9 @@ Phi → konsolidacja → Bąbel → archiwizacja → Hologram → generacja → 
 
 ## 3. Model bezpieczeństwa (HSS v2.5.0)
 
-- **Ring‑LWE** do wymiany kluczy między agentami a demonem.
+- **Ring‑LWE** do wymiany kluczy między agentami a servitorem HSS.
 - **HMAC‑SHA256** fingerprint na każdym bąblu (próg Hamminga ≤ średnia + 2σ).
-- **Most LSM** (`holo_lsm`) pełni wyłącznie rolę **upcall filter** i deleguje decyzje o dostępie do uprzywilejowanego demona `hss-daemon` w przestrzeni użytkownika (zasada "No-Plaintext-In-Kernel").
+- **Most LSM** (`holo_lsm`) pełni wyłącznie rolę **upcall filter** i deleguje decyzje o dostępie do servitora HSS — bąbla kodu w gościu PID 1, nie osobnego procesu (zasada "No-Plaintext-In-Kernel"; klucz sesji nie trafia ani do jądra, ani do gościa).
 - Zamiast przestarzałego Additive Key Modification, używany jest mechanizm **KDF-Based Attenuation** wyprowadzający klucze agentów: $s_A = \text{KDF}(s_{\text{sess}}, \text{agent\_id}, \mathcal{P}_{\text{task}})$.
 - **Izolacja HSS vs VM:** VM izoluje zasoby (CPU/RAM), podczas gdy HSS izoluje informacje geometrycznie. Bezpieczeństwo jest tu traktowane jako własność topologiczna przestrzeni wykonawczej, chronionej kryptograficznie, z rygorystycznym zakazem zapisu w rdzeniu Φ (AAD Context Binding).
 

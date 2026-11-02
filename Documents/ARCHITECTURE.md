@@ -31,7 +31,7 @@ Phi → consolidate → Bubble → archive → Hologram → generate → Phi
 
 ## 3. Security model
 
-- **Ring‑LWE** for key exchange between agents and daemon.
+- **Ring‑LWE** for key exchange between agents and the HSS servitor (a code bubble in the PID 1 guest, not a daemon).
 - **HMAC‑SHA256** fingerprint on every bubble (Hamming threshold ≤ mean + 2σ).
 - **LSM bridge** (`holo_lsm`) delegates access decisions to userspace KarmazynOS.
 

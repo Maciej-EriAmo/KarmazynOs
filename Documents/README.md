@@ -101,7 +101,7 @@ Full specification: [HSS Paper v2.6.0](https://doi.org/10.5281/zenodo.19548693).
 | File | Description |
 |---|---|
 | `karmazyn.py` | Thermodynamic Memory Kernel v1.1.1 — Φ, bubbles, holograms |
-| `hss_demo.py` | HSSDaemon — Ring-LWE session management |
+| `hss_demo.py` | `HSSDaemon` — symulacja zarządzania sesją Ring-LWE (na płycie HSS jest servitorem w gościu) |
 | `hss_karmazyn_matrix.py` | Atom matrix with thermodynamic decay |
 | `shell.py` | Karmazyn Shell (ksh) v1.1.0 |
 | `studio.py` | KarmazynOS Studio v1.1.0 — local HTTP development environment |
