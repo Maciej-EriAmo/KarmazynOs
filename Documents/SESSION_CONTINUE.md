@@ -67,7 +67,11 @@ Szczegół poleceń: [tools_lua.md](tools_lua.md). HSS: [linux_hss_roadmap.md](l
 3. **Faza 3 HSS** — po decyzjach niżej: kanał `/dev/hss` → PID 1 → atom pytania w bąblu `hss` → `code.wake('hss')` → krok servitora → odpowiedź do modułu. Bramka z mapy: zgodny hint przechodzi, zły hint i brak sesji nie.
 4. **Bramki zgodności w CI.** `cross_check.py` i `live_check.py` działają tylko lokalnie. Jeśli DBase da się pobrać w CI (repo publiczne albo token), dołożyć krok z checkoutem DBase i obu skryptami.
 
-## Do decyzji (przed fazą 3 HSS)
+## Do decyzji
+
+- **Obserwatorzy** ([obserwatorzy.md](obserwatorzy.md), plan): użytkownik widzi tylko swój bąbel, obserwator ≈ superużytkownik, superobserwator ≈ root. Przed pracą rozstrzygnąć trzy pytania z § 5 (treść bąbli dla obserwatora, konsola fizyczna dla superobserwatora, mapowanie na role Karmin_DB).
+
+### Przed fazą 3 HSS
 
 - **Długość epoki płyty.** Decyzja HSS przychodzi najpóźniej po jednej epoce; 2000 ms to za wolno dla dostępu do pliku. Krótsza epoka przyspiesza też stygnięcie całego świata (przy 200 ms osierocony atom znika po kilku sekundach zamiast ~80 s). Alternatywa: dłuższy limit czasu w module HSL.
 - **API hosta dla servitora HSS:** HMAC na kluczu z keyringu PID (bez bajtów klucza w gościu), odczyt pytania, zapis odpowiedzi.
