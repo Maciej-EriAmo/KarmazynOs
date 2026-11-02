@@ -5,17 +5,21 @@
 //!   cargo run --release -- -e "atom var x 50" -e stats -e quit
 //!   cargo run --release -- examples/smoke.ksh
 //!
-//! Commands: help | version | stats | atom | … | save | load | quit
+//! Commands: help | version | stats | atom | … | save | load | log | czas | quit
 //! Lisp guest: line starting with `(` → karmazyn_lisp::Evaluator::eval_line.
 
+mod czas;
 mod console;
 mod disk;
 mod editor;
 mod ext2;
+mod log;
 mod net;
+mod uslugi;
 
 use disk::Storage;
 use std::cell::RefCell;
+use std::sync::Arc;
 use karmazyn_lisp::Evaluator;
 use karmazyn_lua::Evaluator as LuaEvaluator;
 
@@ -59,6 +63,10 @@ struct App {
     db: RefCell<Option<karmazyn_cynober::Client>>,
     /// Po każdym poleceniu zapis na dysk, jeśli Store się zmienił.
     autosync: bool,
+    /// Dziennik startu i poleceń (pamięć, plik po `bind_from_env`).
+    log: Arc<log::Log>,
+    /// Nadzór usług. `None` w batchu — tam procesy długotrwałe nie wstają.
+    uslugi: RefCell<Option<uslugi::Nadzor>>,
     /// Skrót ostatniego snapshotu na dysku (albo wczytanego z dysku).
     synced: std::cell::Cell<u64>,
 }
@@ -91,6 +99,8 @@ fn main() {
         db: RefCell::new(None),
         autosync: autosync_on,
         synced: std::cell::Cell::new(0),
+        log: Arc::new(log::Log::memory()),
+        uslugi: RefCell::new(None),
     };
     let disk_line = open_disk(&mut app);
     // Ziarno wchodzi do świata tylko na płycie (PID 1). Na hoście shell
@@ -141,10 +151,20 @@ fn main() {
         }
     }
 
+    app.log.bind_from_env();
+    let czas_report = czas::check_from_env();
+
     if !batch.is_empty() {
         println!("karmazyn_shell {VERSION} — batch ({} cmds)", batch.len());
         if let Some((false, msg)) = &disk_line {
             println!("[WARN] disk — {msg}");
+        }
+        let (log_ok, log_msg) = app.log.boot_status();
+        if !log_ok {
+            println!("[WARN] log — {log_msg}");
+        }
+        if !czas_report.ok {
+            println!("[WARN] czas — {}", czas_report.detail);
         }
         let mut failed = false;
         for cmd in batch {
@@ -167,7 +187,29 @@ fn main() {
     }
 
     app.lua.enable_stdin(true);
-    print_boot(tools, &disk_line, &console_line, &net_line);
+    print_boot(tools, &disk_line, &console_line, &net_line, &app.log, &czas_report);
+    let (log_ok, log_detail) = app.log.boot_status();
+    let nadzor = uslugi::Nadzor::boot(
+        uslugi::BootSnap {
+            console: console_line.as_ref().map(|r| match r {
+                Ok(names) => Ok(names.join(" + ")),
+                Err(e) => Err(e.clone()),
+            }),
+            log_ok,
+            log_detail,
+            tools,
+            disk: disk_line.clone(),
+            net: net_line.clone(),
+            czas_ok: czas_report.ok,
+            czas_detail: czas_report.detail.clone(),
+        },
+        Arc::clone(&app.log),
+    );
+    announce(&app.log, nadzor.summary(), "usługi");
+    for line in nadzor.lines() {
+        announce(&app.log, (line.0, line.2), &line.1);
+    }
+    *app.uslugi.borrow_mut() = Some(nadzor);
     println!("karmazyn_shell {VERSION} — Stage 2 (native, no Python)");
     println!("thermal={thermal}  lisp: (   lua: `lua <chunk>`   tool: `tool <etykieta> [args]`   type `help`");
 
@@ -212,6 +254,7 @@ fn main() {
 
 fn dispatch(app: &App, line: &str) -> Outcome {
     let t = line.trim();
+    app.log.record("shell", &clip(t, 200));
     if t.starts_with('(') {
         return eval_lisp(app, t);
     }
@@ -280,6 +323,12 @@ fn dispatch(app: &App, line: &str) -> Outcome {
         disk_sync(app)
     } else if head.eq_ignore_ascii_case("disk") {
         disk_status(app, &parts)
+    } else if head.eq_ignore_ascii_case("log") {
+        log_cmd(app, &parts)
+    } else if head.eq_ignore_ascii_case("czas") {
+        czas_cmd()
+    } else if head.eq_ignore_ascii_case("usluga") {
+        usluga_cmd(app, &parts)
     } else if head.eq_ignore_ascii_case("tick") {
         shell_tick(app, &parts)
     } else if head.eq_ignore_ascii_case("settle") {
@@ -361,28 +410,162 @@ fn print_boot(
     disk: &Option<(bool, String)>,
     console: &Option<Result<Vec<String>, String>>,
     net: &Option<Result<String, String>>,
+    log: &log::Log,
+    czas: &czas::Report,
 ) {
     let color = console::is_terminal();
+    let line = |code: &str, name: &str, detail: &str| {
+        boot_line(color, code, name, detail);
+        let text = if detail.is_empty() {
+            format!("{code} {name}")
+        } else {
+            format!("{code} {name} — {detail}")
+        };
+        log.record("boot", &text);
+    };
     match console {
-        Some(Ok(names)) => boot_line(color, "ok", "console", &names.join(" + ")),
-        Some(Err(e)) => boot_line(color, "warn", "console", &format!("/dev/console ({e})")),
+        Some(Ok(names)) => line("ok", "console", &names.join(" + ")),
+        Some(Err(e)) => line("warn", "console", &format!("/dev/console ({e})")),
         None => {}
     }
-    boot_line(color, "ok", "store", "");
-    boot_line(color, "ok", "lisp", "");
-    boot_line(color, "ok", "lua", "");
+    let (log_ok, log_detail) = log.boot_status();
+    line(if log_ok { "ok" } else { "warn" }, "log", &log_detail);
+    line("ok", "store", "");
+    line("ok", "lisp", "");
+    line("ok", "lua", "");
     match tools {
-        Some(n) if n > 0 => boot_line(color, "ok", "narzędzia", &format!("{n} bąbli")),
-        Some(_) => boot_line(color, "warn", "narzędzia", "brak bąbli kodu"),
+        Some(n) if n > 0 => line("ok", "narzędzia", &format!("{n} bąbli")),
+        Some(_) => line("warn", "narzędzia", "brak bąbli kodu"),
         None => {}
     }
     if let Some((ok, detail)) = disk {
-        boot_line(color, if *ok { "ok" } else { "warn" }, "disk", detail);
+        line(if *ok { "ok" } else { "warn" }, "disk", detail);
     }
     match net {
-        Some(Ok(l)) => boot_line(color, "ok", "net", l),
-        Some(Err(e)) => boot_line(color, "warn", "net", e),
+        Some(Ok(l)) => line("ok", "net", l),
+        Some(Err(e)) => line("warn", "net", e),
         None => {}
+    }
+    line(if czas.ok { "ok" } else { "warn" }, "czas", &czas.detail);
+}
+
+fn announce(log: &log::Log, status: (bool, String), name: &str) {
+    let (ok, detail) = status;
+    boot_line(console::is_terminal(), if ok { "ok" } else { "warn" }, name, &detail);
+    let text = if detail.is_empty() {
+        format!("{} {name}", if ok { "ok" } else { "warn" })
+    } else {
+        format!("{} {name} — {detail}", if ok { "ok" } else { "warn" })
+    };
+    log.record("boot", &text);
+}
+
+fn clip(s: &str, n: usize) -> String {
+    if s.chars().count() <= n {
+        return s.to_string();
+    }
+    let head: String = s.chars().take(n).collect();
+    format!("{head}…")
+}
+
+fn log_cmd(app: &App, parts: &[&str]) -> Outcome {
+    let n = if parts.len() <= 1 {
+        30
+    } else {
+        match parts[1].parse::<usize>() {
+            Ok(n) if n > 0 => n,
+            _ => {
+                println!("usage: log [n]");
+                return Outcome::Err;
+            }
+        }
+    };
+    let lines = app.log.tail(n);
+    if lines.is_empty() {
+        println!("log: pusto");
+        return Outcome::Ok;
+    }
+    for line in lines {
+        println!("{line}");
+    }
+    Outcome::Ok
+}
+
+fn czas_cmd() -> Outcome {
+    let r = czas::check_from_env();
+    println!("czas: {}", r.detail);
+    if r.ok {
+        Outcome::Ok
+    } else {
+        Outcome::Err
+    }
+}
+
+fn usluga_cmd(app: &App, parts: &[&str]) -> Outcome {
+    let guard = app.uslugi.borrow();
+    let Some(nadzor) = guard.as_ref() else {
+        println!("usługa: nadzór wstaje przy interaktywnym starcie");
+        return Outcome::Err;
+    };
+    let verb = parts.get(1).copied().unwrap_or("").to_ascii_lowercase();
+    let name = parts.get(2).copied().unwrap_or("");
+    match verb.as_str() {
+        "" => {
+            for line in nadzor.list() {
+                println!("{line}");
+            }
+            Outcome::Ok
+        }
+        "status" if name.is_empty() => {
+            for line in nadzor.list() {
+                println!("{line}");
+            }
+            Outcome::Ok
+        }
+        "status" => match nadzor.status(name) {
+            Some(line) => {
+                println!("{line}");
+                Outcome::Ok
+            }
+            None => {
+                println!("usługa: nie ma `{name}`");
+                Outcome::Err
+            }
+        },
+        "up" if !name.is_empty() => match nadzor.up(name) {
+            Ok(msg) => {
+                println!("{msg}");
+                Outcome::Ok
+            }
+            Err(e) => {
+                println!("{e}");
+                Outcome::Err
+            }
+        },
+        "down" if !name.is_empty() => match nadzor.down(name) {
+            Ok(msg) => {
+                println!("{msg}");
+                Outcome::Ok
+            }
+            Err(e) => {
+                println!("{e}");
+                Outcome::Err
+            }
+        },
+        other if name.is_empty() && !other.is_empty() => match nadzor.status(other) {
+            Some(line) => {
+                println!("{line}");
+                Outcome::Ok
+            }
+            None => {
+                println!("usage: usluga | usluga status <nazwa> | usluga up <nazwa> | usluga down <nazwa>");
+                Outcome::Err
+            }
+        },
+        _ => {
+            println!("usage: usluga | usluga status <nazwa> | usluga up <nazwa> | usluga down <nazwa>");
+            Outcome::Err
+        }
     }
 }
 
@@ -1414,6 +1597,15 @@ fn print_help() {
   db connect <host> [port]      tunel Cynober-Secure-1.2 (HSS/ECDH + HSL) do Karmin_DB
                                 PSK i profil HSS: /data/cynober/client.json; brak pliku = ECDH
   db <zapytanie>                KarminQL przez tunel (np. db ZDROWIE); db info / db close
+  log [n]                       dziennik startu i poleceń (domyślnie 30)
+                                plik: KARMAZYN_LOG albo <data_home>/log/karmazyn.log
+                                KARMAZYN_LOG=none zostawia samą pamięć
+  czas                          protokół sprawdzania czasu (stempel + SNTP)
+                                KARMAZYN_NTP=host[:port], KARMAZYN_CLOCK=ścieżka|none
+  usluga                        nadzór usług (HOT/WARM/COLD/TOMB)
+  usluga up|down <nazwa>        podnieś albo zatrzymaj usługę z katalogu
+                                KARMAZYN_USLUGI albo <data_home>/uslugi/<nazwa>/
+                                run, opcjonalnie oneshot, down, needs
   (define x 10) / lisp <expr>   mini-Lisp guest (atoms = vars)
   lua <chunk>                   Lua guest (mlua). return karmazyn._VERSION
                                 limit instrukcji na chunk: KARMAZYN_LUA_BUDGET (0 = brak)
