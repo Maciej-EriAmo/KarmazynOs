@@ -26,26 +26,35 @@ Podstawa: [bubble_network_assumptions.md](bubble_network_assumptions.md) — bą
 5. **Shell pozostaje ministrem spraw wewnętrznych** (KANON): obserwator i superobserwator to tryby operatora jądra. Użytkownik to klient — widzi swój bąbel przez widok, a nie model jądra.
 6. **Oprogramowanie ma dwa poziomy.** Ogólne instaluje obserwator: bąble kodu w bibliotece świata (dziś ziarno `lua_bin` i narzędzia), a użytkownik dostaje je przez powiązanie (`code.link`) — widzi tylko to, co mu powiązano. Jednostkowe instaluje użytkownik we własnym `B_u`; dla innych nie istnieje, obserwator widzi tylko jego kształt.
 
-### Tryb nadzwyczajny superobserwatora (propozycja do potwierdzenia)
+### Tryb nadzwyczajny superobserwatora
 
-Z zasady 4 wynikają trzy rzeczy, w prawie Store:
+**Przyjęte 2026-11-02:** nikt nie może w nieskończoność podgrzewać superobserwatora. Tryb wygasa zaraz po wykonaniu zadań.
 
-- **Otwierany jawnie.** Sesja superobserwatora to atom w bąblu `tożsamości`, zakładany z konsoli po podaniu klucza węzła. Bez niego shell pracuje jako obserwator.
-- **Wygasa sam.** Atom sesji stygnie w epokach jak każdy inny; po zejściu do COLD tryb się zamyka. Praca go nie podgrzewa, więc nie da się go utrzymywać w nieskończoność — trzeba go otworzyć od nowa.
-- **Zostawia ślad.** Każde działanie trafia do dziennika jako wpis widoczny dla obserwatora (kształt i opis działania, bez treści bąbli użytkowników).
+W prawie Store znaczy to:
+
+- **Atom sesji jest niegrzewalny.** Nic go nie podgrzewa: ani odczyt (`HEAT_READ`, `lookup`), ani zapis, ani `heat`, `set_t`, `code.wake`, `servitor up` — niezależnie od tego, kto woła, także sam superobserwator. T może tylko maleć.
+- **Wygasa po zadaniach, nie po czasie.** Sesja otwiera się dla zadań nazwanych przy otwarciu (np. instalacja, konfiguracja wstępna, rotacja kluczy). Po wykonaniu ostatniego zadania atom sesji jest odpinany od razu — tryb się zamyka, nie czeka na stygnięcie.
+- **Stygnięcie to tylko górny limit.** Gdy zadanie utknie, atom sesji i tak schodzi do COLD w ustalonej liczbie epok i tryb się zamyka. Przedłużyć się go nie da.
+- **Nowe zadanie = nowe otwarcie.** Zamkniętej sesji nie można wznowić; kolejna wymaga ponownego otwarcia z konsoli.
+
+Propozycja do potwierdzenia (sposób otwarcia i ślad):
+
+- **Otwierany jawnie.** Sesja to atom w bąblu `tożsamości`, zakładany z konsoli po podaniu klucza węzła, z listą zadań. Bez niego shell pracuje jako obserwator.
+- **Zostawia ślad.** Otwarcie, każde działanie i zamknięcie trafiają do dziennika jako wpisy widoczne dla obserwatora (kształt i opis działania, bez treści bąbli użytkowników).
 
 ## 3. Czego brakuje w kodzie (stan 2026-11-02)
 
 1. **Reach i `lookup` idą w górę przez rodziców.** Bąbel użytkownika z rodzicem w drzewie systemu widziałby powiązania rodzica. `B_u` musi być korzeniem bez rodzica, a widok musi zatrzymywać się na jego granicy — potrzebny jest widok w dół, którego substrat dziś nie ma.
 2. **Jeden gość Lua na cały shell.** Wspólne zmienne globalne zdradziłyby jednego użytkownika drugiemu. Potrzebny osobny stan Lua na tożsamość, z `caller = B_u` i API przefiltrowanym do widoku.
 3. **Shell działa zawsze jako superobserwator** — dokładnie odwrotnie niż zasada 4. Nie ma logowania ani tożsamości. Docelowo shell po starcie jest obserwatorem, a tryb nadzwyczajny trzeba otworzyć.
-4. **Szyfrowanie treści kluczem `s_A`** zależy od fazy 3 HSS ([linux_hss_roadmap.md](linux_hss_roadmap.md)). Bez niego granica użytkownika jest logiczna (widok), a nie kryptograficzna.
+4. **Substrat nie zna atomu niegrzewalnego.** Dziś każdy odczyt (`lookup`, `heat`) i zapis podnosi T, a `set_t` ustawia dowolne. Atom sesji superobserwatora potrzebuje flagi w prawie Store: T tylko maleje, żadna ścieżka go nie podnosi.
+5. **Szyfrowanie treści kluczem `s_A`** zależy od fazy 3 HSS ([linux_hss_roadmap.md](linux_hss_roadmap.md)). Bez niego granica użytkownika jest logiczna (widok), a nie kryptograficzna.
 
 ## 4. Kolejność
 
 1. **Tożsamości jako atomy.** Bąbel `tożsamości`, widoczny tylko dla superobserwatora; atom tożsamości: rola, id `B_u`, weryfikator klucza (nie hasło).
 2. **Widok w substracie.** Każda operacja shella i gościa przez widok z korzeniem: użytkownik — drzewo `B_u` z treścią; obserwator — kształt całości (istnienie, rozmiar, T, reach) bez treści bąbli użytkowników i bez kluczy, odczyt bez grzania; superobserwator — wszystko.
-3. **Tryb nadzwyczajny** superobserwatora: atom sesji w `tożsamości`, wygasanie przez stygnięcie, wpisy w dzienniku.
+3. **Tryb nadzwyczajny** superobserwatora: atom niegrzewalny w substracie, atom sesji w `tożsamości` z listą zadań, zamknięcie po ostatnim zadaniu, stygnięcie jako górny limit, wpisy w dzienniku.
 4. **Logowanie na konsoli** i znak zachęty zależny od roli (np. `u$` / `o$` / `k$`).
 5. **Osobny gość Lua na tożsamość**; biblioteka oprogramowania ogólnego i instalacja jednostkowa w `B_u`.
 6. **Pryzmat i szyfrowanie treści `B_u` kluczem `s_A`** — razem z fazą 3 HSS; pryzmat udostępniony przez użytkownika daje obserwatorowi wgląd w treść.
@@ -58,8 +67,9 @@ Z zasady 4 wynikają trzy rzeczy, w prawie Store:
 - Obserwator widzi tylko kształt (istnienie, rozmiar, T) — samą strukturę. Treść tylko przez pryzmat udostępniony przez użytkownika. Obserwator zarządza, ale nie czyta.
 - Superobserwator widzi wszystko, dlatego nie pracuje ciągle — tylko w sytuacjach nadzwyczajnych: instalacja systemu i konfiguracja wstępna, bezpieczeństwo na poziomie enterprise.
 - Oprogramowanie ogólne instaluje obserwator, jednostkowe — użytkownik.
+- Nikt nie może w nieskończoność podgrzewać superobserwatora; tryb wygasa zaraz po wykonaniu zadań (§ 2, tryb nadzwyczajny).
 
 **Otwarte:**
 
-- **Tryb nadzwyczajny** (§ 2): otwieranie z konsoli kluczem węzła, wygasanie przez stygnięcie atomu sesji, ślad w dzienniku — propozycja do potwierdzenia.
+- **Otwarcie i ślad trybu nadzwyczajnego** (§ 2): z konsoli kluczem węzła i z listą zadań; wpisy w dzienniku dla obserwatora — propozycja do potwierdzenia.
 - **Mapowanie na role Karmin_DB** (`reader` / `writer` / `admin` w `cynober_world_auth.py`): użytkownik jako `writer` swojego świata, obserwator jako `admin`?
