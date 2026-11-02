@@ -71,8 +71,8 @@ Klucz sesji nie jest atomem i nie trafia do gościa. Shell wkłada go przy starc
 
 **Otwarte przed bramką:**
 
-1. Zegar epok PID 1. Dziś epoki płyną tylko przez `tick`/`settle`. Moduł czeka na decyzję, więc PID 1 musi odmierzać epoki sam albo dawać servitorowi krok, gdy przychodzi pytanie.
-2. Czas odpowiedzi. Moduł potrzebuje limitu oczekiwania; brak odpowiedzi w limicie = odmowa.
+1. ~~Zegar epok PID 1.~~ **2026-11-02:** PID 1 ma własny zegar epok (`KARMAZYN_TICK_MS`, płyta 2000 ms). Krok na pytanie odrzucony: omijałby T = kiedy. Pytanie wchodzi jako atom do bąbla `hss` i budzi servitora (`code.wake`: T do T_INIT); decyzja zapada w najbliższej epoce. Servitor grzeje się tylko pracą, więc bez pytań stygnie i zasypia.
+2. Czas odpowiedzi. Decyzja przychodzi najpóźniej po jednej epoce, więc limit oczekiwania modułu musi być dłuższy niż epoka (przy 2000 ms to za wolno dla dostępu do pliku: do ustalenia krótsza epoka płyty albo dłuższy limit). Brak odpowiedzi w limicie = odmowa.
 3. API hosta dla gościa: HMAC na kluczu z keyringu, odczyt pytania i zapis odpowiedzi. Bez dostępu do samego klucza.
 
 **Bramka:** zgodny hint przechodzi. Zły hint i brak sesji nie przechodzą. Decyzję widać jako krok servitora `hss` (`servitor`, `dziennik`).

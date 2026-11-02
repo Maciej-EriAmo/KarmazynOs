@@ -26,8 +26,9 @@ use karmazyn_substrate::{state_for_t, Store, StoreSnapshot, T_INIT};
 use std::env;
 use std::io::{self, BufRead, Write};
 use std::process;
+use std::sync::mpsc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// PID 1 kończy jądro razem ze sobą. Na Linuksie zostaje w pętli.
 fn is_pid1() -> bool {
@@ -42,6 +43,24 @@ fn is_pid1() -> bool {
 }
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// Rytm epok PID 1, gdy linia jądra nie podaje `KARMAZYN_TICK_MS`.
+const TICK_MS_PID1: u64 = 2000;
+
+/// Zegar epok: `KARMAZYN_TICK_MS` (0 = tylko `tick`/`settle`). Bez zmiennej
+/// PID 1 bierze `TICK_MS_PID1`, a shell na hoście czeka na `tick` — testy i
+/// bramki liczą epoki same.
+fn epoch_period() -> Option<Duration> {
+    let ms = match env::var("KARMAZYN_TICK_MS")
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+    {
+        Some(ms) => ms,
+        None if is_pid1() => TICK_MS_PID1,
+        None => 0,
+    };
+    (ms > 0).then(|| Duration::from_millis(ms))
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Outcome {
@@ -176,30 +195,69 @@ fn main() {
     app.lua.enable_stdin(true);
     app.journal.set(true);
     let czas_report = czas::check(&app.store);
-    print_boot(&app, tools, &disk_line, &console_line, &net_line, &czas_report);
+    let period = epoch_period();
+    print_boot(&app, tools, &disk_line, &console_line, &net_line, &czas_report, period);
     // stempel czasu jest treścią świata: zapis od razu, nie po pierwszym poleceniu
     autosync(&app);
     println!("karmazyn_shell {VERSION} — Stage 2 (native, no Python)");
     println!("thermal={thermal}  lisp: (   lua: `lua <chunk>`   tool: `tool <etykieta> [args]`   type `help`");
 
-    let stdin = io::stdin();
-    let mut stdout = io::stdout();
-    loop {
-        print!("k$ ");
-        let _ = stdout.flush();
-        let mut line = String::new();
-        match stdin.lock().read_line(&mut line) {
-            Ok(0) | Err(_) => {
-                if is_pid1() {
-                    thread::sleep(Duration::from_millis(200));
-                    continue;
-                }
+    // Wejście czyta osobny wątek, ale tylko na żądanie: jedna linia na jedno
+    // `ask`. Gdy polecenie samo czyta klawiaturę (edit, nano), wątek stoi.
+    // Gość Lua i Store zostają w tym wątku; epoki biegną między liniami.
+    let (want_tx, want_rx) = mpsc::channel::<()>();
+    let (line_tx, line_rx) = mpsc::channel::<Option<String>>();
+    thread::spawn(move || {
+        let stdin = io::stdin();
+        while want_rx.recv().is_ok() {
+            let mut line = String::new();
+            let got = match stdin.lock().read_line(&mut line) {
+                Ok(0) | Err(_) => None,
+                Ok(_) => Some(line),
+            };
+            if line_tx.send(got).is_err() {
                 break;
             }
-            Ok(_) => {}
         }
+    });
+    let ask = |prompt: bool| {
+        if prompt {
+            print!("k$ ");
+            let _ = io::stdout().flush();
+        }
+        let _ = want_tx.send(());
+    };
+    ask(true);
+    let mut next_epoch = period.map(|p| Instant::now() + p);
+    loop {
+        let msg = match (next_epoch, period) {
+            (Some(at), Some(p)) => {
+                match line_rx.recv_timeout(at.saturating_duration_since(Instant::now())) {
+                    Ok(m) => m,
+                    Err(mpsc::RecvTimeoutError::Timeout) => {
+                        run_epochs(&app, 1, false);
+                        autosync(&app);
+                        let now = Instant::now();
+                        // po długim poleceniu nie nadrabiamy epok seriami
+                        next_epoch = Some(if at + p > now { at + p } else { now + p });
+                        continue;
+                    }
+                    Err(mpsc::RecvTimeoutError::Disconnected) => None,
+                }
+            }
+            _ => line_rx.recv().unwrap_or(None),
+        };
+        let Some(line) = msg else {
+            if is_pid1() {
+                thread::sleep(Duration::from_millis(200));
+                ask(false);
+                continue;
+            }
+            break;
+        };
         let line = line.trim();
         if line.is_empty() {
+            ask(true);
             continue;
         }
         let outcome = dispatch(&app, line);
@@ -207,16 +265,16 @@ fn main() {
         match outcome {
             Outcome::Ok => {}
             Outcome::Quit => {
-                if is_pid1() {
-                    println!("pid 1 stays");
-                    continue;
+                if !is_pid1() {
+                    break;
                 }
-                break;
+                println!("pid 1 stays");
             }
             Outcome::Err => {
                 // interactive: print already done; stay in REPL
             }
         }
+        ask(true);
     }
     println!("bye");
 }
@@ -313,7 +371,7 @@ fn dispatch(app: &App, line: &str) -> Outcome {
 fn shell_tick(app: &App, parts: &[&str]) -> Outcome {
     let n = parts.get(1).and_then(|x| x.parse::<u32>().ok()).unwrap_or(1);
     let steps = if n <= 1 { 1 } else { n };
-    run_epochs(app, steps);
+    run_epochs(app, steps, true);
     println!("tick x{n}");
     Outcome::Ok
 }
@@ -323,20 +381,23 @@ fn shell_settle(app: &App, parts: &[&str]) -> Outcome {
         println!("usage: settle <n>");
         return Outcome::Err;
     };
-    run_epochs(app, n);
+    run_epochs(app, n, true);
     println!("settle {n}");
     Outcome::Ok
 }
 
 /// Epoka po epoce: tick Store (chłodzenie, vacuum), epoka sesji Lua i krok
 /// servitorów. Servitor ma swoją epokę dopiero po ticku, więc T z tej epoki
-/// decyduje, czy wstaje.
-fn run_epochs(app: &App, n: u32) {
+/// decyduje, czy wstaje. `echo`: notatki także na ekran (`tick`, `settle`);
+/// epoki zegara piszą tylko do dziennika, żeby nie wchodzić w linię operatora.
+fn run_epochs(app: &App, n: u32, echo: bool) {
     for _ in 0..n {
         app.store.tick();
         app.lua.add_epoch(1);
         for (name, note) in servitor::step(&app.store, &app.lua) {
-            println!("servitor {name}: {note}");
+            if echo {
+                println!("servitor {name}: {note}");
+            }
             if app.journal.get() {
                 dziennik::record(&app.store, app.lua.epoch(), &format!("servitor:{name}"), &note);
             }
@@ -461,6 +522,7 @@ fn print_boot(
     console: &Option<Result<Vec<String>, String>>,
     net: &Option<Result<String, String>>,
     czas: &czas::Report,
+    period: Option<Duration>,
 ) {
     let color = console::is_terminal();
     let earlier = dziennik::count(&app.store);
@@ -498,6 +560,10 @@ fn print_boot(
     line(czas.ok, "czas", &czas.detail);
     line(true, "dziennik", &format!("{earlier} wpisów z poprzednich sesji"));
     line(true, "servitory", &format!("{} w zasięgu", servitor::count(&app.store)));
+    match period {
+        Some(p) => line(true, "epoki", &format!("co {} ms", p.as_millis())),
+        None => line(true, "epoki", "tylko tick / settle"),
+    }
 }
 
 /// PID 1: sterownik sieci (moduły) i adres z `KARMAZYN_IP`. `None` = bez sieci.
@@ -1547,8 +1613,11 @@ fn print_help() {
   tool <etykieta> [args] | :tool  bąbel kodu po etykiecie. samo tool wypisuje etykiety
   servitor                      servitory w zasięgu: stan i T atomu src ich bąbla kodu
   servitor up|down <etykieta>   wiąże / odpina bąbel kodu z bąblem servitory; krok w każdej
-                                epoce (tick), gdy src jest HOT/WARM; błąd nie grzeje, więc
-                                servitor, który pada, stygnie; chunk zwraca false = koniec
+                                epoce, gdy src jest HOT/WARM. chunk zwraca true = pracował
+                                (grzeje), nic = bezczynny (stygnie, zasypia), false = koniec;
+                                błąd nie grzeje. karmazyn.code.wake(etykieta) budzi
+  epoki                         same co KARMAZYN_TICK_MS (PID 1 domyślnie 2000 ms, 0 = tylko
+                                tick); tick / settle dokładają epoki ręcznie
   dziennik [n]                  wpisy startu, poleceń i servitorów (atomy w bąblu dziennik)
   czas                          stempel w świecie (bąbel czas) + SNTP z KARMAZYN_NTP
   help | quit

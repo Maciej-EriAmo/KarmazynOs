@@ -49,6 +49,20 @@ pub fn src_of(store: &Store, label: &str) -> Option<AtomId> {
     src_aid(store, find(store, label)?)
 }
 
+/// Budzi bąbel kodu: atom `src` dostaje co najmniej T_INIT. Servitor, który
+/// zasnął (COLD albo TOMB), zrobi krok w najbliższej epoce, bo po jej
+/// ochłodzeniu nadal jest WARM. Ciepłego nie chłodzi. `false` = brak bąbla.
+pub fn wake(store: &Store, label: &str) -> bool {
+    let Some(aid) = src_of(store, label) else {
+        return false;
+    };
+    let t = store.get_atom_t(aid).unwrap_or(0.0);
+    if t < T_INIT {
+        store.atom_set_t(aid, T_INIT);
+    }
+    true
+}
+
 pub fn read(store: &Store, label: &str) -> Option<Vec<u8>> {
     let bid = find(store, label)?;
     store.atom_payload(src_aid(store, bid)?)

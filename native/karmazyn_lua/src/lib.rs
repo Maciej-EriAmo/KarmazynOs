@@ -306,9 +306,10 @@ impl Evaluator {
     }
 
     /// Jeden krok servitora: bąbel kodu wołany bez argumentów, z limitem
-    /// instrukcji. `Ok((dalej, wypisane))`: `dalej == false`, gdy chunk zwrócił
-    /// `false` (servitor skończył). Błąd Lua to `Err` z jego treścią.
-    pub fn run_servitor(&self, store: &Store, label: &str) -> Result<(bool, String), String> {
+    /// instrukcji. `Ok((wynik, wypisane))`: `Some(true)` — chunk zwrócił
+    /// `true` (pracował), `Some(false)` — zwrócił `false` (skończył), `None` —
+    /// nic albo inna wartość (bezczynny). Błąd Lua to `Err` z jego treścią.
+    pub fn run_servitor(&self, store: &Store, label: &str) -> Result<(Option<bool>, String), String> {
         let bid = code::find(store, label).ok_or_else(|| format!("brak bąbla kodu {label}"))?;
         let src = code::read(store, label).ok_or_else(|| format!("brak źródła {label}"))?;
         let func = self
@@ -320,9 +321,17 @@ impl Evaluator {
         self.prints.borrow_mut().clear();
         self.arm_budget.call::<()>(()).map_err(|e| e.to_string())?;
         let _caller = CallerPush::new(&self.caller, Some(bid));
-        let values = func.call::<MultiValue>(()).map_err(|e| e.to_string())?;
-        let done = matches!(values.iter().next(), Some(Value::Boolean(false)));
-        Ok((!done, self.prints.borrow().clone()))
+        // Servitor nie czyta klawiatury: wejście należy do operatora, a pętla
+        // shella może właśnie czekać na jego linię.
+        let stdin_was = self.guest.stdin_on.replace(false);
+        let called = func.call::<MultiValue>(());
+        self.guest.stdin_on.set(stdin_was);
+        let values = called.map_err(|e| e.to_string())?;
+        let verdict = match values.iter().next() {
+            Some(Value::Boolean(b)) => Some(*b),
+            _ => None,
+        };
+        Ok((verdict, self.prints.borrow().clone()))
     }
 
     /// Etykiety bąbli kodu, posortowane, bez powtórzeń.
@@ -934,6 +943,11 @@ fn install_karmazyn(
         Ok(true)
     })?;
     code_tbl.set("link", code_link)?;
+    let store_cwk = store.clone();
+    let code_wake = lua.create_function(move |_, label: String| -> LuaResult<bool> {
+        Ok(code::wake(&store_cwk, &label))
+    })?;
+    code_tbl.set("wake", code_wake)?;
     k.set("code", code_tbl)?;
 
     let guest_cr = guest.clone();

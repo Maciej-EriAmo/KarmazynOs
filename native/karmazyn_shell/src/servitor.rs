@@ -4,10 +4,12 @@
 //!
 //! - **reach = czy.** Bąbel-korzeń `servitory` wiąże nazwę servitora z atomem
 //!   `src` jego bąbla kodu. Powiązanie znaczy „ma żyć”; `servitor down` je zdejmuje.
-//! - **T = kiedy.** W każdej epoce, po `tick`, servitor robi jeden krok, gdy jego
-//!   `src` jest HOT albo WARM. Udany krok grzeje `src` (odczyt). Błąd nie
-//!   grzeje, więc servitor, który pada, stygnie: po kilku epokach jest COLD i
-//!   nie wstaje, dalej schodzi do TOMB. `servitor up` przywraca T_INIT.
+//! - **T = kiedy.** W każdej epoce, po ticku, servitor robi jeden krok, gdy jego
+//!   `src` jest HOT albo WARM. Grzeje tylko praca: chunk, który zwrócił `true`,
+//!   grzeje `src` (odczyt). Bezczynny krok (nic nie zwrócił) i błąd nie grzeją,
+//!   więc servitor bez pracy stygnie i zasypia (COLD, dalej TOMB), a ten, który
+//!   pada, stygnie tak samo. Budzi go `karmazyn.code.wake(etykieta)` — praca z
+//!   zewnątrz podnosi T do T_INIT — albo `servitor up`.
 //! - Chunk, który zwróci `false`, skończył pracę: powiązanie znika.
 
 use karmazyn_lua::Evaluator as LuaEvaluator;
@@ -94,15 +96,19 @@ pub fn step(store: &Store, lua: &LuaEvaluator) -> Vec<(String, String)> {
             continue;
         }
         match lua.run_servitor(store, &name) {
-            Ok((more, out)) => {
+            Ok((verdict, out)) => {
                 if !out.is_empty() {
                     notes.push((name.clone(), out));
                 }
-                if more {
-                    store.heat(aid);
-                } else {
-                    store.unbind(bid, &name);
-                    notes.push((name, "skończyła, poza zasięgiem".into()));
+                match verdict {
+                    Some(true) => {
+                        store.heat(aid);
+                    }
+                    Some(false) => {
+                        store.unbind(bid, &name);
+                        notes.push((name, "skończył, poza zasięgiem".into()));
+                    }
+                    None => {}
                 }
             }
             Err(e) => {
@@ -125,10 +131,10 @@ mod tests {
     }
 
     #[test]
-    fn healthy_service_stays_hot() {
+    fn working_servitor_stays_hot() {
         let s = Store::new(true);
         let lua = LuaEvaluator::new(&s);
-        lua.code_write(&s, "licz", b"n = (n or 0) + 1").unwrap();
+        lua.code_write(&s, "licz", b"n = (n or 0) + 1 return true").unwrap();
         up(&s, &lua, "licz").unwrap();
         for _ in 0..30 {
             assert!(epoch(&s, &lua).is_empty());
@@ -139,7 +145,29 @@ mod tests {
     }
 
     #[test]
-    fn failing_service_cools_by_store_law() {
+    fn idle_servitor_sleeps_and_wake_brings_it_back() {
+        let s = Store::new(true);
+        let lua = LuaEvaluator::new(&s);
+        // bezczynny: liczy kroki, ale nic nie zwraca
+        lua.code_write(&s, "czeka", b"k = (k or 0) + 1").unwrap();
+        up(&s, &lua, "czeka").unwrap();
+        for _ in 0..60 {
+            epoch(&s, &lua);
+        }
+        let slept = lua.eval_line(&s, "return k");
+        assert_eq!(slept, "6", "bez pracy: kilka kroków z T_INIT do COLD");
+        epoch(&s, &lua);
+        assert_eq!(lua.eval_line(&s, "return k"), "6");
+
+        // inny kod budzi go przez T, nie przez wywołanie
+        assert_eq!(lua.eval_line(&s, "return karmazyn.code.wake('czeka')"), "true");
+        epoch(&s, &lua);
+        assert_eq!(lua.eval_line(&s, "return k"), "7");
+        assert_eq!(lua.eval_line(&s, "return karmazyn.code.wake('brak')"), "false");
+    }
+
+    #[test]
+    fn failing_servitor_cools_by_store_law() {
         let s = Store::new(true);
         let lua = LuaEvaluator::new(&s);
         lua.code_write(&s, "pada", b"proby = (proby or 0) + 1 error('nie')").unwrap();
@@ -171,7 +199,7 @@ mod tests {
             notes,
             vec![
                 ("raz".to_string(), "zrobione".to_string()),
-                ("raz".to_string(), "skończyła, poza zasięgiem".to_string()),
+                ("raz".to_string(), "skończył, poza zasięgiem".to_string()),
             ]
         );
         assert_eq!(count(&s), 1);

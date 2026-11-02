@@ -72,6 +72,7 @@ function Invoke-Boot([object[]]$cmds, [int]$port) {
         $seen = 0
         $mark = 0
         $done = $null
+        $waitUntil = $null
         while ((Get-Date) -lt $end) {
             if ($stream.DataAvailable) {
                 $n = $stream.Read($buf, 0, $buf.Length)
@@ -82,7 +83,18 @@ function Invoke-Boot([object[]]$cmds, [int]$port) {
             }
             $prompts = ([regex]::Matches($text, 'k\$ ')).Count
             $next = if ($i -lt $cmds.Count) { $cmds[$i] } else { $null }
-            if ($next -is [hashtable]) {
+            if ($next -is [hashtable] -and $next.ContainsKey('wait')) {
+                # epoki płyną same: odczekaj, potem wyślij
+                if (-not $waitUntil) {
+                    $waitUntil = (Get-Date).AddSeconds($next.wait)
+                } elseif ((Get-Date) -gt $waitUntil) {
+                    $p = [Text.Encoding]::UTF8.GetBytes($next.send + "`n")
+                    $stream.Write($p, 0, $p.Length)
+                    $i++
+                    $mark = $text.Length
+                    $waitUntil = $null
+                }
+            } elseif ($next -is [hashtable]) {
                 if ($text.Substring($mark) -match $next.after) {
                     $p = [Text.Encoding]::UTF8.GetBytes($next.send)
                     $stream.Write($p, 0, $p.Length)
@@ -126,7 +138,7 @@ $lib = "lua karmazyn.code.write('mat',""return { dodaj = function(a,b) return a+
 $suma = "lua karmazyn.code.write('suma',""local a,b = ...; return require('mat').dodaj(tonumber(a), tonumber(b))"")"
 $link = "lua karmazyn.code.link('suma','mat')"
 # servitor: bąbel kodu powiązany z bąblem servitory, krok w każdej epoce
-$svc = "lua karmazyn.code.write('licznik',""k = (k or 0) + 1 print('krok '..k)"")"
+$svc = "lua karmazyn.code.write('licznik',""k = (k or 0) + 1 print('krok '..k) return true"")"
 # nano przez serial: wszystkie linie edycji idą naraz, nano czyta je z tego samego stdin
 $nano = "tool nano razy`nlocal a, b = ...`n`nreturn tonumber(a) * tonumber(b)`n.save"
 # edytor z kursorem: pusty plik, "return a", Home, wstaw linię nad, End, dopisz, ^S, ^Q
@@ -149,8 +161,8 @@ if ($one -notmatch 'aid=(\d+) state=') {
 $aid = $Matches[1]
 $two = Invoke-Boot @("info $aid", "assert has $aid", "lua return load(karmazyn.code.read('hello'))()('swiat')",
     "tool powitanie Karmazyn", "tool suma 40 2", "tool razy 6 9", "lua return karmazyn.code.read('razy')",
-    "tool kursor Hej", "lua return karmazyn.fs.read('dev','po_sync')", "servitor", "tick",
-    "dziennik 400", "disk") 45472
+    "tool kursor Hej", "lua return karmazyn.fs.read('dev','po_sync')", "servitor",
+    @{ wait = 7; send = "lua return 'kroki='..tostring(k)" }, "dziennik 400", "disk") 45472
 Write-Host "--- rozruch 2 ---"
 Write-Host (Tail $two)
 
@@ -183,8 +195,10 @@ $checks = [ordered]@{
     'tool z edit'          = $two -match '(?m)^Hej kursor'
     'autosync po sync'     = $two -match '(?m)^autosync ok'
     # servitor, dziennik i stempel są treścią świata: przechodzą przez restart
-    'servitor krok'        = $one -match '(?m)^servitor licznik: krok 2'
-    'servitor po restarcie' = ($two -match '(?m)^\s+(HOT|WARM)\s+[\d.]+\s+licznik') -and ($two -match '(?m)^servitor licznik: krok 1')
+    'servitor krok'        = $one -match '(?m)^servitor licznik: krok \d+'
+    # rozruch 2 nie woła tick: kroki robi zegar epok PID 1 (KARMAZYN_TICK_MS)
+    'zegar epok'           = ($two -match 'epoki — co 2000 ms') -and ($two -match 'kroki=[1-9]')
+    'servitor po restarcie' = ($two -match '(?m)^\s+(HOT|WARM)\s+[\d.]+\s+licznik') -and ($two -match 'servitor:licznik krok')
     'dziennik po restarcie' = ($two -match 'dziennik — [1-9]\d* wpisów z poprzednich sesji') -and ($two -match 'shell servitor up licznik')
     'stempel po restarcie' = ($one -match 'czas — pierwszy stempel') -and ($two -match 'czas — stempel zgodny')
     # rozruch 2 tylko czyta i uruchamia narzędzia: jedyny zapis to nowy stempel czasu
