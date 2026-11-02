@@ -2,8 +2,7 @@
 //!
 //! 1. Stempel na dysku: ostatni zaakceptowany czas uniksowy
 //!    (`<data_home>/clock.stamp`, albo `KARMAZYN_CLOCK=<ścieżka>`).
-//!    Cofnięty zegar nie przesuwa stempla. Uszkodzony stempel jest raz
-//!    ostrzeżeniem i zostaje nadpisany. `KARMAZYN_CLOCK=none` pomija stempel.
+//!    Cofnięty zegar nie przesuwa stempla. `KARMAZYN_CLOCK=none` pomija stempel.
 //! 2. Gdy jest `KARMAZYN_NTP=<host[:port]>`, jedno zapytanie SNTP (RFC 4330,
 //!    port 123). Rozjazd ponad 2 s jest ostrzeżeniem. Zegar systemu zostaje:
 //!    to sprawdzenie, nie krok.
@@ -48,8 +47,8 @@ pub fn judge_stamp(now: u64, prev: StampIn) -> StampOut {
         },
         StampIn::Bad => StampOut {
             ok: false,
-            detail: "stempel uszkodzony, nadpisany".into(),
-            write: Some(now),
+            detail: "stempel uszkodzony".into(),
+            write: None,
         },
         StampIn::At(at) if now + SLACK_SECS < at => StampOut {
             ok: false,
@@ -330,9 +329,7 @@ mod tests {
         assert_eq!(back.write, None);
         assert_eq!(back.detail, "cofnięty o 700s wobec stempla");
 
-        let bad = judge_stamp(1, StampIn::Bad);
-        assert!(!bad.ok);
-        assert_eq!(bad.write, Some(1));
+        assert!(!judge_stamp(1, StampIn::Bad).ok);
     }
 
     #[test]
