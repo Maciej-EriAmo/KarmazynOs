@@ -1,7 +1,7 @@
 # SESSION_CONTINUE — KarmazynOs (kontynuacja)
 
 **Data:** 2026-11-02 (koniec sesji)  
-**Repo Os:** `main` @ **`590c4ba`** (+ commit z tym plikiem), wypchnięte na origin; CI `gate-product` zielone  
+**Repo Os:** `main` @ **`604498c`** (+ commit z tym plikiem), wypchnięte na origin; CI `gate-product` zielone  
 **DBase:** `master` @ **`39f696e`**, zsynchronizowany z originem  
 **Kanon:** [`KANON.md`](KANON.md) — jądro Linuksa jest nośnikiem (proces, sterowniki). System plików to bąble i atomy w KAFD. Sieć to Cynober-Secure/HSL do Karmin_DB.
 
@@ -57,6 +57,7 @@ Skrypty `.ps1` uruchamiać z PowerShella, nie przez `pwsh` z Git Basha (tam `lin
 6. **Polskie litery na VGA** (`060981a`).
 7. **Klient Cynober:** HSS `proto` i media przez KAFS (`23ffc1b`).
 8. **CI:** krok kentry padał od 2026-10-29 (cargo czyta `.cargo/config.toml` z katalogu wywołania) — naprawione (`8c49e6d`); testy kafd i cynober w gate (`6075447`, `590c4ba`).
+9. **Plan obserwatorów** ([obserwatorzy.md](obserwatorzy.md), `fb84e59`…`604498c`): użytkownik / obserwator / superobserwator, założenia przyjęte; tryb nadzwyczajny jako działanie warunkowe przestrzeni Φ (reach + `max_age`), nie flaga.
 
 Szczegół poleceń: [tools_lua.md](tools_lua.md). HSS: [linux_hss_roadmap.md](linux_hss_roadmap.md), faza 3.
 
@@ -66,6 +67,7 @@ Szczegół poleceń: [tools_lua.md](tools_lua.md). HSS: [linux_hss_roadmap.md](l
 2. **Python czyta dziennik świata.** `karmazyn_store.load_documents` (DBase) widzi tylko migawkę `.kafd`; zmiany z `.kafs` po ostatnim `sync` są dla Pythona niewidoczne. Dodać w DBase odtwarzanie `{świat}.kafs` (ramki = dokumenty, pusta = usunięty, `@native` = liczniki) przy wczytaniu świata. Bramka: `cross_check.py` (Python wczytuje `rust_wlog.kafd` + `.kafs` bez compact i widzi zmianę) i testy DBase.
 3. **Faza 3 HSS** — po decyzjach niżej: kanał `/dev/hss` → PID 1 → atom pytania w bąblu `hss` → `code.wake('hss')` → krok servitora → odpowiedź do modułu. Bramka z mapy: zgodny hint przechodzi, zły hint i brak sesji nie.
 4. **Bramki zgodności w CI.** `cross_check.py` i `live_check.py` działają tylko lokalnie. Jeśli DBase da się pobrać w CI (repo publiczne albo token), dołożyć krok z checkoutem DBase i obu skryptami.
+5. **Obserwatorzy — fundament w substracie** (nie zależy od otwartych pytań): `max_age` w natywnym prawie Store (rozpad po wieku w epokach, niezależny od T; `karmazyn_substrate` + lustro w `karmazyn_slab`, zgodnie z Pythonem, jeśli tam jest) i widok w dół od korzenia `B_u` (drzewo potomków, granica bez wyjścia do rodzica). Bramki: testy substratu, `stage1_verify.ps1`, `stage2_verify.ps1`. Tożsamości, logowanie i tryb nadzwyczajny — po rozstrzygnięciu pytań niżej.
 
 ## Do decyzji
 
