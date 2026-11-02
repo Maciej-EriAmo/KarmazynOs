@@ -52,10 +52,13 @@ jobs:
           python -m unittest software.test_io_thermal software.test_host_tools software.test_studio_sdl software.test_bootcfg software.test_kentry_marker -q
 
       - name: kentry freestanding build
+        # cargo czyta .cargo/config.toml z katalogu wywołania, nie z --manifest-path:
+        # bez tego ginie -Tlinker.ld i relocation-model=static, a rust-lld robi PIE
+        working-directory: boot/kentry
         run: |
           rustup target add x86_64-unknown-none
-          cargo build --release --manifest-path boot/kentry/Cargo.toml --target x86_64-unknown-none
-          python -c "p='boot/kentry/target/x86_64-unknown-none/release/karmazyn_kentry'; d=open(p,'rb').read(); assert b'KARMAZYN_KENTRY_OK' in d, 'marker missing'; assert b'SLAB_OK' in d, 'SLAB_OK missing (R5)'"
+          cargo build --release --target x86_64-unknown-none
+          python -c "p='target/x86_64-unknown-none/release/karmazyn_kentry'; d=open(p,'rb').read(); assert b'KARMAZYN_KENTRY_OK' in d, 'marker missing'; assert b'SLAB_OK' in d, 'SLAB_OK missing (R5)'"
 
       # Full native wheel on Linux CI - best-effort (maturin)
       - name: maturin build (best-effort)
