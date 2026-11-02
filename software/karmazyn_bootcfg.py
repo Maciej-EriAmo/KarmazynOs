@@ -33,11 +33,9 @@ class BootConfig:
 
     def apply_env(self) -> None:
         """Wypchnij config do env (boot / studio czytają KARMAZYN_*)."""
-        if self.rescue:
-            os.environ["KARMAZYN_SUBSTRATE"] = "python"
-            self.sources["substrate"] = self.sources.get("substrate", "rescue")
-        else:
-            os.environ["KARMAZYN_SUBSTRATE"] = self.substrate
+        # rescue nie przełącza silnika. Prawo jest zawsze w substracie.
+        os.environ["KARMAZYN_SUBSTRATE"] = "native"
+        self.substrate = "native"
         os.environ["KARMAZYN_GUEST"] = self.guest
         os.environ["KARMAZYN_IO"] = self.io
         if self.project:
@@ -124,7 +122,7 @@ def parse_boot_config(
         if a in ("--native", "--rust"):
             _set(cfg, "substrate", "native", "argv")
         elif a == "--python":
-            _set(cfg, "substrate", "python", "argv")
+            _set(cfg, "substrate", "native", "argv")
         elif a == "--lua":
             _set(cfg, "guest", "lua", "argv")
         elif a in ("--lisp", "--exec"):
@@ -146,7 +144,7 @@ def parse_boot_config(
                 _set(cfg, "io", io, "argv")
         elif a == "--rescue":
             cfg.rescue = True
-            _set(cfg, "substrate", "python", "argv")
+            _set(cfg, "substrate", "native", "argv")
             cfg.sources["rescue"] = "argv"
         elif a == "--quiet":
             cfg.quiet = True
@@ -181,8 +179,7 @@ def parse_cmdline_string(s: str) -> BootConfig:
             k = k.strip().lower()
             v = v.strip()
             if k == "substrate":
-                # both = referencja Pythona (jak KARMAZYN_SUBSTRATE=both)
-                argv.append("--python" if v in ("python", "both") else "--native")
+                argv.append("--native")
             elif k == "guest":
                 argv.extend(["--guest", v])
             elif k == "io":

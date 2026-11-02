@@ -119,6 +119,45 @@ pub extern "C" fn ksub_atom_set_value(handle: u64, aid: u32, token: u64) -> c_in
     with_store(handle, |st| st.atom_set_value_token(aid, token) as c_int).unwrap_or(0)
 }
 
+/// Zapis bloba atomu (prawo już trzyma go na atomie). `bytes == NULL` albo
+/// `len == 0` czyści payload. Token wartości zostaje.
+#[no_mangle]
+pub extern "C" fn ksub_atom_set_payload(
+    handle: u64,
+    aid: u32,
+    bytes: *const u8,
+    len: u32,
+) -> c_int {
+    let payload = if bytes.is_null() || len == 0 {
+        None
+    } else {
+        Some(unsafe { std::slice::from_raw_parts(bytes, len as usize) }.to_vec())
+    };
+    with_store(handle, |st| {
+        let token = st.atom_value_token(aid).unwrap_or(0);
+        st.atom_set_guest(aid, token, payload) as c_int
+    })
+    .unwrap_or(0)
+}
+
+/// Rozmiar payloadu. Przy `out == NULL` albo za krótkim buforze nic nie pisze.
+/// Brak atomu: -1. Brak bloba: 0.
+#[no_mangle]
+pub extern "C" fn ksub_atom_payload(handle: u64, aid: u32, out: *mut u8, max: u32) -> i32 {
+    with_store(handle, |st| match st.atom_payload(aid) {
+        None if !st.has_atom(aid) => -1,
+        None => 0,
+        Some(p) => {
+            let n = p.len() as i32;
+            if !out.is_null() && (max as usize) >= p.len() {
+                unsafe { std::ptr::copy_nonoverlapping(p.as_ptr(), out, p.len()) };
+            }
+            n
+        }
+    })
+    .unwrap_or(-1)
+}
+
 #[no_mangle]
 pub extern "C" fn ksub_atom_value(handle: u64, aid: u32) -> u64 {
     with_store(handle, |st| st.atom_value_token(aid).unwrap_or(0)).unwrap_or(0)
@@ -497,5 +536,25 @@ mod tests {
         assert_eq!(slot_of(&slots, encode_handle(1, 1)), None);
         assert_eq!(slot_of(&slots, encode_handle(0, 0)), None);
         assert_eq!(slot_of(&slots, 0), None);
+    }
+
+    #[test]
+    fn payload_roundtrip_and_vacuum_drops_blob() {
+        let h = ksub_store_new(1);
+        let a = atom(h);
+        let blob = b"abc";
+        assert_eq!(ksub_atom_set_payload(h, a, blob.as_ptr(), blob.len() as u32), 1);
+        assert_eq!(ksub_atom_payload(h, a, ptr::null_mut(), 0), 3);
+        let mut short = [0u8; 2];
+        assert_eq!(ksub_atom_payload(h, a, short.as_mut_ptr(), 2), 3);
+        assert_eq!(short, [0, 0]);
+        let mut buf = [0u8; 3];
+        assert_eq!(ksub_atom_payload(h, a, buf.as_mut_ptr(), 3), 3);
+        assert_eq!(&buf, b"abc");
+        assert_eq!(ksub_atom_set_t(h, a, 0.0), 1);
+        ksub_settle(h, 1);
+        assert_eq!(ksub_has_atom(h, a), 0);
+        assert_eq!(ksub_atom_payload(h, a, ptr::null_mut(), 0), -1);
+        ksub_store_free(h);
     }
 }

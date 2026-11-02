@@ -1,6 +1,6 @@
 # Faza 2: GRUB → Linux 6.18.57 → holo_hsl.ko → hsl-check → karmazyn_shell.
 # Exit 0 gdy serial ma HSL_LOADED, HSL_DENY, prompt k$, wynik (+ 1 2) i „pid 1 stays”.
-# Nie rusza out/karmazyn-linux.iso ani boot/linux/qemu_serial.ps1.
+# Nie rusza out/KarmazynOS.iso ani boot/linux/qemu_serial.ps1.
 $ErrorActionPreference = "Stop"
 $Repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $iso = Join-Path $Repo "out\karmazyn-linux-hsl.iso"

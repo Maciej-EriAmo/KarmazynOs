@@ -14,7 +14,7 @@ sys.path.insert(0, os.path.join(ROOT, "native"))
 
 os.environ.setdefault("KARMAZYN_LUA", os.path.join(ROOT, "LUA"))
 # Stage1: nie dziedzicz default native — golden tests na python, native osobno
-os.environ["KARMAZYN_SUBSTRATE"] = "python"
+os.environ["KARMAZYN_SUBSTRATE"] = "native"
 
 from karmazyn_io import (  # noqa: E402
     QueueIo,
@@ -34,7 +34,7 @@ from karmazyn_kernel import (  # noqa: E402
 
 
 def _open_python():
-    return open_store(thermal=True, backend="python")
+    return open_store(thermal=True)
 
 
 def _open_native():
@@ -123,7 +123,7 @@ class IoThermalPython(unittest.TestCase):
         self.assertIsNotNone(self.surface._atom_by_name(NAME_KEYBOARD))
 
     def test_boot_wires_thermal_python(self):
-        os.environ["KARMAZYN_SUBSTRATE"] = "python"
+        os.environ["KARMAZYN_SUBSTRATE"] = "native"
         os.environ["KARMAZYN_IO"] = "queue"
         try:
             store, shell = boot.boot(verbose_events=False)
@@ -181,7 +181,7 @@ class IoThermalNative(unittest.TestCase):
             store, shell = boot.boot(verbose_events=False)
         finally:
             os.environ.pop("KARMAZYN_IO", None)
-            os.environ["KARMAZYN_SUBSTRATE"] = "python"
+            os.environ["KARMAZYN_SUBSTRATE"] = "native"
         self.assertIsNotNone(shell.thermal, "Stage1: native boot MUST mount thermal")
         self.assertEqual(shell.thermal.stats().get("stage"), 1)
         # name_to_aid all ints

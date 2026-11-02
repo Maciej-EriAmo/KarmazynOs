@@ -8,7 +8,7 @@
 This document describes the `karmazyn>` host skin (not archived `shell.py` / `studio.py` under `archiwum/`).  
 Full Polish guide: **[runtime_pl.md](runtime_pl.md)**.
 
-The Linux disc (`k$`, `out/karmazyn-linux.iso`) is in [SESSION_CONTINUE.md](SESSION_CONTINUE.md) and [tools_lua.md](tools_lua.md): a tool is a code bubble, and `lua_bin/` is only the PID 1 seed.
+The Linux disc (`k$`, `out/KarmazynOS.iso`) is in [SESSION_CONTINUE.md](SESSION_CONTINUE.md) and [tools_lua.md](tools_lua.md): a tool is a code bubble, and `lua_bin/` is only the PID 1 seed.
 
 ---
 

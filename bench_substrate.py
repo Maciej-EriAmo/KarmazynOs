@@ -80,9 +80,9 @@ class Row:
 
 
 def _make_python(thermal: bool = True):
-    from karmazyn_substrate import Store
-
-    return Store(thermal=thermal)
+    raise RuntimeError(
+        "prawo jest w native/karmazyn_substrate, szew to open_store"
+    )
 
 
 def _make_native(thermal: bool = True, bridge: str = "pyo3"):
@@ -113,7 +113,7 @@ def _make_native(thermal: bool = True, bridge: str = "pyo3"):
 
 
 def available_backends() -> List[str]:
-    out = ["python"]
+    out: List[str] = []
     try:
         from karmazyn_substrate_native import native_available, native_bridge
 

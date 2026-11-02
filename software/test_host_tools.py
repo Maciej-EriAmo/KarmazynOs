@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.join(ROOT, "kernel"))
 
 # prefer monorepo LUA; host tools golden = Python Store (string ids w tools)
 os.environ.setdefault("KARMAZYN_LUA", os.path.join(ROOT, "LUA"))
-os.environ["KARMAZYN_SUBSTRATE"] = "python"
+os.environ["KARMAZYN_SUBSTRATE"] = "native"
 
 from karmazyn_kernel import open_store  # noqa: E402
 import karmazyn_boot as boot  # noqa: E402
@@ -26,7 +26,7 @@ LUA_BIN = os.path.join(ROOT, "lua_bin")
 class HostToolsSmoke(unittest.TestCase):
     def setUp(self):
         # jawny backend — nie dziedzicz native z innych testów w procesie
-        self.store = open_store(thermal=True, backend="python")
+        self.store = open_store(thermal=True)
         self.ev = boot.mount_evaluator(self.store, kind="lua", lua_bin=LUA_BIN)
         self.assertIsNotNone(getattr(self.ev, "host", None), "host API nie zainstalowany")
 

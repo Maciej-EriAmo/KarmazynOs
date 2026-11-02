@@ -121,11 +121,11 @@ Półki = **co wolno twierdzić**. Warstwy = **kto rządzi**.
 
 | Artefakt | Rola |
 |----------|------|
-| `native/karmazyn_slab` | freestanding / no_std — to samo prawo |
-| `native/karmazyn_substrate` | **silnik** host: Store + **C ABI** `ksub_*` (Rust = kości) |
+| `native/karmazyn_substrate` | **jedyne źródło prawa** T×reach (hostowy `Store`) |
+| `native/karmazyn_slab` | stałe liczbowe i obraz wyniku dla kentry; nowych reguł tu nie ma |
 | `native/c_smoke/*` | cienka warstwa C na silniku |
 | `native/stage1_verify.ps1` | bramka Stage 1 |
-| Python `Store` | cienka / golden kopia prawa — **nie** konkurencyjny silnik |
+| Python `Store` | nie jest referencją prawa; konstruktor odmawia. Szew: `open_store` |
 
 **Bramka:** `.\native\stage1_verify.ps1` → `STAGE1_VERIFY_OK`.
 
@@ -170,8 +170,8 @@ System jest w **Rust**, więc slot `gcc` = **`rustc`**. Nie wstawiamy C jako wor
 | Artefakt | Rola |
 |----------|------|
 | `native/verify_rebuild.ps1` | bramka wzorca → `REBUILD_OK` |
-| `native/karmazyn_slab` | prawo T×reach (crate) |
-| `native/karmazyn_substrate` | jądro host |
+| `native/karmazyn_slab` | stałe i obraz wyniku dla kentry |
+| `native/karmazyn_substrate` | jądro host, jedyne prawo |
 | `native/karmazyn_shell` | narzędzie na substracie |
 | `toolchain/kcc` | minister: crate Rust + cień K0 (golden), nie slot gcc |
 

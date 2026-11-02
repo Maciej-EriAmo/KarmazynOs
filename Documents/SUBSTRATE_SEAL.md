@@ -7,8 +7,9 @@
 
 ## 1. Cel
 
-**Jedyny magazyn prawdy stanu A/B/T/reach = substrat (preferencyjnie native Rust).**  
-Wszystko inne = minister przez **szew** `open_store` / C ABI / rlib — nie drugi Store.
+**Jedyny magazyn prawdy stanu A/B/T/reach = crate `native/karmazyn_substrate`.**  
+Wszystko inne = minister przez **szew** `open_store` / C ABI / rlib — nie drugi Store.  
+V4 i `backend=python` są zamknięte. `KARMAZYN_ALLOW_PYTHON_SUBSTRATE` nie otwiera silnika.
 
 ---
 
@@ -16,10 +17,10 @@ Wszystko inne = minister przez **szew** `open_store` / C ABI / rlib — nie drug
 
 | # | Ścieżka | Ryzyko |
 |---|--------|--------|
-| V1 | `from karmazyn_substrate import Store` **bez** `open_store` | omija politykę backendu |
-| V2 | cichy fallback `native` → Python gdy brak DLL | „myślałem że native” |
-| V3 | `KARMAZYN_SUBSTRATE=python` w product | legalny rescue → uzurpacja gdy domyślne |
-| V4 | `Store` w Pythonie z inną semantyką feature | dryf prawa |
+| V1 | `from karmazyn_substrate import Store` **bez** `open_store` | konstruktor i tak odmawia |
+| V2 | cichy fallback `native` → Python gdy brak DLL | zamknięty: brak mostu jest błędem |
+| V3 | `KARMAZYN_SUBSTRATE=python` albo `both` | odmowa, nie rescue z tym samym prawem |
+| V4 | `Store` w Pythonie z własnym GC | zamknięty: konstruktor rzuca |
 | V5 | lokalne `dict` / AtomStore udające GC | drugi magazyn |
 | V6 | Holon JSON jako „baza” bez świadomości mirror | mylenie SE z jądrem |
 | V7 | dwa repo native (Os vs DBase) rozjechane | dwa ciała króla |
@@ -31,8 +32,8 @@ Wszystko inne = minister przez **szew** `open_store` / C ABI / rlib — nie drug
 | Poziom | Co | Status |
 |--------|-----|--------|
 | **S0** | KANON: król / minister | ✅ |
-| **S1** | `open_store` = **jedyny** zalecany konstruktor product | ⚠ dyscyplina |
-| **S2** | **`KARMAZYN_SUBSTRATE_STRICT=1`** — bez cichego fallbacku; python tylko z allow | ✅ w `karmazyn_backend` |
+| **S1** | `open_store` = **jedyny** konstruktor product, zawsze native | ✅ |
+| **S2** | `python`, `both` i brak mostu są błędem także bez STRICT; ALLOW nie otwiera silnika | ✅ w `karmazyn_backend` |
 | **S3** | CI / grep: zakaz `from karmazyn_substrate import Store` poza testami/golden | 📋 |
 | **S4** | Product API bez re-export surowego Store | 📋 |
 | **S5** | Jedna binarka / jeden pin wersji native w Os+DBase | 📋 |
@@ -40,26 +41,16 @@ Wszystko inne = minister przez **szew** `open_store` / C ABI / rlib — nie drug
 
 ---
 
-## 4. STRICT (S2) — kontrakt
+## 4. Szew — kontrakt
 
-Env:
+`open_store` zwraca native albo rzuca. STRICT i `KARMAZYN_ALLOW_PYTHON_SUBSTRATE` nie zmieniają tego wyniku.
 
-```text
-KARMAZYN_SUBSTRATE_STRICT=1
-# opcjonalnie w testach golden:
-KARMAZYN_ALLOW_PYTHON_SUBSTRATE=1
-KARMAZYN_SUBSTRATE=python
-```
-
-| Sytuacja | STRICT=0 (dziś soft) | STRICT=1 |
-|----------|----------------------|----------|
-| native dostępny, auto | native | native |
-| native **brak**, auto | **cichy** Python | **RuntimeError** — zbuduj most |
-| `SUBSTRATE=python` | Python | wymaga `ALLOW_PYTHON_SUBSTRATE=1` inaczej błąd |
-| jawne `backend="python"` w kodzie | Python | to samo co env (allow) |
-
-**Product / boot / Studio / Cynober:** w profilu produkcyjnym ustawiać STRICT=1.  
-**Golden / compat tests:** ALLOW_PYTHON + ewentualnie SUBSTRATE=python.
+| Sytuacja | Wynik |
+|----------|--------|
+| native dostępny, auto | native |
+| native **brak** | **RuntimeError** — zbuduj most; drugiego silnika nie ma |
+| `SUBSTRATE=python` albo `both` | **RuntimeError** |
+| jawne `backend="python"` | **RuntimeError** |
 
 ---
 
@@ -74,15 +65,11 @@ from karmazyn_kernel import open_store
 s = open_store(thermal=True)
 ```
 
-**Tylko testy / golden / bench:**
-
-```python
-from karmazyn_substrate import Store  # reference
-```
+`from karmazyn_substrate import Store` nie jest referencją prawa: `Store()` rzuca.
 
 **Zakaz w `software/` product (docelowo lint):**
 
-- bezpośredni `Store()` z pure-Python bez allow  
+- bezpośredni `Store()` z pure-Python  
 - własny dict atomów z tick/gc na boku  
 
 ---
@@ -102,11 +89,9 @@ from karmazyn_substrate import Store  # reference
 ## 7. Checklista wdrożenia
 
 - [x] S0 KANON król/minister  
-- [x] S2 STRICT w `karmazyn_backend`  
-- [ ] Boot/Studio: w product default STRICT=1 (gdy native available)  
+- [x] S2: python, both i brak mostu są odmową; ALLOW nie otwiera silnika  
 - [ ] CI grep V1  
 - [ ] Pin/sync native Os ↔ DBase  
-- [ ] Document ALLOW tylko dla golden  
 
 ---
 

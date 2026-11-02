@@ -566,8 +566,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument("--quiet", action="store_true")
     args = ap.parse_args(list(argv) if argv is not None else None)
 
-    os.environ["KARMAZYN_SUBSTRATE"] = "python"
-    host = open_store(thermal=True, backend="python")
+    os.environ["KARMAZYN_SUBSTRATE"] = "native"
+    host = open_store(thermal=True)
     setup = setup_world(host)
     results: List[AttackResult] = []
 
@@ -582,7 +582,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     host_alive_before_b = (host.stats() or {}).get("alive")
 
     # ── B isolate
-    guest = open_store(thermal=True, backend="python")
+    guest = open_store(thermal=True)
     proj = project_public_view(host, guest)
     results.extend(attack_b_guest_api(guest, mode="isolate"))
 

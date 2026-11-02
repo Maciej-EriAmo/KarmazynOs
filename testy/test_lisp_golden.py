@@ -24,10 +24,10 @@ from lisp_golden import GOLDEN_FILE, check_output, load_sessions  # noqa: E402
 
 
 def _python_eval_session(steps):
+    from karmazyn_backend import open_store
     from karmazyn_exec import Evaluator
-    from karmazyn_substrate import Store
 
-    ev = Evaluator(Store(thermal=True))
+    ev = Evaluator(open_store(thermal=True))
     return [ev.eval_line(st.src) for st in steps]
 
 

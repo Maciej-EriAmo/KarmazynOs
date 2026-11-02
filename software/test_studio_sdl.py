@@ -9,7 +9,7 @@ import unittest
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path[:0] = [ROOT, os.path.join(ROOT, "software"), os.path.join(ROOT, "kernel"),
                 os.path.join(ROOT, "native")]
-os.environ["KARMAZYN_SUBSTRATE"] = "python"
+os.environ["KARMAZYN_SUBSTRATE"] = "native"
 
 
 class StudioSdlSmoke(unittest.TestCase):

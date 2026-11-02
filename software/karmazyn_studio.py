@@ -33,7 +33,11 @@ def main(argv=None) -> int:
     args = ap.parse_args(argv)
 
     if args.python:
-        os.environ["KARMAZYN_SUBSTRATE"] = "python"
+        print(
+            "FAIL: backend python odmówiony. Prawo jest w native/karmazyn_substrate.",
+            file=sys.stderr,
+        )
+        return 2
     elif args.native or os.environ.get("KARMAZYN_SUBSTRATE") is None:
         # prefer native when available
         os.environ.setdefault("KARMAZYN_SUBSTRATE", "native")

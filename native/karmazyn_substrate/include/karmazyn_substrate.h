@@ -18,6 +18,10 @@ void     ksub_store_free(uint64_t handle);
 uint32_t ksub_atom_new(uint64_t handle, const char *s, const char *e, double t);
 int      ksub_atom_set_value(uint64_t handle, uint32_t aid, uint64_t token);
 uint64_t ksub_atom_value(uint64_t handle, uint32_t aid);
+/* Blob atomu. NULL albo len 0 czyści. Zwraca 1 albo 0. */
+int      ksub_atom_set_payload(uint64_t handle, uint32_t aid, const uint8_t *bytes, uint32_t len);
+/* Rozmiar bloba. Krótki bufor i NULL: nic nie pisze, zwraca rozmiar. Brak atomu: -1. */
+int32_t  ksub_atom_payload(uint64_t handle, uint32_t aid, uint8_t *out, uint32_t max);
 int      ksub_has_atom(uint64_t handle, uint32_t aid);
 int      ksub_delete_atom(uint64_t handle, uint32_t aid);
 int      ksub_heat(uint64_t handle, uint32_t aid);

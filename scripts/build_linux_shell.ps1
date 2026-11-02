@@ -1,5 +1,5 @@
 # Faza 1 mapy Documents/linux_hss_roadmap.md
-# Statyczny shell + jądro virt + GRUB. Wynik: out/karmazyn-linux.iso
+# Statyczny shell + jądro virt + GRUB. Wynik: out/KarmazynOS.iso
 # Nie jest płytą kentry i nie jest obrazem do promptu karmazyn>.
 $ErrorActionPreference = "Stop"
 $Repo = Split-Path -Parent $PSScriptRoot
@@ -128,7 +128,7 @@ if (-not (Test-Path $xorriso)) {
 }
 
 $stage = Join-Path $out "linux-iso-root"
-$iso = Join-Path $out "karmazyn-linux.iso"
+$iso = Join-Path $out "KarmazynOS.iso"
 if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
 New-Item -ItemType Directory -Force -Path (Join-Path $stage "boot\grub") | Out-Null
 Copy-Item (Join-Path $Repo "boot\linux\grub.cfg") (Join-Path $stage "boot\grub\grub.cfg")
@@ -158,4 +158,6 @@ $env:MSYS2_ARG_CONV_EXCL = "*"
     --grub2-boot-info `
     (To-MsysPath $stage)
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+$old = Join-Path $out "karmazyn-linux.iso"
+if (Test-Path $old) { Remove-Item $old -Force }
 Write-Host "OK iso=$iso size=$((Get-Item $iso).Length) elf=$((Get-Item $elf).Length)"

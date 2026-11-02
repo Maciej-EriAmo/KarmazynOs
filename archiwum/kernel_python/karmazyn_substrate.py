@@ -1,17 +1,7 @@
 #!/usr/bin/env python3
 """
-karmazyn_substrate.py — REFERENCYJNY substrat Python (fallback + golden tests)
-==============================================================================
-Maciej Mazur, Warsaw 2026
-
-STATUS (Rust = DEFAULT produkcyjny):
-  • `from karmazyn_kernel import Store` / `open_store()` → **NativeStore (Rust)**
-    gdy most PyO3 lub C ABI jest zbudowany.
-  • Ten plik = **referencyjna implementacja pure-Python** (PythonStore):
-    golden tests, fallback, EventBus/Bubble dla fasady.
-
-  KARMAZYN_SUBSTRATE=native   → Rust (DEFAULT)
-  KARMAZYN_SUBSTRATE=python   → ten Store (referencja)
+karmazyn_substrate.py — nie jest źródłem prawa.
+Store() odmawia. Szew: open_store() → native/karmazyn_substrate.
 
 Jeden substrat zamiast pięciu. Neutralny językowo, zbudowany na NAJBOGATSZYM
 istniejącym atomie — `karmazyn_atom.Atom` (pełny FSM HOT/WARM/COLD/TOMB, wektor).
@@ -28,15 +18,8 @@ Co rdzeń wie o językach: nic. Reachability domknięć idzie przez wstrzykiwany
 callback `env_of(value)`. Front-end (Scheme/JS/LOGO) dostarcza go; rdzeń tylko
 śledzi zwrócone env. To jest cała wiedza rdzenia o "domknięciu".
 
-KONTRAKT env_of (v1.2, kuracja S1 — deep reach):
-    env_of(v) -> Bubble | iterowalne po Bubble | None
-  Pojedynczy Bubble = domknięcie (jak dotąd). Iterowalne = wartość ZŁOŻONA
-  (lista/krotka/struktura domknięć) — FRONT sam spłaszcza swoje kontenery
-  i zwraca wszystkie env; rdzeń nadal nie zna języka. Elementy nie-Bubble
-  w iterowanym wyniku są ignorowane. Wartości bogatsze niż to obejmuje
-  kontrakt (np. dict domknięć, którego env_of nie spłaszcza) — front MUSI
-  je spłaszczyć w env_of albo użyć extra_reach; inaczej cichy reap
-  (dawna sonda 22).
+Ten plik nie stanowi kontraktu env_of. Prawo haka jest w native/karmazyn_substrate:
+jeden bąbel albo brak.
 
 Powierzchnia zgodna z evaluatorem referencji (drop-in):
   atom_new(S,E,T,value) · get_atom · delete_atom · heat ·
@@ -185,25 +168,15 @@ class Bubble:
 
 
 class Store:
-    """Posiadający magazyn: atomy (karmazyn_atom.Atom) + bąble + korzenie + reach-GC.
-
-    Współbieżność (FIX v1.1): `self.lock` (RLock) chroni cały stan Store.
-    Wszystkie publiczne mutatory i tick() biorą go same. Front-end może
-    dodatkowo objąć nim sekcję złożoną (kilka operacji atomowo).
-
-    Enkapsulacja (S2, v1.2): rejestr atomów jest wewnętrzny (`_reg`).
-    Publiczny kontrakt: atoms(), get_atom, has_atom, delete_atom, heat.
-    Property `reg` działa wstecznie z jednorazowym ostrzeżeniem."""
+    """Odmowa. Prawo jest w native/karmazyn_substrate, szew to open_store."""
 
     _reg_warned = False     # jednorazowe ostrzeżenie dostępu do reg (S2)
 
     def __init__(self, thermal=True, env_of=None, decay=DECAY, extra_reach=None,
                  tick_event_mode="both"):
-        """tick_event_mode (S12/S15, v1.2):
-          "batch"    — JEDEN emit("tick_batch", {...}) na tick,
-          "per_atom" — emit("tick", atom) dla każdego atomu (THRESHOLD),
-          "both"     — dual-emit: per-atom + batch (okres przejściowy, domyślne).
-        Zagnieżdżony tick (handler pod RLock) jest no-op (S15)."""
+        raise RuntimeError(
+            "prawo jest w native/karmazyn_substrate, szew to open_store"
+        )
         if tick_event_mode not in ("batch", "per_atom", "both"):
             raise ValueError("tick_event_mode: 'batch', 'per_atom' albo 'both'")
         self.lock = threading.RLock()        # FIX v1.1: jedna brama do stanu

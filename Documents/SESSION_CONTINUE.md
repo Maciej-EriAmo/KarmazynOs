@@ -11,7 +11,7 @@
 
 ---
 
-## Stan płyty `out/karmazyn-linux.iso` (`scripts/build_linux_shell.ps1`)
+## Stan płyty `out/KarmazynOS.iso` (`scripts/build_linux_shell.ps1`)
 
 | Obszar | Stan |
 |--------|------|

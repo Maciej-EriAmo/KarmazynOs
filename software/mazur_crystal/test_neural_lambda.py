@@ -28,7 +28,6 @@ for p in (
     if s not in sys.path:
         sys.path.insert(0, s)
 
-os.environ.setdefault("KARMAZYN_SUBSTRATE", "python")
 os.environ["KARMAZYN_MAZUR"] = "1"
 
 
@@ -44,10 +43,10 @@ class TestNeuralLambda(unittest.TestCase):
         os.environ["PHIMOST_NEURAL_LAMBDA"] = "0"
 
     def _store(self):
-        from karmazyn_substrate import Store
+        from karmazyn_backend import open_store
         from mazur_crystal import Tracer, attach_lorentz_bridge
 
-        s = attach_lorentz_bridge(Store(thermal=True), mrc=True)
+        s = attach_lorentz_bridge(open_store(thermal=True), mrc=True)
         s.create_atom(
             "ctx", "c", "shared motif text pulse", T=100.0, tracer=Tracer(energy=1.0)
         )
@@ -116,10 +115,10 @@ class TestNeuralLambda(unittest.TestCase):
             mn.reset_encoder()
         except Exception:
             pass
+        from karmazyn_backend import open_store
         from mazur_crystal import Tracer, attach_lorentz_bridge
-        from karmazyn_substrate import Store
 
-        s = attach_lorentz_bridge(Store(thermal=True), mrc=False)
+        s = attach_lorentz_bridge(open_store(thermal=True), mrc=False)
         s.create_atom(
             "ctx", "c", "shared motif text", T=100.0, tracer=Tracer(energy=1.0)
         )

@@ -7,7 +7,7 @@
 # Exit 0 = pass, 1 = fail, 2 = brak qemu, ISO, Pythona albo DBase.
 $ErrorActionPreference = "Stop"
 $Repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
-$iso = Join-Path $Repo "out\karmazyn-linux.iso"
+$iso = Join-Path $Repo "out\KarmazynOS.iso"
 $dbase = if ($env:KARMAZYN_DBASE) { $env:KARMAZYN_DBASE } else { "C:\Users\drwis\DBase" }
 if (-not (Test-Path $iso)) { Write-Host "Brak $iso"; exit 2 }
 if (-not (Test-Path (Join-Path $dbase "cynober_server.py"))) { Write-Host "Brak DBase: $dbase"; exit 2 }

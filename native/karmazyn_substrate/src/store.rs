@@ -45,6 +45,8 @@ pub(crate) struct Inner {
     pub(crate) thermal: bool,
     pub(crate) decay: f64,
     pub(crate) reaped: u64,
+    /// Liczba prawdziwych ticków. Sam zanik (`decay_ticks`) go nie rusza.
+    pub(crate) ticks: u64,
     pub(crate) retained_tomb: HashSet<AtomId>,
     pub(crate) ticking: bool,
     /// Rośnie przy każdej zmianie, która może DODAĆ osiągalność (bind, root,
@@ -66,6 +68,7 @@ impl Inner {
             thermal,
             decay,
             reaped: 0,
+            ticks: 0,
             retained_tomb: HashSet::new(),
             ticking: false,
             reach_gen: 0,
@@ -477,6 +480,7 @@ impl Store {
                 return;
             }
             g.ticking = true;
+            g.ticks = g.ticks.saturating_add(1);
             g.reach_snap()
         };
         // Haki env_of / extra_reach poza mutexem: callback może wejść
@@ -492,6 +496,69 @@ impl Store {
     pub fn settle(&self, n: u32) {
         for _ in 0..n {
             self.tick();
+        }
+    }
+
+    pub fn ticks(&self) -> u64 {
+        self.lock().ticks
+    }
+
+    /// Zanik jak `n` ticków na każdym atomie. Nie zbiera. Nie podbija `ticks`.
+    pub fn decay_ticks(&self, n: u64) {
+        if n == 0 {
+            return;
+        }
+        let ids: Vec<AtomId> = self.lock().atoms.keys().copied().collect();
+        let stamps: Vec<(AtomId, u64)> = ids.into_iter().map(|id| (id, 0)).collect();
+        self.decay_to_tick(n, &stamps);
+    }
+
+    /// Atomy ze stempla stygną o `now - stamp` wywołań [`Atom::decay`].
+    /// Reszta zostaje. Potem odświeża retained TOMB i nic nie zbiera.
+    pub fn decay_to_tick(&self, now: u64, stamps: &[(AtomId, u64)]) {
+        {
+            let mut g = self.lock();
+            if !g.thermal || stamps.is_empty() {
+                return;
+            }
+            let decay = g.decay;
+            for (aid, stamp) in stamps {
+                let steps = now.saturating_sub(*stamp);
+                if steps == 0 {
+                    continue;
+                }
+                if let Some(a) = g.atoms.get_mut(aid) {
+                    let mut left = steps;
+                    while left > 0 && a.t > 0.0 {
+                        a.decay(decay);
+                        left -= 1;
+                    }
+                }
+            }
+        }
+        self.refresh_retained();
+    }
+
+    /// Bąbel bez `bid` w starym zapisie Pythona jest korzeniem. Reszta nie.
+    pub fn legacy_python_bubble_is_root(has_bid: bool) -> bool {
+        !has_bid
+    }
+
+    fn refresh_retained(&self) {
+        let snap = {
+            let g = self.lock();
+            g.reach_snap()
+        };
+        let reach = snap.reach();
+        let mut g = self.lock();
+        let aids: Vec<AtomId> = g.atoms.keys().copied().collect();
+        for aid in aids {
+            let dead = g.atoms.get(&aid).map(|a| a.is_dead()).unwrap_or(false);
+            if dead && reach.contains(&aid) {
+                g.retained_tomb.insert(aid);
+            } else {
+                g.retained_tomb.remove(&aid);
+            }
         }
     }
 
@@ -724,5 +791,50 @@ mod tests {
         let s = Store::new(false);
         let a = s.atom_new("x", "e", 80.0);
         assert_eq!(s.get_atom_state(a).as_deref(), Some("HOT"));
+    }
+
+    #[test]
+    fn tick_counts_and_bubble_survives_vacuum() {
+        let s = Store::new(true);
+        let b = s.bubble_new("pusta", None);
+        let a = s.atom_new("var", "o", T_INIT);
+        s.bind(b, "o", a).unwrap();
+        let bubbles = s.stats().bubbles;
+        s.settle(3);
+        assert_eq!(s.ticks(), 3);
+        s.settle(COOL);
+        assert!(!s.has_atom(a));
+        assert_eq!(s.stats().bubbles, bubbles);
+        assert_eq!(s.bubble_label(b).as_deref(), Some("pusta"));
+    }
+
+    #[test]
+    fn decay_ticks_cools_without_reap() {
+        let cooled = Store::new(true);
+        let root = cooled.bubble_new("r", None);
+        cooled.set_root(root);
+        let keep = cooled.atom_new("var", "k", T_INIT);
+        cooled.bind(root, "k", keep).unwrap();
+        let orphan = cooled.atom_new("var", "o", T_INIT);
+        cooled.decay_ticks(10);
+        assert_eq!(cooled.ticks(), 0);
+        assert!(cooled.has_atom(orphan));
+
+        let lived = Store::new(true);
+        let root = lived.bubble_new("r", None);
+        lived.set_root(root);
+        let keep2 = lived.atom_new("var", "k", T_INIT);
+        lived.bind(root, "k", keep2).unwrap();
+        lived.settle(10);
+        assert!((cooled.get_atom_t(keep).unwrap() - lived.get_atom_t(keep2).unwrap()).abs() < 1e-9);
+
+        cooled.decay_ticks(COOL as u64);
+        assert!(cooled.has_atom(keep));
+        assert_eq!(cooled.atom_is_dead(keep), Some(true));
+        assert_eq!(cooled.stats().retained_tomb, 1);
+        assert!(cooled.has_atom(orphan));
+        assert!(!cooled.is_root(0));
+        assert!(!Store::legacy_python_bubble_is_root(true));
+        assert!(Store::legacy_python_bubble_is_root(false));
     }
 }

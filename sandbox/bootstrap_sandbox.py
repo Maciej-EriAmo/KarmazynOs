@@ -89,7 +89,7 @@ from karmazyn_kernel import open_store
 from karmazyn_io import attach_thermal, QueueIo
 
 def main():
-    s = open_store(backend="python", thermal=True)
+    s = open_store(thermal=True)
     t = attach_thermal(s, QueueIo())
     print("before", t.stats())
     t.heat_input()

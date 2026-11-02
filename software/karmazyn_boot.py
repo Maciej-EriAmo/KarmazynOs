@@ -64,9 +64,9 @@ try:
 except Exception:  # pragma: no cover
     open_store = None
     native_available = lambda: False
-    substrate_backend = lambda explicit=None: "python"
+    substrate_backend = lambda explicit=None: "native"
     apply_cli_substrate_flags = lambda argv=None: None
-    backend_info = lambda: {"backend": "python", "native_available": False}
+    backend_info = lambda: {"backend": "native", "native_available": False}
 
 try:
     import readline
@@ -798,34 +798,18 @@ def boot(verbose_events=False, log=None, project=None, boot_config=None):
     else:
         log.warn("HRR (wektory)", "wylaczone — brak numpy (tryb zero-dep)")
 
-    # 2. substrat (Store + reach-GC) — Python lub Rust (KARMAZYN_SUBSTRATE)
+    # 2. substrat — tylko native/karmazyn_substrate
     t = time.perf_counter()
     try:
-        # Domyślnie: native jeśli DLL jest i nie wymuszono python
-        if open_store is not None:
-            if os.environ.get("KARMAZYN_SUBSTRATE") is None and native_available():
-                os.environ["KARMAZYN_SUBSTRATE"] = "native"
-            store = open_store(thermal=True)
-            backend = substrate_backend()
-            if backend == "both":
-                backend = "python"
-        else:
-            store = Store(thermal=True)
-            backend = "python"
+        if open_store is None:
+            raise BootError("substrat nie wstal: brak open_store")
+        store = open_store(thermal=True)
+        backend = "native"
+    except BootError:
+        raise
     except Exception as e:
-        # native fail → twardy fallback na Python, z ostrzeżeniem
-        if open_store is not None and substrate_backend() == "native":
-            try:
-                log.warn("substrat native", f"{type(e).__name__}: {e} → fallback python")
-                os.environ["KARMAZYN_SUBSTRATE"] = "python"
-                store = open_store(thermal=True)
-                backend = "python"
-            except Exception as e2:
-                log.fail("substrat (Store)", f"{type(e2).__name__}: {e2}")
-                raise BootError("substrat nie wstal") from e2
-        else:
-            log.fail("substrat (Store)", f"{type(e).__name__}: {e}")
-            raise BootError("substrat nie wstal") from e
+        log.fail("substrat (Store)", f"{type(e).__name__}: {e}")
+        raise BootError("substrat nie wstal") from e
     sub_detail = f"backend={backend}, prawo: {i['law']}"
     if backend == "native":
         try:

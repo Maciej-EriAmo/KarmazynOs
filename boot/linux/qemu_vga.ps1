@@ -7,7 +7,7 @@
 # Exit 0 = pass, 1 = fail, 2 = brak qemu albo ISO.
 $ErrorActionPreference = "Stop"
 $Repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
-$iso = Join-Path $Repo "out\karmazyn-linux.iso"
+$iso = Join-Path $Repo "out\KarmazynOS.iso"
 if (-not (Test-Path $iso)) {
     Write-Host "Brak $iso"
     exit 2

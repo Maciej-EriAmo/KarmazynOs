@@ -267,6 +267,7 @@ mod store {
             if a.value_token != 0 {
                 meta.insert("token".into(), Value::from(a.value_token));
             }
+            meta.insert("tick".into(), Value::from(snap.ticks));
             let data = a.payload.clone().unwrap_or_default();
             docs.push((atom_sid(a.id), encode_doc(&a.s, &a.e, a.t, meta, &data)));
         }
@@ -294,6 +295,7 @@ mod store {
         native.insert("reaped".into(), Value::from(snap.reaped));
         native.insert("next_atom".into(), Value::from(snap.next_atom));
         native.insert("next_bubble".into(), Value::from(snap.next_bubble));
+        native.insert("ticks".into(), Value::from(snap.ticks));
         let mut extra = Map::new();
         extra.insert("native".into(), Value::Object(native));
         (docs, extra)
@@ -303,6 +305,11 @@ mod store {
     /// z Pythona: `cell_…`) dostają kolejne wolne numery. Bąbel bez `bid`
     /// (zapis Pythona) dostaje nowy numer i jest korzeniem, jak w `restore_bubbles`.
     pub fn snapshot_from_world(w: &World) -> StoreSnapshot {
+        built_from_world(w).0
+    }
+
+    /// Snapshot ze świata i stemple ticków atomów, które je mają.
+    fn built_from_world(w: &World) -> (StoreSnapshot, Vec<(u32, u64)>) {
         let native = match w.meta.get("native") {
             Some(Value::Object(m)) => m.clone(),
             _ => Map::new(),
@@ -316,6 +323,7 @@ mod store {
             }
         }
         let mut atoms = Vec::new();
+        let mut stamps = Vec::new();
         for d in w.atoms() {
             let aid = match num_after('a', &d.id) {
                 Some(n) => n,
@@ -326,6 +334,9 @@ mod store {
                 }
             };
             sid_to_aid.insert(d.id.clone(), aid);
+            if let Some(stamp) = d.meta.get("tick").and_then(Value::as_u64) {
+                stamps.push((aid, stamp));
+            }
             atoms.push(AtomSnap {
                 id: aid,
                 s: d.s.clone(),
@@ -358,8 +369,9 @@ mod store {
         let mut binds = Vec::new();
         let mut roots = Vec::new();
         let mut parents = Vec::new();
-        for (d, v, bid) in recs {
-            let bid = bid.unwrap_or_else(|| {
+        for (d, v, bid_in) in recs {
+            let has_bid = bid_in.is_some();
+            let bid = bid_in.unwrap_or_else(|| {
                 let b = next_bubble;
                 next_bubble += 1;
                 b
@@ -382,7 +394,12 @@ mod store {
                     binds.push(BindSnap { bid, name: name.clone(), aid: *aid });
                 }
             }
-            if v.get("root").and_then(Value::as_bool).unwrap_or(true) {
+            let explicit = v.get("root").and_then(Value::as_bool);
+            let is_root = match explicit {
+                Some(flag) => flag,
+                None => karmazyn_substrate::Store::legacy_python_bubble_is_root(has_bid),
+            };
+            if is_root {
                 roots.push(bid);
             }
             parents.push((bid, v.get("parent").and_then(Value::as_str).map(str::to_string)));
@@ -394,7 +411,7 @@ mod store {
                 b.parent = p;
             }
         }
-        StoreSnapshot {
+        let snap = StoreSnapshot {
             thermal: native.get("thermal").and_then(Value::as_bool).unwrap_or(true),
             decay: native
                 .get("decay")
@@ -403,11 +420,22 @@ mod store {
             reaped: nget("reaped").unwrap_or(0),
             next_atom,
             next_bubble,
+            ticks: nget("ticks").unwrap_or(0),
             atoms,
             bubbles,
             binds,
             roots,
-        }
+        };
+        (snap, stamps)
+    }
+
+    fn install_world(store: &Store, w: &World) -> (usize, usize) {
+        let (snap, stamps) = built_from_world(w);
+        let counts = (snap.atoms.len(), snap.bubbles.len());
+        let now = snap.ticks;
+        store.import_snapshot(&snap);
+        store.decay_to_tick(now, &stamps);
+        counts
     }
 
     /// Store → plik świata (KAFX przy szyfrowaniu). Zwraca liczbę dokumentów.
@@ -426,9 +454,7 @@ mod store {
         if w.meta.get("format").and_then(Value::as_str) != Some(STORE_META) {
             return err(format!("{}: to nie jest świat {STORE_META}", path.display()));
         }
-        let snap = snapshot_from_world(&w);
-        let counts = (snap.atoms.len(), snap.bubbles.len());
-        store.import_snapshot(&snap);
+        let counts = install_world(store, &w);
         Ok(counts)
     }
 
@@ -578,14 +604,13 @@ mod store {
                     }
                 }
             }
-            let snap = snapshot_from_world(&w);
+            let (atoms, bubbles) = install_world(store, &w);
             let report = LoadReport {
-                atoms: snap.atoms.len(),
-                bubbles: snap.bubbles.len(),
+                atoms,
+                bubbles,
                 replayed,
                 truncated,
             };
-            store.import_snapshot(&snap);
             // to, co jest na dysku, w id natywnego Store
             let back = store.export_snapshot();
             let (_, extra) = world_from_snapshot(&back);
@@ -770,9 +795,9 @@ mod tests {
         assert!(first.compacted, "nowy świat: pełny zapis");
         let kafd_before = std::fs::read(&path).unwrap();
 
-        // bez zmian treści (samo stygnięcie): nic nie idzie na dysk
+        // samo stygnięcie: jedna ramka licznika, bez przepisywania atomów
         s.settle(3);
-        assert_eq!(log.save(&s).unwrap().frames, 0);
+        assert_eq!(log.save(&s).unwrap().frames, 1);
 
         // jeden atom: jedna ramka, koperta nietknięta
         s.atom_set_guest(ids[7], 0, Some(b"nowe".to_vec()));
@@ -793,7 +818,7 @@ mod tests {
         let t = Store::new(true);
         let mut back = WorldLog::new(&path, &crypt);
         let rep = back.load(&t).unwrap().unwrap();
-        assert_eq!((rep.atoms, rep.bubbles, rep.replayed, rep.truncated), (50, 1, 5, false));
+        assert_eq!((rep.atoms, rep.bubbles, rep.replayed, rep.truncated), (50, 1, 6, false));
         assert_eq!(t.atom_payload(ids[7]).as_deref(), Some(&b"nowe"[..]));
         assert!(!t.has_atom(ids[3]));
         assert_eq!(t.lookup(root, "nowy"), Some(extra));
@@ -848,6 +873,68 @@ mod tests {
             m
         };
         assert_eq!(strip(&x.meta), strip(&y.meta));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Stygnięcie wraca tym samym zanikiem. Korzeń jest tylko jawny,
+    /// a bąbel bez `bid` jest korzeniem przez funkcję substratu.
+    #[cfg(feature = "substrate")]
+    #[test]
+    fn worldlog_restores_temperature_and_explicit_roots() {
+        use karmazyn_substrate::Store;
+        let dir = tmpdir("temp");
+        let path = dir.join("swiat.kafd");
+        let crypt = crate::Crypt::with_master(&[3u8; 32]);
+        let s = Store::new(true);
+        let root = s.bubble_new("r", None);
+        s.set_root(root);
+        let a = s.atom_new("var", "x", 50.0);
+        s.bind(root, "x", a).unwrap();
+        let mut log = WorldLog::new(&path, &crypt);
+        log.save(&s).unwrap();
+        s.settle(10);
+        let live = s.get_atom_t(a).unwrap();
+        log.save(&s).unwrap();
+        let t = Store::new(true);
+        WorldLog::new(&path, &crypt).load(&t).unwrap().unwrap();
+        assert!((t.get_atom_t(a).unwrap() - live).abs() < 1e-9);
+        assert!(t.is_root(root));
+
+        let loose = {
+            let mut v = Map::new();
+            v.insert("label".into(), Value::from("luz"));
+            v.insert("bid".into(), Value::from(9u64));
+            v.insert("bindings".into(), Value::Object(Map::new()));
+            v.insert("parent".into(), Value::Null);
+            let mut meta = Map::new();
+            meta.insert("v".into(), Value::Object(v));
+            encode_doc(BUBBLE_S, "luz", 50.0, meta, b"")
+        };
+        let legacy = {
+            let mut v = Map::new();
+            v.insert("label".into(), Value::from("stary"));
+            v.insert("bindings".into(), Value::Object(Map::new()));
+            let mut meta = Map::new();
+            meta.insert("v".into(), Value::Object(v));
+            encode_doc(BUBBLE_S, "stary", 50.0, meta, b"")
+        };
+        let docs = vec![
+            ("b9".to_string(), loose),
+            ("cell_b".to_string(), legacy),
+        ];
+        let mut extra = Map::new();
+        let mut native = Map::new();
+        native.insert("next_bubble".into(), Value::from(10u64));
+        native.insert("ticks".into(), Value::from(0u64));
+        extra.insert("native".into(), Value::Object(native));
+        let path2 = dir.join("korzenie.kafd");
+        write_world(&path2, &docs, extra, &crypt, 1.0).unwrap();
+        let u = Store::new(true);
+        load_store(&u, &path2, &crypt).unwrap();
+        assert!(!u.is_root(9), "bąbel z bid i bez flagi root nie jest korzeniem");
+        let roots = u.root_ids();
+        assert_eq!(roots.len(), 1, "tylko bąbel bez bid");
+        assert_ne!(roots[0], 9);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

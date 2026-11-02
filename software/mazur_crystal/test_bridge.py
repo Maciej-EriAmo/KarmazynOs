@@ -18,7 +18,6 @@ for p in (
     if s not in sys.path:
         sys.path.insert(0, s)
 
-os.environ.setdefault("KARMAZYN_SUBSTRATE", "python")
 os.environ["KARMAZYN_MAZUR"] = "1"
 
 from mazur_crystal import (  # noqa: E402
@@ -32,9 +31,9 @@ from mazur_crystal import (  # noqa: E402
 
 
 def _open_python():
-    from karmazyn_substrate import Store
+    from karmazyn_backend import open_store
 
-    return Store(thermal=True)
+    return open_store(thermal=True)
 
 
 class TestLorentzBridgePython(unittest.TestCase):

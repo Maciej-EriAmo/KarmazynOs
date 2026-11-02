@@ -5,7 +5,7 @@
 # Exit 2 gdy brak qemu albo ISO (najpierw scripts\build_linux_shell.ps1).
 $ErrorActionPreference = "Stop"
 $Repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
-$iso = Join-Path $Repo "out\karmazyn-linux.iso"
+$iso = Join-Path $Repo "out\KarmazynOS.iso"
 if (-not (Test-Path $iso)) {
     Write-Host "Brak $iso"
     exit 2

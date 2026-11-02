@@ -2,7 +2,7 @@
 
 **Wersja ABI:** `0.1.0-karmazyn-substrate`  
 **Kompilator:** `rustc` (stable) + `cargo`  
-**Decyzja kanoniczna:** Rust = implementacja Product Store; Python = referencja / golden.
+**Norma:** crate `native/karmazyn_substrate`. Tabele poniżej są opisem czytania, nie drugim zapisem prawa.
 
 Powiązania: `native/README.md`, `runtime_pl.md` §substrat, `ARCHITECTURE.pl.md` §5, `io_stage1.md`, **`build_deploy_plan.md`**.
 
@@ -16,7 +16,7 @@ Powiązania: `native/README.md`, `runtime_pl.md` §substrat, `ARCHITECTURE.pl.md
 │  karmazyn_boot · karmazyn_io · karmazyn_host · karmazyn_studio  │
 ├─────────────────────────────────────────────────────────────────┤
 │  Fasada jądra: karmazyn_kernel  →  open_store() / Store         │  Python
-│  Przełącznik:  karmazyn_backend  (native | python)              │
+│  Szew: open_store — tylko native (python i both = odmowa)      │
 ├─────────────────────────────────────────────────────────────────┤
 │  NativeStore  (karmazyn_substrate_native.py)                    │  Python
 │    · metadata, EventBus, HRR, string↔int (gdy potrzeba)         │
@@ -53,7 +53,7 @@ Zna: **T, atomy, bąble, korzenie, tick, vacuum vs retained TOMB**.
 | `native/karmazyn_substrate_rs/` | **PyO3** `CoreStore` | wheel `.whl` |
 | `native/karmazyn_substrate_native.py` | drop-in Store dla Pythona | import hosta |
 | `kernel/karmazyn_backend.py` | wybór native/python | `open_store` |
-| `kernel/karmazyn_substrate.py` | **referencja pure-Python** | golden tests |
+| `archiwum/kernel_python/karmazyn_substrate.py` | odmowa; nie referencja prawa | konstruktor rzuca |
 
 **Budowa:**
 
@@ -171,7 +171,7 @@ Pełny drop-in: `NativeStore` w Pythonie (nad CoreStore lub ctypes).
 | **Rust core** | `u32` od 0 | kanon native |
 | **C ABI** | `uint32_t` | to samo |
 | **PyO3 CoreStore** | `u32` | to samo |
-| **Python reference Store** | string `a0`, `a1`… **lub** jawne id | golden |
+| **Python `Store`** | konstruktor odmawia | nie jest prawem |
 | **Thermal I/O Stage 1** | `name_to_aid`: `"io:console"` → `u32` na native | tabela hosta |
 | **Luneta** | string id + bridge | `luneta_native_bridge` |
 
@@ -200,7 +200,7 @@ Env:
 | Zmienna | Znaczenie |
 |---------|-----------|
 | `KARMAZYN_SUBSTRATE=native` | Product default (gdy most jest) |
-| `KARMAZYN_SUBSTRATE=python` | referencja |
+| `KARMAZYN_SUBSTRATE=python` albo `both` | odmowa |
 | `KARMAZYN_NATIVE_BRIDGE=pyo3\|ctypes` | wybór mostu |
 
 ---
@@ -279,7 +279,7 @@ Dziś crate jest **`std`** — freestanding = osobna faza, ta sama ontologia.
 | Test | Co weryfikuje względem Rust |
 |------|-----------------------------|
 | `cargo test` w `karmazyn_substrate` | prawo GC w czystym Rust |
-| `testy/test_substrate_compat.py` | Python ↔ Rust golden |
+| `testy/test_substrate_compat.py` | `open_store` jest native; python odmawia |
 | `test_io_thermal.IoThermalNative` | matryca I/O na int ids |
 | `software/test_host_tools` | host na **python** (string ids tools) |
 | `native/run_native.ps1` | smoke end-to-end |
@@ -311,7 +311,7 @@ HOST (Python)
 |---------|-----------|
 | Język substratu Product? | **Rust** |
 | Kompilator? | **`rustc` + cargo** |
-| Referencja / golden? | Python `karmazyn_substrate.py` |
+| Źródło prawa? | crate `native/karmazyn_substrate` (`cargo test`) |
 | Id w core? | **`u32`** |
 | Czy Rust zna Lua/SDL? | **Nie** |
 | Czy można wymienić Rust na C w core? | **Nie** bez nowej decyzji kanonicznej |
@@ -320,7 +320,7 @@ HOST (Python)
 
 Źródło prawdy prawa T×reach×GC = **`native/karmazyn_substrate`**.  
 Nie: Python first → port.  
-Tak: **Rust substrate first** → `cargo test` → FFI/PyO3 → golden Python → host.
+Tak: prawo w `native/karmazyn_substrate` → `cargo test` → FFI/PyO3 → host.
 
 ```
 feature jądra  →  atom.rs / store.rs  →  cargo test

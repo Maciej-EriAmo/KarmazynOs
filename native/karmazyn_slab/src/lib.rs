@@ -217,7 +217,8 @@ impl SlabBubble {
 
 // ── SlabStore ──────────────────────────────────────────────────────────────
 
-/// Minimal fixed store with **reach-GC** (same law as production Store).
+/// Wolnostojący obraz wyniku prawa z `karmazyn_substrate`. Tu nie dopisuje się reguł.
+/// Jeden `env_bubble`, bez payloadu gościa: granica kentry, nie drugie GC.
 ///
 /// Slot allocation: **scan free** (`used == false`). Monotonic `next_*` was
 /// wrong after vacuum — full table + reaps left no way to allocate again.
@@ -755,6 +756,18 @@ mod tests {
         let t0 = s.get_t(id).unwrap();
         assert!(s.heat(id, -20.0));
         assert_eq!(s.get_t(id).unwrap(), t0);
+    }
+
+    #[test]
+    fn bubble_slot_stays_used_after_atom_vacuum() {
+        let mut s = SlabStore::new();
+        s.set_decay(0.1);
+        let aid = s.atom_new("x", "orphan", 50.0).unwrap();
+        let bid = s.bubble_new(None).unwrap();
+        assert!(s.bind(bid, "v", aid));
+        s.settle(30);
+        assert!(!s.has_atom(aid), "osierocony atom zebrany");
+        assert!(s.set_root(bid), "slot bąbla zostaje użyty po zbiorce atomu");
     }
 
     #[test]

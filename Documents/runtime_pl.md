@@ -7,7 +7,7 @@
 
 Ten dokument opisuje skórkę hosta `karmazyn>` (nie archiwalny `shell.py` / `studio.py` w `archiwum/`).
 
-Płyta Linuksa (`k$`, `out/karmazyn-linux.iso`) jest w [SESSION_CONTINUE.md](SESSION_CONTINUE.md) i [tools_lua.md](tools_lua.md): narzędzie to bąbel kodu, a `lua_bin/` jest tylko ziarnem PID 1.
+Płyta Linuksa (`k$`, `out/KarmazynOS.iso`) jest w [SESSION_CONTINUE.md](SESSION_CONTINUE.md) i [tools_lua.md](tools_lua.md): narzędzie to bąbel kodu, a `lua_bin/` jest tylko ziarnem PID 1.
 
 ---
 

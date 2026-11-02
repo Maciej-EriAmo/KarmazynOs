@@ -77,11 +77,10 @@ except Exception:
     HAS_HRR = False
 
 # ── Rdzen wlasciwy: silnik z reach-GC (atomy + bable + korzenie + rezonans) ───
-# DOMYŚLNIE: Store = native Rust (NativeStore), gdy most zbudowany.
-# REFERENCJA: PythonStore = pure-Python (golden tests / fallback).
-# KARMAZYN_SUBSTRATE=python|native  (patrz karmazyn_backend).
+# Szew: open_store zwraca wyłącznie native. Pythonowy Store odmawia.
+# KARMAZYN_SUBSTRATE=python|both jest błędem (patrz karmazyn_backend).
 from karmazyn_substrate import (
-    Store as PythonStore,   # referencja pure-Python (D2 / golden)
+    Store as PythonStore,   # konstruktor odmawia; nie jest referencją prawa
     Bubble,
     EventBus,
     VEC_DIM,                # zamrozone D = 2048
@@ -96,28 +95,33 @@ try:
         backend_info as substrate_backend_info,
         apply_cli_substrate_flags,
     )
-    # Produkcyjny default: Rust gdy dostępny
-    Store = store_class()
 except Exception:  # pragma: no cover
-    Store = PythonStore
-
     def open_store(thermal=True, backend=None, **kwargs):
-        return PythonStore(thermal=thermal, **kwargs)
+        raise RuntimeError(
+            "prawo jest w native/karmazyn_substrate, szew to open_store"
+        )
 
     def store_class(backend=None):
-        return PythonStore
+        raise RuntimeError(
+            "prawo jest w native/karmazyn_substrate, szew to open_store"
+        )
 
     def substrate_backend(explicit=None):
-        return "python"
+        return "native"
 
     def native_substrate_available():
         return False
 
     def substrate_backend_info():
-        return {"backend": "python", "native_available": False, "store_class": "Store"}
+        return {"backend": "native", "native_available": False, "store_class": None}
 
     def apply_cli_substrate_flags(argv=None):
         return None
+
+try:
+    Store = store_class()
+except Exception:
+    Store = PythonStore
 
 # ── Kontrakt granicy: jaka powierzchnie musi miec magazyn dla aplikacji ───────
 # Czysty stdlib (Protocol) — zero zaleznosci.
@@ -140,9 +144,9 @@ __all__ = [
     # hrr (opcjonalne — None bez numpy; sprawdzaj HAS_HRR)
     "bind", "unbind", "bundle", "similarity", "normalize",
     "random_unit_vector", "name_to_vector", "HRROperations", "HAS_HRR",
-    # silnik (Store = native default; PythonStore = referencja)
+    # silnik: Store = native; PythonStore odmawia
     "Store", "PythonStore", "Bubble", "EventBus", "VEC_DIM",
-    # przełącznik substratu (native DEFAULT / python reference)
+    # szew substratu (tylko native)
     "open_store", "store_class", "substrate_backend", "native_substrate_available",
     "substrate_backend_info", "apply_cli_substrate_flags",
     # kontrakt

@@ -1302,7 +1302,7 @@ def run_lua_tool_name(
             amap = StarlinkAtomMap(store, grid_deg=5.0, hot_only=True, listen=False)
             # nie twórz ponownie bąbli — już są; StarlinkAtomMap.__init__ create_bubble
             # jest idempotentne (reuse)
-        guest = open_store(thermal=True, backend="python")
+        guest = open_store(thermal=True)
         proj = project_starlink_view(
             amap, guest, copy_sats=copy_sats, max_cells=max_cells
         )
@@ -1332,7 +1332,7 @@ def build_map(
     prop: str = "auto",
     offline_demo: bool = False,
     cache: str = "out/starlink_tle_cache.txt",
-    backend: str = "python",
+    backend: str = "native",
     minutes: float = 0.0,
     store: Any = None,
 ) -> Tuple[Any, StarlinkAtomMap, List[TleSat], str]:

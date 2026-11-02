@@ -3,7 +3,7 @@
 //! Text format v1 (no serde / no Python):
 //! ```text
 //! KSUB_SNAP 1
-//! META thermal=1 decay=0.92 reaped=0 next_atom=2 next_bubble=1
+//! META thermal=1 decay=0.92 reaped=0 next_atom=2 next_bubble=1 ticks=0
 //! ATOM id s e t token
 //! PAYLOAD id hex            # optional guest blob (v2)
 //! BUBBLE id label parent   # parent=-1 if none
@@ -53,6 +53,7 @@ pub struct StoreSnapshot {
     pub reaped: u64,
     pub next_atom: AtomId,
     pub next_bubble: BubbleId,
+    pub ticks: u64,
     pub atoms: Vec<AtomSnap>,
     pub bubbles: Vec<BubbleSnap>,
     pub binds: Vec<BindSnap>,
@@ -110,6 +111,7 @@ impl Store {
             reaped: g.reaped,
             next_atom: g.next_atom,
             next_bubble: g.next_bubble,
+            ticks: g.ticks,
             atoms,
             bubbles,
             binds,
@@ -130,6 +132,7 @@ impl Store {
         g.reaped = snap.reaped;
         g.next_atom = snap.next_atom;
         g.next_bubble = snap.next_bubble;
+        g.ticks = snap.ticks;
         g.ticking = false;
 
         for a in &snap.atoms {
@@ -199,12 +202,13 @@ impl StoreSnapshot {
         let _ = writeln!(out, "KSUB_SNAP {SNAP_VERSION}");
         let _ = writeln!(
             out,
-            "META thermal={} decay={} reaped={} next_atom={} next_bubble={}",
+            "META thermal={} decay={} reaped={} next_atom={} next_bubble={} ticks={}",
             if self.thermal { 1 } else { 0 },
             self.decay,
             self.reaped,
             self.next_atom,
-            self.next_bubble
+            self.next_bubble,
+            self.ticks
         );
         for a in &self.atoms {
             let _ = writeln!(
@@ -254,6 +258,7 @@ impl StoreSnapshot {
         let mut reaped = 0u64;
         let mut next_atom = 0u32;
         let mut next_bubble = 0u32;
+        let mut ticks = 0u64;
         let mut atoms = Vec::new();
         let mut bubbles = Vec::new();
         let mut binds = Vec::new();
@@ -306,6 +311,11 @@ impl StoreSnapshot {
                                 "next_bubble" => {
                                     next_bubble = v.parse().map_err(|_| {
                                         format!("line {}: bad next_bubble", lineno + 1)
+                                    })?
+                                }
+                                "ticks" => {
+                                    ticks = v.parse().map_err(|_| {
+                                        format!("line {}: bad ticks", lineno + 1)
                                     })?
                                 }
                                 _ => {}
@@ -411,6 +421,7 @@ impl StoreSnapshot {
             reaped,
             next_atom,
             next_bubble,
+            ticks,
             atoms,
             bubbles,
             binds,

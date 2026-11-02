@@ -55,7 +55,7 @@ Bez sesji Φ moduł odmawia `MAY_READ` i `MAY_WRITE` na inode z xattr `security.
 
 **Bramka:** moduł się ładuje. Brak sesji daje odmowę. Shell z fazy 1 wstaje także bez modułu.
 
-**2026-10-19:** bramka zamknięta. Osobna płyta `out/karmazyn-linux-hsl.iso`. Linux 6.18.57-0-virt. Serial: `HSL_LOADED`, `HSL_DENY`, `k$`, `(+ 1 2)` → `3`, `quit` → `pid 1 stays`. Skrypt `boot/linux/qemu_hsl.ps1` zakończył się kodem 0. Moduł nie ma podpisu Alpine i oznacza jądro jako tainted. To nie jest jeszcze upcall do servitora HSS. Płyta fazy 1 `out/karmazyn-linux.iso` zostaje bez tego modułu.
+**2026-10-19:** bramka zamknięta. Osobna płyta `out/karmazyn-linux-hsl.iso`. Linux 6.18.57-0-virt. Serial: `HSL_LOADED`, `HSL_DENY`, `k$`, `(+ 1 2)` → `3`, `quit` → `pid 1 stays`. Skrypt `boot/linux/qemu_hsl.ps1` zakończył się kodem 0. Moduł nie ma podpisu Alpine i oznacza jądro jako tainted. To nie jest jeszcze upcall do servitora HSS. Płyta fazy 1 `out/KarmazynOS.iso` zostaje bez tego modułu.
 
 ## Faza 3 — servitor HSS
 

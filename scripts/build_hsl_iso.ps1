@@ -1,5 +1,5 @@
 # Faza 2: osobna płyta. Jądro 6.18.57, moduł holo_hsl.ko, shell z fazy 1.
-# Nie nadpisuje out/karmazyn-linux.iso.
+# Nie nadpisuje out/KarmazynOS.iso.
 $ErrorActionPreference = "Stop"
 $Repo = Split-Path -Parent $PSScriptRoot
 $Cache = Join-Path $env:LOCALAPPDATA "KarmazynOs"
