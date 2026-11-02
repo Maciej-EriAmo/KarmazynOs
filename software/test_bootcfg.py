@@ -22,7 +22,7 @@ class BootConfigTests(unittest.TestCase):
 
     def test_env_overrides_default(self):
         cfg = parse_boot_config(argv=[], env={"KARMAZYN_SUBSTRATE": "python", "KARMAZYN_GUEST": "exec"})
-        self.assertEqual(cfg.substrate, "python")
+        self.assertEqual(cfg.substrate, "native")
         self.assertEqual(cfg.guest, "exec")
         self.assertEqual(cfg.sources["substrate"], "env")
 
@@ -38,7 +38,7 @@ class BootConfigTests(unittest.TestCase):
     def test_rescue(self):
         cfg = parse_boot_config(argv=["--rescue"], env={})
         self.assertTrue(cfg.rescue)
-        self.assertEqual(cfg.substrate, "python")
+        self.assertEqual(cfg.substrate, "native")
 
     def test_io_queue(self):
         cfg = parse_boot_config(argv=["--io", "queue"], env={})
@@ -46,7 +46,7 @@ class BootConfigTests(unittest.TestCase):
 
     def test_cmdline_string(self):
         cfg = parse_cmdline_string("substrate=python guest=exec rescue=1")
-        self.assertEqual(cfg.substrate, "python")
+        self.assertEqual(cfg.substrate, "native")
         self.assertEqual(cfg.guest, "exec")
         self.assertTrue(cfg.rescue)
 
@@ -57,7 +57,7 @@ class BootConfigTests(unittest.TestCase):
         old_tick = os.environ.get("KARMAZYN_TICK_MS")
         try:
             cfg.apply_env()
-            self.assertEqual(os.environ.get("KARMAZYN_SUBSTRATE"), "python")
+            self.assertEqual(os.environ.get("KARMAZYN_SUBSTRATE"), "native")
             self.assertEqual(os.environ.get("KARMAZYN_IO"), "null")
         finally:
             if old is None:
@@ -69,11 +69,11 @@ class BootConfigTests(unittest.TestCase):
             else:
                 os.environ["KARMAZYN_TICK_MS"] = old_tick
 
-    def test_substrate_both_is_python(self):
+    def test_substrate_both_stays_native(self):
         env = parse_boot_config(argv=[], env={"KARMAZYN_SUBSTRATE": "both"})
-        self.assertEqual(env.substrate, "python")
+        self.assertEqual(env.substrate, "native")
         cmd = parse_cmdline_string("substrate=both")
-        self.assertEqual(cmd.substrate, "python")
+        self.assertEqual(cmd.substrate, "native")
 
     def test_tick_and_io_optional_clear(self):
         cfg = parse_boot_config(argv=["--tick", "250"], env={"KARMAZYN_TICK_MS": "4000"})

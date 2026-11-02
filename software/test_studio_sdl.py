@@ -24,7 +24,7 @@ class StudioSdlSmoke(unittest.TestCase):
         if not sdl_available():
             self.skipTest("pygame not installed")
         from karmazyn_studio import main
-        code = main(["--python", "--check"])
+        code = main(["--check"])
         self.assertEqual(code, 0)
 
     def test_color_for_T(self):

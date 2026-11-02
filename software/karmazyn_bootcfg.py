@@ -19,7 +19,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 @dataclass
 class BootConfig:
-    substrate: str = "native"       # native | python
+    substrate: str = "native"       # tylko native; python i both nie wybierają silnika
     guest: str = "lua"              # lua | exec
     io: str = "stdio"               # stdio | queue | null | sdl
     project: Optional[str] = None
@@ -87,7 +87,8 @@ def parse_boot_config(
         if raw in ("rust", "c", "dll", "ksub"):
             raw = "native"
         if raw in ("native", "python", "both"):
-            _set(cfg, "substrate", "python" if raw == "both" else raw, "env")
+            # python i both są odmową: konfiguracja zostaje przy prawie w substracie.
+            _set(cfg, "substrate", "native", "env")
     if env.get("KARMAZYN_GUEST"):
         g = env["KARMAZYN_GUEST"].strip().lower()
         if g in ("exec", "lisp", "scheme", "mini-lisp"):

@@ -24,7 +24,7 @@ for p in (ROOT, os.path.join(ROOT, "software"), os.path.join(ROOT, "kernel"),
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="KarmazynOs Studio (SDL2)")
-    ap.add_argument("--python", action="store_true", help="substrat python (referencja)")
+    ap.add_argument("--python", action="store_true", help="odmowa: prawo jest w substracie")
     ap.add_argument("--native", "--rust", action="store_true", help="substrat native (default)")
     ap.add_argument("--width", type=int, default=960)
     ap.add_argument("--height", type=int, default=640)

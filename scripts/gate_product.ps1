@@ -5,7 +5,7 @@ param(
     [switch]$SkipLua,
     [switch]$SkipStudio,
     [switch]$SkipCargo,
-    [string]$Substrate = "python"
+    [string]$Substrate = "native"
 )
 
 $ErrorActionPreference = "Stop"

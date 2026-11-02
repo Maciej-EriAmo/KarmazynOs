@@ -50,7 +50,7 @@ jobs:
       - name: unittest (io + host + studio + bootcfg + kentry)
         env:
           PYTHONPATH: ${{ github.workspace }}:${{ github.workspace }}/archiwum/kernel_python:${{ github.workspace }}/software:${{ github.workspace }}/native
-          KARMAZYN_SUBSTRATE: python
+          KARMAZYN_SUBSTRATE: native
           KARMAZYN_LUA: ${{ github.workspace }}/LUA
         run: |
           python -m unittest software.test_io_thermal software.test_host_tools software.test_studio_sdl software.test_bootcfg software.test_kentry_marker -q
