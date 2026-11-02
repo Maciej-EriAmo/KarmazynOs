@@ -1,7 +1,9 @@
 # Konsola VGA + serial: płyta z kartą graficzną (bez okna). Na klawiaturze
 # (monitor QEMU, sendkey) idzie `lua return 6*7`, przez serial `atom z_serialu …`.
 # Pass: na serialu jest echo linii z klawiatury i jej wynik 42 oraz wynik
-# polecenia z serialu. Zrzut ekranu VGA: out/karmazyn-vga.png (do obejrzenia).
+# polecenia z serialu; tty1 dostał font Lat2 (polskie litery), a pangram z
+# serialu wraca. Zrzut ekranu VGA: out/karmazyn-vga.png (do obejrzenia: litery
+# z ogonkami, nie „e” zamiast „ę”).
 # Exit 0 = pass, 1 = fail, 2 = brak qemu albo ISO.
 $ErrorActionPreference = "Stop"
 $Repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
@@ -99,6 +101,11 @@ try {
     $ss.Write($p, 0, $p.Length)
     Start-Sleep -Seconds 2
     Pump
+    # polskie litery: wynik idzie także na ekran VGA (do obejrzenia na zrzucie)
+    $p = [Text.Encoding]::UTF8.GetBytes("lua return 'zażółć gęślą jaźń ZAŻÓŁĆ GĘŚLĄ JAŹŃ'`n")
+    $ss.Write($p, 0, $p.Length)
+    Start-Sleep -Seconds 2
+    Pump
     Send-Monitor "screendump $($shot -replace '\\', '/') -f png"
     Start-Sleep -Seconds 2
 } finally {
@@ -113,7 +120,9 @@ try {
 $k = $text.IndexOf("Run /init")
 Write-Host $(if ($k -ge 0) { $text.Substring($k) } else { $text })
 $checks = [ordered]@{
-    'konsola tty1 + ttyS0'      = $text -match 'console — tty1 \+ ttyS0'
+    'konsola tty1 + ttyS0'      = $text -match 'console — tty1 .*\+ ttyS0'
+    'font Lat2 na tty1'         = $text -match 'console — tty1 \(Lat2-Terminus16\) \+ ttyS0'
+    'pangram z serialu'         = $text -match '(?m)^zażółć gęślą jaźń ZAŻÓŁĆ GĘŚLĄ JAŹŃ'
     'echo linii z klawiatury'   = $text -match 'k\$ lua return 6\*7\r?\n42'
     'polecenie z serialu'       = $text -match 'aid=\d+ state=\w+ t=60\.000'
     'zrzut ekranu'              = Test-Path $shot

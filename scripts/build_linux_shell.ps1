@@ -88,10 +88,29 @@ $mods = Join-Path $Repo "out\linux-modules"
 python (Join-Path $Repo "scripts\extract_virt_kernel.py") $kApk $vmlinuz $mods virtio_blk crc16 mbcache jbd2 ext4 failover net_failover virtio_net
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+# Font konsoli VGA z polskimi literami: Lat2-Terminus16 z kbd-misc (GPL-2.0+).
+# PID 1 wczytuje go na /dev/tty1; bez niego jądro pokazuje „e” zamiast „ę”.
+$fApk = Join-Path $cache "kbd-misc-2.8.0-r0.apk"
+$fSha = "90d3a5a897b803ae907458083b767e2afc37b06c2a504f2e81fcff2eab8693b4"
+if (-not (Test-Path $fApk)) {
+    $u = "https://dl-cdn.alpinelinux.org/alpine/latest-stable/main/x86_64/kbd-misc-2.8.0-r0.apk"
+    Write-Host "GET $u"
+    & curl.exe -fL --retry 2 -o $fApk $u
+    if ($LASTEXITCODE -ne 0) { Write-Host "Nie pobrano kbd-misc."; exit 2 }
+}
+if ((Get-FileHash $fApk -Algorithm SHA256).Hash -ne $fSha) {
+    Remove-Item $fApk -Force
+    Write-Host "Zła suma SHA-256 kbd-misc."
+    exit 2
+}
+$font = Join-Path $Repo "out\linux-font"
+python (Join-Path $Repo "scripts\extract_console_font.py") $fApk $font
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
 $out = Join-Path $Repo "out"
 New-Item -ItemType Directory -Force -Path $out | Out-Null
 $initrd = Join-Path $out "initramfs.cpio"
-python (Join-Path $Repo "scripts\pack_initramfs.py") $elf $initrd --dir "lua_bin=$(Join-Path $Repo 'lua_bin')" --dir "lib/modules=$mods"
+python (Join-Path $Repo "scripts\pack_initramfs.py") $elf $initrd --dir "lua_bin=$(Join-Path $Repo 'lua_bin')" --dir "lib/modules=$mods" --dir "font=$font"
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 $grub = $env:GRUB_DIR

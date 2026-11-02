@@ -15,7 +15,7 @@
 
 | Obszar | Stan |
 |--------|------|
-| Konsola | ekran VGA (tty1) + serial (ttyS0) naraz, `KARMAZYN_CONSOLE=auto\|vga\|serial\|none` |
+| Konsola | ekran VGA (tty1) + serial (ttyS0) naraz, `KARMAZYN_CONSOLE=auto\|vga\|serial\|none`; na tty1 font `Lat2-Terminus16` (kbd-misc 2.8.0, GPL-2.0+, `/font` w initramfs, `KARMAZYN_FONT`) z polskimi literami |
 | Trwałość | Store = świat DBase `karmazyn_store_v1.4_kafx`: KAFD w kopercie KAFX w `/data/cynober/worlds/karmazyn.kafd` na ext4 (`/dev/vda` → `/data`); pusty dysk dostaje sam ext3 z dziennikiem JBD2 (`ext2.rs`, rozmiar jak `mke2fs`; po twardym wyłączeniu `recovery complete`, bez `mounting unchecked fs`), inny tylko `disk format`; świat nieczytelny = zapis wstrzymany; autosync po zmianie treści, przyrostowo: zmiany do `karmazyn.kafs` (ramki KAFS w KX1), `sync` i próg = pełna migawka `.kafd` i pusty dziennik (`WorldLog` w `karmazyn_kafd`); po zapisie `syncfs` (chroni też dyski ext2 sprzed dziennika) |
 | KAFD natywnie | `native/karmazyn_kafd`: v2.0/v2.1/KTIX/v1-odczyt, KAFS, dziennik, compact, KAFX/KX1, świat DBase (`world`, cecha `substrate`) — bajt w bajt z Pythonem |
 | Sieć | `KARMAZYN_IP` / `KARMAZYN_GW` (grub.cfg: QEMU, host = 10.0.2.2), virtio_net; `KARM_PSK` i `KARM_HSS_PROFILE` z aktywnego profilu w `/data/cynober/client.json` (obok `master.key`); brak pliku = ECDH |
@@ -57,7 +57,7 @@ Szczegół poleceń: [tools_lua.md](tools_lua.md). HSS: [linux_hss_roadmap.md](l
 
 1. ~~Dziennik ext4 na dysku.~~ **Zrobione 2026-11-02:** formater zakłada dziennik JBD2 (i-węzeł 8). `qemu_disk.ps1` sprawdza `with ordered data mode` i brak `mounting unchecked fs` po twardym wyłączeniu. CI (`gate.yml`): krok kentry padał od 2026-10-29, bo cargo czyta `.cargo/config.toml` z katalogu wywołania — poprawione (`8c49e6d`); run `41423204289` na `d400fed` zielony, pierwszy od tamtej pory.
 2. ~~Przyrostowy zapis KAFS.~~ **Zrobione 2026-11-02:** `WorldLog` (`karmazyn_kafd`, cecha `substrate`): autosync dopisuje zmienione dokumenty do `karmazyn.kafs`, bez T (stygnięcie nie przepisuje dokumentów), usunięte jako puste ramki, liczniki ramką `@native`. Compact = pełny `write_world`, czyli migawka jak z Pythona; świat z obcymi id dostaje pełny zapis przy pierwszej zmianie. Bramki: testy `worldlog_*` (jeden atom = jedna ramka, koperta bajt w bajt ta sama), `cross_check.py` (Python czyta dziennik i migawkę po compact), `qemu_disk.ps1` (zapis po `sync` żyje tylko w dzienniku i przechodzi restart). Python sam nie czyta `.kafs` świata: widzi stan z ostatniej migawki.
-3. **Polskie znaki na VGA.** Czcionka konsoli nie ma ąęćłńóśźż. Wczytać font Lat2 do VGA przy starcie. Serial zostaje. Bramka: `qemu_vga.ps1` i odczyt `out/karmazyn-vga.png`.
+3. ~~Polskie znaki na VGA.~~ **Zrobione 2026-11-02:** PID 1 wczytuje `Lat2-Terminus16` na `/dev/tty1` (`KDFONTOP` + `PIO_UNIMAP`, parser PSF2 w `console.rs`); font z `kbd-misc-2.8.0-r0.apk` (suma SHA-256 w `build_linux_shell.ps1`). `qemu_vga.ps1` sprawdza linię `tty1 (Lat2-Terminus16)` i pangram z serialu; zrzut pokazuje ąćęłńóśźż i wielkie litery.
 4. **Dwa braki klienta Cynober** (po dysku, bo zmieniają kontrakt na drucie). W `native/karmazyn_cynober`: profil HSS `proto` (macierz z PCG64, jak NumPy w DBase) i ramki KAFS (media put/get). Dziś `proto` spada do ECDH, a ramka KAFS jest odrzucana. Bramka: `live_check.py` przeciw żywemu `cynober_server.py`, w tym `proto` i jeden media put/get.
 
 ## Do decyzji (przed fazą 3 HSS)
