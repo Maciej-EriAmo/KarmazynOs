@@ -1,11 +1,13 @@
-//! Nadzór usług w procesie 1. Katalog jest jak w runit i s6, stan jest
-//! termiczny: proces nie jest atomem Store (reach-GC nie ma go pilnować).
+//! Nadzór usług: adjutant shella (minister spraw wewnętrznych) pilnuje
+//! procesów-posłów, które żyją poza Store. Słownik HOT/WARM/COLD/TOMB jest
+//! pożyczony od substratu, ale usługa nie jest atomem i reach-GC jej nie zbiera.
+//! Jądro Linuksa daje tu tylko proces.
 //!
 //! `KARMAZYN_USLUGI` albo `<data_home>/uslugi/<nazwa>/`:
 //! - `run` — pierwsza niepusta linia to argv (cudzysłowy jak w shellu),
 //!   albo plik binarny (ELF/MZ), który jest odpalany wprost
 //! - `oneshot` — gdy plik istnieje, usługa robi jedno przejście i stygnie do WARM
-//! - `down` — nie wstaje sama; `usluga up` kasuje plik
+//! - `down` — nie wstaje; `usluga up` kasuje plik, ręczne usunięcie też ją podnosi
 //! - `needs` — nazwy zależności, jedna na linię. Start, gdy każda jest HOT albo WARM
 //!
 //! Długa usługa, która kończy się szybciej niż w sekundę pięć razy z rzędu,
@@ -13,12 +15,16 @@
 //! dłuższym życiu wraca do HOT. Oneshot z kodem innym niż 0 od razu TOMB.
 //!
 //! Stdin dziecka jest pusty. Stdout i stderr idą do `<katalog>/output.log`.
-//! Na Linuksie PID 1 zbiera też osierocone dzieci (`waitpid`), żeby nie zostały zombie.
+//! Na Linuksie PID 1 zbiera też osierocone dzieci (`waitpid(-1)`), żeby nie
+//! zostały zombie. Dlatego każdy inny proces potomny shella startuje przez
+//! [`run_command`]: odbiorca zostawia jego kod w `AWAITED`, zamiast go zgubić.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs::{self, File, OpenOptions};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+#[cfg(windows)]
+use std::process::Child;
+use std::process::{Command, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread::JoinHandle;
@@ -31,6 +37,60 @@ const BURST: u32 = 5;
 const SCAN_EVERY: Duration = Duration::from_secs(5);
 const STOP_GRACE: Duration = Duration::from_secs(2);
 const TICK: Duration = Duration::from_millis(200);
+
+/// Procesy potomne spoza nadzoru, na które ktoś czeka (pid → surowy status,
+/// gdy już zebrany). Odbiorca trzyma tę blokadę przez całe `waitpid(-1)`, a
+/// [`run_command`] przez `spawn` i wpis, więc pid nie przemknie między nimi.
+#[cfg_attr(windows, allow(dead_code))]
+static AWAITED: Mutex<Option<HashMap<u32, Option<i32>>>> = Mutex::new(None);
+
+/// Uruchamia proces i czeka na jego koniec. Jedyna droga do procesów
+/// potomnych poza nadzorem: `Command::status()` mógłby stracić kod na rzecz
+/// odbiorcy osieroconych dzieci.
+// Jeszcze bez wołających w shellu; czeka na pierwszy proces poza nadzorem.
+#[allow(dead_code)]
+#[cfg(unix)]
+pub fn run_command(cmd: &mut Command) -> std::io::Result<ExitStatus> {
+    use std::os::unix::process::ExitStatusExt;
+    let pid = {
+        let mut g = AWAITED.lock().unwrap_or_else(|e| e.into_inner());
+        let child = cmd.spawn()?;
+        let pid = child.id();
+        g.get_or_insert_with(HashMap::new).insert(pid, None);
+        pid
+    };
+    loop {
+        let mut status = 0i32;
+        let r = unsafe { libc::waitpid(pid as i32, &mut status, libc::WNOHANG) };
+        let err = (r < 0).then(std::io::Error::last_os_error);
+        let mut g = AWAITED.lock().unwrap_or_else(|e| e.into_inner());
+        let map = g.get_or_insert_with(HashMap::new);
+        if r == pid as i32 {
+            map.remove(&pid);
+            return Ok(ExitStatus::from_raw(status));
+        }
+        if let Some(Some(raw)) = map.get(&pid).copied() {
+            map.remove(&pid);
+            return Ok(ExitStatus::from_raw(raw));
+        }
+        if let Some(err) = err {
+            let benign = err.raw_os_error() == Some(libc::ECHILD)
+                || err.kind() == std::io::ErrorKind::Interrupted;
+            if !benign {
+                map.remove(&pid);
+                return Err(err);
+            }
+        }
+        drop(g);
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[allow(dead_code)]
+#[cfg(windows)]
+pub fn run_command(cmd: &mut Command) -> std::io::Result<ExitStatus> {
+    cmd.status()
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
@@ -159,6 +219,8 @@ struct Svc {
     streak: u32,
     stopping: Option<Instant>,
     gone: bool,
+    /// Plik `down` przy ostatnim skanie.
+    down_file: bool,
 }
 
 impl Svc {
@@ -175,6 +237,7 @@ impl Svc {
             streak: 0,
             stopping: None,
             gone: false,
+            down_file: false,
         }
     }
 
@@ -191,6 +254,7 @@ impl Svc {
             streak: 0,
             stopping: None,
             gone: false,
+            down_file: down,
         }
     }
 
@@ -464,6 +528,13 @@ impl Inner {
                 svc.kind = kind;
                 svc.needs = needs;
                 svc.dir = Some(path);
+                let was_down = std::mem::replace(&mut svc.down_file, down);
+                if was_down && !down && !svc.want_up && svc.state != State::Tomb {
+                    svc.want_up = true;
+                    svc.streak = 0;
+                    svc.detail = "down zdjęty".into();
+                    notes.push(format!("{name}: down zdjęty"));
+                }
                 if down && svc.want_up {
                     svc.want_up = false;
                     svc.stopping = Some(Instant::now());
@@ -507,7 +578,12 @@ impl Inner {
         let mut notes = Vec::new();
         #[cfg(unix)]
         {
+            let mut awaited = AWAITED.lock().unwrap_or_else(|e| e.into_inner());
             while let Some((pid, status)) = reap_unix() {
+                if let Some(slot) = awaited.as_mut().and_then(|m| m.get_mut(&pid)) {
+                    *slot = Some(status);
+                    continue;
+                }
                 let code = status_code(status);
                 if let Some(name) = self.owner_of(pid) {
                     notes.push(self.note_exit(&name, code));
@@ -757,6 +833,7 @@ impl Inner {
         if let Some(dir) = &svc.dir {
             let _ = fs::remove_file(dir.join("down"));
         }
+        svc.down_file = false;
         svc.want_up = true;
         svc.streak = 0;
         svc.gone = false;
@@ -776,7 +853,7 @@ impl Inner {
         }
         svc.want_up = false;
         if let Some(dir) = &svc.dir {
-            let _ = fs::write(dir.join("down"), b"");
+            svc.down_file = fs::write(dir.join("down"), b"").is_ok();
         }
         if let Some(live) = svc.live.as_mut() {
             kill_term(live);
@@ -1008,6 +1085,38 @@ mod tests {
         assert!(c.contains("cykl"), "{c}");
         assert!(c.contains('c') && c.contains('d'), "{c}");
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn removing_down_file_wants_up() {
+        let dir = temp("downoff");
+        let s = dir.join("s");
+        fs::create_dir_all(&s).unwrap();
+        fs::write(s.join("run"), "this-binary-is-not-spawned\n").unwrap();
+        fs::write(s.join("down"), "").unwrap();
+        let n = Nadzor::open(dir.clone());
+        n.poll();
+        assert!(!lock(&n.inner).services["s"].want_up);
+        fs::remove_file(s.join("down")).unwrap();
+        lock(&n.inner).scan();
+        assert!(lock(&n.inner).services["s"].want_up);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn run_command_returns_exit_code() {
+        let mut cmd = if cfg!(windows) {
+            let mut c = Command::new(std::env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".into()));
+            c.args(["/C", "exit 3"]);
+            c
+        } else if Path::new("/bin/sh").exists() {
+            let mut c = Command::new("/bin/sh");
+            c.args(["-c", "exit 3"]);
+            c
+        } else {
+            return;
+        };
+        assert_eq!(run_command(&mut cmd).unwrap().code(), Some(3));
     }
 
     #[test]

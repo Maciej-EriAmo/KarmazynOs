@@ -3,7 +3,8 @@
 //! `KARMAZYN_LOG=<ścieżka>` wskazuje plik. `none` zostawia samą pamięć.
 //! Bez zmiennej: `<data_home>/log/karmazyn.log` (na płycie `/data/cynober`,
 //! po montażu dysku). Dziennik jest wspólny z wątkiem nadzoru, więc stan
-//! trzyma `Mutex`.
+//! trzyma `Mutex`. Plik po przekroczeniu `ROTATE_BYTES` przechodzi w
+//! `<nazwa>.1` (poprzedni `.1` znika) i dziennik zaczyna nowy.
 
 use std::collections::VecDeque;
 use std::fs::{File, OpenOptions};
@@ -13,6 +14,7 @@ use std::sync::{Mutex, MutexGuard};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const CAP: usize = 500;
+const ROTATE_BYTES: u64 = 1 << 20;
 
 struct Entry {
     unix_ms: u64,
@@ -25,6 +27,8 @@ struct LogInner {
     file: Option<File>,
     path: Option<PathBuf>,
     file_error: Option<String>,
+    /// Bajty w bieżącym pliku.
+    size: u64,
 }
 
 pub struct Log {
@@ -43,6 +47,7 @@ impl Log {
                 file: None,
                 path: None,
                 file_error: None,
+                size: 0,
             }),
         }
     }
@@ -72,17 +77,10 @@ impl Log {
                     .map_err(|e| format!("{}: {e}", parent.display()))?;
             }
         }
-        let mut opts = OpenOptions::new();
-        opts.create(true).append(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            opts.mode(0o600);
-        }
-        let file = opts
-            .open(path)
-            .map_err(|e| format!("{}: {e}", path.display()))?;
+        let file = open_append(path)?;
+        let size = file.metadata().map(|m| m.len()).unwrap_or(0);
         let mut g = lock(&self.inner);
+        g.size = size;
         g.file = Some(file);
         g.path = Some(path.to_path_buf());
         g.file_error = None;
@@ -100,6 +98,12 @@ impl Log {
         if let Some(file) = g.file.as_mut() {
             let _ = writeln!(file, "{line}");
             let _ = file.flush();
+        }
+        if g.file.is_some() {
+            g.size += line.len() as u64 + 1;
+            if g.size >= ROTATE_BYTES {
+                rotate(&mut g);
+            }
         }
         if g.entries.len() >= CAP {
             g.entries.pop_front();
@@ -131,6 +135,37 @@ impl Log {
             .skip(skip)
             .map(|e| format_line(e.unix_ms, &e.source, &e.message))
             .collect()
+    }
+}
+
+fn open_append(path: &Path) -> Result<File, String> {
+    let mut opts = OpenOptions::new();
+    opts.create(true).append(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+    opts.open(path)
+        .map_err(|e| format!("{}: {e}", path.display()))
+}
+
+/// `<plik>` → `<plik>.1` i nowy pusty `<plik>`. Błąd zostawia dziennik w pamięci.
+fn rotate(g: &mut LogInner) {
+    let Some(path) = g.path.clone() else { return };
+    g.file = None;
+    let mut old = path.clone().into_os_string();
+    old.push(".1");
+    let _ = std::fs::remove_file(&old);
+    let reopened = std::fs::rename(&path, &old)
+        .map_err(|e| format!("{}: {e}", path.display()))
+        .and_then(|_| open_append(&path));
+    match reopened {
+        Ok(file) => {
+            g.file = Some(file);
+            g.size = 0;
+        }
+        Err(e) => g.file_error = Some(format!("rotacja: {e}")),
     }
 }
 
@@ -185,6 +220,26 @@ mod tests {
         assert_eq!(all.len(), CAP);
         assert!(all[0].ends_with(" n3"));
         assert!(all.last().unwrap().ends_with(&format!(" n{}", CAP + 2)));
+    }
+
+    #[test]
+    fn file_rotates_past_limit() {
+        let dir = std::env::temp_dir().join(format!("klogrot-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("karmazyn.log");
+        std::fs::write(&path, vec![b'x'; ROTATE_BYTES as usize - 10]).unwrap();
+        let log = Log::memory();
+        log.attach_path(&path).unwrap();
+        log.record("t", "przelewa");
+        log.record("t", "nowy plik");
+        let old = std::fs::read_to_string(dir.join("karmazyn.log.1")).unwrap();
+        assert!(old.ends_with("przelewa\n"));
+        let new = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(new.lines().count(), 1);
+        assert!(new.contains("nowy plik"));
+        assert!(log.boot_status().0);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
