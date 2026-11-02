@@ -69,7 +69,7 @@ Szczegół poleceń: [tools_lua.md](tools_lua.md). HSS: [linux_hss_roadmap.md](l
 
 ## Do decyzji
 
-- **Obserwatorzy** ([obserwatorzy.md](obserwatorzy.md), plan): użytkownik widzi tylko swój bąbel, obserwator ≈ superużytkownik, superobserwator ≈ root. Przed pracą rozstrzygnąć trzy pytania z § 5 (treść bąbli dla obserwatora, konsola fizyczna dla superobserwatora, mapowanie na role Karmin_DB).
+- **Obserwatorzy** ([obserwatorzy.md](obserwatorzy.md), plan): użytkownik widzi tylko swój bąbel, obserwator ≈ superużytkownik, superobserwator ≈ root. Założenia przyjęte 2026-11-02: obserwator widzi kształt, nie treść (treść tylko przez pryzmat użytkownika); superobserwator widzi wszystko, więc działa tylko nadzwyczajnie (instalacja, konfiguracja wstępna, bezpieczeństwo enterprise); oprogramowanie ogólne instaluje obserwator, jednostkowe użytkownik. Otwarte: tryb nadzwyczajny (otwieranie kluczem węzła, wygasanie przez stygnięcie, ślad w dzienniku) i mapowanie na role Karmin_DB.
 
 ### Przed fazą 3 HSS
 
