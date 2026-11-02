@@ -65,6 +65,7 @@ impl Storage {
             ));
         }
         let n = save_store(store, &self.world, &self.crypt).map_err(|e| e.to_string())?;
+        sync_fs(&self.world);
         self.saves.set(self.saves.get() + 1);
         Ok(n)
     }
@@ -77,6 +78,23 @@ impl Storage {
         self.saves.get()
     }
 }
+
+/// Dysk bez dziennika (nasz ext2, montowany jako ext4): fsync pliku i
+/// katalogu nie utrwala bitmap ani deskryptorów grup. Po twardym wyłączeniu
+/// następny zapis trafiał na i-węzeł wolny według dysku, a zajęty naprawdę
+/// („doubly allocated”). `syncfs` spłukuje cały system plików świata.
+#[cfg(target_os = "linux")]
+fn sync_fs(world: &Path) {
+    use std::os::unix::io::AsRawFd;
+    if let Some(dir) = world.parent() {
+        if let Ok(d) = std::fs::File::open(dir) {
+            unsafe { libc::syncfs(d.as_raw_fd()) };
+        }
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn sync_fs(_world: &Path) {}
 
 /// Ścieżka świata w `data_home` (jak `cynober_paths.worlds_home()`).
 pub fn world_in_data_home() -> PathBuf {
