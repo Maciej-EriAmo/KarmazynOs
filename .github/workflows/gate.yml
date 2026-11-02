@@ -17,13 +17,15 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       # ASCII-only step names: Unicode arrows broke Actions ("workflow file issue", 0 jobs)
-      - name: cargo test (slab, substrate, lisp, kafd, shell, kcc)
+      - name: cargo test (slab, substrate, lisp, kafd, cynober, shell, kcc)
         run: |
           cargo test --manifest-path native/karmazyn_slab/Cargo.toml
           cargo test --manifest-path native/karmazyn_substrate/Cargo.toml
           cargo test --manifest-path native/karmazyn_lisp/Cargo.toml
           # KAFD z cecha substrate: swiat Store, dziennik zmian (WorldLog)
           cargo test --manifest-path native/karmazyn_kafd/Cargo.toml --features substrate
+          # klient Cynober: HSS (proto/standard/production), HSL, ramki KAFS
+          cargo test --manifest-path native/karmazyn_cynober/Cargo.toml
           cargo test --manifest-path native/karmazyn_shell/Cargo.toml
           cargo test --manifest-path toolchain/kcc/Cargo.toml
 
