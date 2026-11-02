@@ -125,7 +125,7 @@ $tool = "lua karmazyn.code.write('powitanie',""local n = ...; return 'witaj '..(
 $lib = "lua karmazyn.code.write('mat',""return { dodaj = function(a,b) return a+b end }"")"
 $suma = "lua karmazyn.code.write('suma',""local a,b = ...; return require('mat').dodaj(tonumber(a), tonumber(b))"")"
 $link = "lua karmazyn.code.link('suma','mat')"
-# usługa: bąbel kodu powiązany z bąblem uslugi, krok w każdej epoce
+# servitor: bąbel kodu powiązany z bąblem servitory, krok w każdej epoce
 $svc = "lua karmazyn.code.write('licznik',""k = (k or 0) + 1 print('krok '..k)"")"
 # nano przez serial: wszystkie linie edycji idą naraz, nano czyta je z tego samego stdin
 $nano = "tool nano razy`nlocal a, b = ...`n`nreturn tonumber(a) * tonumber(b)`n.save"
@@ -138,7 +138,7 @@ $seeds = @(Get-ChildItem (Join-Path $Repo "lua_bin\*.lua")).Count
 $atoms = $seeds + 9
 $one = Invoke-Boot @("disk", "atom trwaly hej 80", $prog, $tool, $lib, $suma, $link, $nano,
     "edit kursor", @{ after = 'L1:1'; send = "return a" }, @{ after = 'L1:9'; send = $keys },
-    "lua return karmazyn.code.read('kursor')", $svc, "usluga up licznik", "tick 2", "sync",
+    "lua return karmazyn.code.read('kursor')", $svc, "servitor up licznik", "tick 2", "sync",
     "lua karmazyn.fs.write('dev','po_sync','txt','autosync ok')", "disk") 45471
 Write-Host "--- rozruch 1 ---"
 Write-Host (Tail $one)
@@ -149,7 +149,7 @@ if ($one -notmatch 'aid=(\d+) state=') {
 $aid = $Matches[1]
 $two = Invoke-Boot @("info $aid", "assert has $aid", "lua return load(karmazyn.code.read('hello'))()('swiat')",
     "tool powitanie Karmazyn", "tool suma 40 2", "tool razy 6 9", "lua return karmazyn.code.read('razy')",
-    "tool kursor Hej", "lua return karmazyn.fs.read('dev','po_sync')", "usluga", "tick",
+    "tool kursor Hej", "lua return karmazyn.fs.read('dev','po_sync')", "servitor", "tick",
     "dziennik 400", "disk") 45472
 Write-Host "--- rozruch 2 ---"
 Write-Host (Tail $two)
@@ -182,13 +182,13 @@ $checks = [ordered]@{
     'tool z nano'          = ($two -match '(?m)^54\s*$') -and ($two -match 'local a, b = \.\.\.\r?\n\r?\nreturn')
     'tool z edit'          = $two -match '(?m)^Hej kursor'
     'autosync po sync'     = $two -match '(?m)^autosync ok'
-    # usługa, dziennik i stempel są treścią świata: przechodzą przez restart
-    'usługa krok'          = $one -match '(?m)^usługa licznik: krok 2'
-    'usługa po restarcie'  = ($two -match '(?m)^\s+(HOT|WARM)\s+[\d.]+\s+licznik') -and ($two -match '(?m)^usługa licznik: krok 1')
-    'dziennik po restarcie' = ($two -match 'dziennik — [1-9]\d* wpisów z poprzednich sesji') -and ($two -match 'shell usluga up licznik')
+    # servitor, dziennik i stempel są treścią świata: przechodzą przez restart
+    'servitor krok'        = $one -match '(?m)^servitor licznik: krok 2'
+    'servitor po restarcie' = ($two -match '(?m)^\s+(HOT|WARM)\s+[\d.]+\s+licznik') -and ($two -match '(?m)^servitor licznik: krok 1')
+    'dziennik po restarcie' = ($two -match 'dziennik — [1-9]\d* wpisów z poprzednich sesji') -and ($two -match 'shell servitor up licznik')
     'stempel po restarcie' = ($one -match 'czas — pierwszy stempel') -and ($two -match 'czas — stempel zgodny')
     # rozruch 2 tylko czyta i uruchamia narzędzia: jedyny zapis to nowy stempel czasu
-    # (heat, krok usługi i wpisy dziennika nie są treścią dla autosync)
+    # (heat, krok servitora i wpisy dziennika nie są treścią dla autosync)
     'odczyt bez zapisu'    = $two -match 'świat=/data/cynober/worlds/karmazyn\.kafd KAFX \(AES-GCM\) bytes=\d+ zapisy=1'
     # surowy dysk: superblok ext2/ext4, świat w kopercie KAFX, bez jawnych programów
     'ext na dysku'         = $raw.Length -gt 1081 -and $raw[1080] -eq 0x53 -and $raw[1081] -eq 0xEF

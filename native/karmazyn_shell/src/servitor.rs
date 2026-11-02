@@ -1,18 +1,19 @@
-//! Usługi: bąble kodu wykonywane przez gościa Lua w tym procesie. Nie ma
-//! osobnych procesów ani własnej maszyny stanów — rządzi prawo substratu.
+//! Servitory: bąble kodu wykonywane przez gościa Lua w tym procesie. Nie
+//! demon ani proces nośnika i bez własnej maszyny stanów — rządzi prawo
+//! substratu.
 //!
-//! - **reach = czy.** Bąbel-korzeń `uslugi` wiąże nazwę usługi z atomem `src`
-//!   jej bąbla kodu. Powiązanie znaczy „ma żyć”; `usluga down` je zdejmuje.
-//! - **T = kiedy.** W każdej epoce, po `tick`, usługa robi jeden krok, gdy jej
+//! - **reach = czy.** Bąbel-korzeń `servitory` wiąże nazwę servitora z atomem
+//!   `src` jego bąbla kodu. Powiązanie znaczy „ma żyć”; `servitor down` je zdejmuje.
+//! - **T = kiedy.** W każdej epoce, po `tick`, servitor robi jeden krok, gdy jego
 //!   `src` jest HOT albo WARM. Udany krok grzeje `src` (odczyt). Błąd nie
-//!   grzeje, więc usługa, która pada, stygnie: po kilku epokach jest COLD i
-//!   nie wstaje, dalej schodzi do TOMB. `usluga up` przywraca T_INIT.
+//!   grzeje, więc servitor, który pada, stygnie: po kilku epokach jest COLD i
+//!   nie wstaje, dalej schodzi do TOMB. `servitor up` przywraca T_INIT.
 //! - Chunk, który zwróci `false`, skończył pracę: powiązanie znika.
 
 use karmazyn_lua::Evaluator as LuaEvaluator;
 use karmazyn_substrate::{state_for_t, AtomId, BubbleId, Store, T_INIT};
 
-pub const LABEL: &str = "uslugi";
+pub const LABEL: &str = "servitory";
 
 fn bubble(store: &Store, create: bool) -> Option<BubbleId> {
     let found = store
@@ -42,26 +43,26 @@ fn bound(store: &Store) -> Vec<(String, AtomId)> {
 
 pub fn up(store: &Store, lua: &LuaEvaluator, label: &str) -> Result<String, String> {
     if !LuaEvaluator::code_label(label) {
-        return Err("usage: usluga up <etykieta>".into());
+        return Err("usage: servitor up <etykieta>".into());
     }
     let src = lua
         .code_src(store, label)
-        .ok_or_else(|| format!("usługa: brak bąbla kodu {label}"))?;
-    let bid = bubble(store, true).expect("bąbel uslugi");
+        .ok_or_else(|| format!("servitor: brak bąbla kodu {label}"))?;
+    let bid = bubble(store, true).expect("bąbel servitory");
     store.bind(bid, label, src).map_err(|e| e.to_string())?;
     store.atom_set_t(src, T_INIT);
     Ok(format!("{label}: w zasięgu, T={T_INIT}"))
 }
 
 pub fn down(store: &Store, label: &str) -> Result<String, String> {
-    let bid = bubble(store, false).ok_or_else(|| format!("usługa: {label} nie jest usługą"))?;
+    let bid = bubble(store, false).ok_or_else(|| format!("servitor: {label} nie jest servitorem"))?;
     store
         .unbind(bid, label)
         .map(|_| format!("{label}: poza zasięgiem"))
-        .ok_or_else(|| format!("usługa: {label} nie jest usługą"))
+        .ok_or_else(|| format!("servitor: {label} nie jest servitorem"))
 }
 
-/// `  STAN  T  etykieta` dla każdej usługi.
+/// `  STAN  T  etykieta` dla każdego servitora.
 pub fn list(store: &Store) -> Vec<String> {
     bound(store)
         .into_iter()
@@ -76,7 +77,7 @@ pub fn count(store: &Store) -> usize {
     bound(store).len()
 }
 
-/// Jeden krok wszystkich usług w tej epoce. Zwraca (usługa, notatka) do
+/// Jeden krok wszystkich servitorów w tej epoce. Zwraca (servitor, notatka) do
 /// dziennika: wypisane linie, błędy i koniec pracy.
 pub fn step(store: &Store, lua: &LuaEvaluator) -> Vec<(String, String)> {
     let mut notes = Vec::new();
@@ -92,7 +93,7 @@ pub fn step(store: &Store, lua: &LuaEvaluator) -> Vec<(String, String)> {
         if !matches!(state_for_t(t), "HOT" | "WARM") {
             continue;
         }
-        match lua.run_service(store, &name) {
+        match lua.run_servitor(store, &name) {
             Ok((more, out)) => {
                 if !out.is_empty() {
                     notes.push((name.clone(), out));
@@ -152,7 +153,7 @@ mod tests {
         assert_eq!(lua.eval_line(&s, "return proby"), errors.to_string());
         assert!(list(&s)[0].contains("TOMB"), "{:?}", list(&s));
 
-        // up przywraca T_INIT i usługa znów próbuje
+        // up przywraca T_INIT i servitor znów próbuje
         up(&s, &lua, "pada").unwrap();
         assert_eq!(epoch(&s, &lua).len(), 1);
     }
@@ -178,7 +179,7 @@ mod tests {
         assert_eq!(count(&s), 0);
         assert!(down(&s, "stoi").is_err());
         assert!(up(&s, &lua, "brak").is_err());
-        // bąbel kodu zostaje: usługa to tylko powiązanie
+        // bąbel kodu zostaje: servitor to tylko powiązanie
         assert!(lua.code_src(&s, "stoi").is_some());
     }
 }

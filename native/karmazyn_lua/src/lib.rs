@@ -305,10 +305,10 @@ impl Evaluator {
         })
     }
 
-    /// Jeden krok usługi: bąbel kodu wołany bez argumentów, z limitem
+    /// Jeden krok servitora: bąbel kodu wołany bez argumentów, z limitem
     /// instrukcji. `Ok((dalej, wypisane))`: `dalej == false`, gdy chunk zwrócił
-    /// `false` (usługa skończyła). Błąd Lua to `Err` z jego treścią.
-    pub fn run_service(&self, store: &Store, label: &str) -> Result<(bool, String), String> {
+    /// `false` (servitor skończył). Błąd Lua to `Err` z jego treścią.
+    pub fn run_servitor(&self, store: &Store, label: &str) -> Result<(bool, String), String> {
         let bid = code::find(store, label).ok_or_else(|| format!("brak bąbla kodu {label}"))?;
         let src = code::read(store, label).ok_or_else(|| format!("brak źródła {label}"))?;
         let func = self
@@ -335,7 +335,7 @@ impl Evaluator {
         code::is_label(name)
     }
 
-    /// Atom `src` bąbla kodu (usługa wiąże właśnie ten atom).
+    /// Atom `src` bąbla kodu (servitor wiąże właśnie ten atom).
     pub fn code_src(&self, store: &Store, label: &str) -> Option<AtomId> {
         code::src_of(store, label)
     }

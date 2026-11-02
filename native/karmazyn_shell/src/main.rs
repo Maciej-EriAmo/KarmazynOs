@@ -5,7 +5,7 @@
 //!   cargo run --release -- -e "atom var x 50" -e stats -e quit
 //!   cargo run --release -- examples/smoke.ksh
 //!
-//! Commands: help | version | stats | atom | … | save | load | dziennik | czas | usluga | quit
+//! Commands: help | version | stats | atom | … | save | load | dziennik | czas | servitor | quit
 //! Lisp guest: line starting with `(` → karmazyn_lisp::Evaluator::eval_line.
 
 mod console;
@@ -15,7 +15,7 @@ mod dziennik;
 mod editor;
 mod ext2;
 mod net;
-mod uslugi;
+mod servitor;
 
 use disk::Storage;
 use std::cell::RefCell;
@@ -298,8 +298,8 @@ fn dispatch(app: &App, line: &str) -> Outcome {
         dziennik_cmd(app, &parts)
     } else if head.eq_ignore_ascii_case("czas") {
         czas_cmd(app)
-    } else if head.eq_ignore_ascii_case("usluga") {
-        usluga_cmd(app, &parts)
+    } else if head.eq_ignore_ascii_case("servitor") {
+        servitor_cmd(app, &parts)
     } else if head.eq_ignore_ascii_case("tick") {
         shell_tick(app, &parts)
     } else if head.eq_ignore_ascii_case("settle") {
@@ -329,16 +329,16 @@ fn shell_settle(app: &App, parts: &[&str]) -> Outcome {
 }
 
 /// Epoka po epoce: tick Store (chłodzenie, vacuum), epoka sesji Lua i krok
-/// usług. Usługa ma swoją epokę dopiero po ticku, więc T z tej epoki
+/// servitorów. Servitor ma swoją epokę dopiero po ticku, więc T z tej epoki
 /// decyduje, czy wstaje.
 fn run_epochs(app: &App, n: u32) {
     for _ in 0..n {
         app.store.tick();
         app.lua.add_epoch(1);
-        for (name, note) in uslugi::step(&app.store, &app.lua) {
-            println!("usługa {name}: {note}");
+        for (name, note) in servitor::step(&app.store, &app.lua) {
+            println!("servitor {name}: {note}");
             if app.journal.get() {
-                dziennik::record(&app.store, app.lua.epoch(), &format!("usluga:{name}"), &note);
+                dziennik::record(&app.store, app.lua.epoch(), &format!("servitor:{name}"), &note);
             }
         }
     }
@@ -381,23 +381,23 @@ fn czas_cmd(app: &App) -> Outcome {
     }
 }
 
-fn usluga_cmd(app: &App, parts: &[&str]) -> Outcome {
+fn servitor_cmd(app: &App, parts: &[&str]) -> Outcome {
     let verb = parts.get(1).copied().unwrap_or("");
     let label = parts.get(2).copied().unwrap_or("");
     let result = match (verb, label) {
         ("", _) => {
-            let lines = uslugi::list(&app.store);
+            let lines = servitor::list(&app.store);
             if lines.is_empty() {
-                println!("usługi: żadna nie jest w zasięgu");
+                println!("servitory: żaden nie jest w zasięgu");
             }
             for line in lines {
                 println!("{line}");
             }
             return Outcome::Ok;
         }
-        ("up", l) if !l.is_empty() => uslugi::up(&app.store, &app.lua, l),
-        ("down", l) if !l.is_empty() => uslugi::down(&app.store, l),
-        _ => Err("usage: usluga | usluga up <etykieta> | usluga down <etykieta>".into()),
+        ("up", l) if !l.is_empty() => servitor::up(&app.store, &app.lua, l),
+        ("down", l) if !l.is_empty() => servitor::down(&app.store, l),
+        _ => Err("usage: servitor | servitor up <etykieta> | servitor down <etykieta>".into()),
     };
     match result {
         Ok(msg) => {
@@ -497,7 +497,7 @@ fn print_boot(
     }
     line(czas.ok, "czas", &czas.detail);
     line(true, "dziennik", &format!("{earlier} wpisów z poprzednich sesji"));
-    line(true, "usługi", &format!("{} w zasięgu", uslugi::count(&app.store)));
+    line(true, "servitory", &format!("{} w zasięgu", servitor::count(&app.store)));
 }
 
 /// PID 1: sterownik sieci (moduły) i adres z `KARMAZYN_IP`. `None` = bez sieci.
@@ -1545,11 +1545,11 @@ fn print_help() {
   lua <chunk>                   Lua guest (mlua). return karmazyn._VERSION
                                 limit instrukcji na chunk: KARMAZYN_LUA_BUDGET (0 = brak)
   tool <etykieta> [args] | :tool  bąbel kodu po etykiecie. samo tool wypisuje etykiety
-  usluga                        usługi w zasięgu: stan i T atomu src ich bąbla kodu
-  usluga up|down <etykieta>     wiąże / odpina bąbel kodu z bąblem uslugi; krok w każdej
+  servitor                      servitory w zasięgu: stan i T atomu src ich bąbla kodu
+  servitor up|down <etykieta>   wiąże / odpina bąbel kodu z bąblem servitory; krok w każdej
                                 epoce (tick), gdy src jest HOT/WARM; błąd nie grzeje, więc
-                                usługa, która pada, stygnie; chunk zwraca false = koniec
-  dziennik [n]                  wpisy startu, poleceń i usług (atomy w bąblu dziennik)
+                                servitor, który pada, stygnie; chunk zwraca false = koniec
+  dziennik [n]                  wpisy startu, poleceń i servitorów (atomy w bąblu dziennik)
   czas                          stempel w świecie (bąbel czas) + SNTP z KARMAZYN_NTP
   help | quit
 

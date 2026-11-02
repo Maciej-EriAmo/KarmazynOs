@@ -1,4 +1,4 @@
-//! Dziennik startu, poleceń i usług. Wpis jest atomem powiązanym z
+//! Dziennik startu, poleceń i servitorów. Wpis jest atomem powiązanym z
 //! bąblem-korzeniem `dziennik`: S = źródło, E = `dziennik`, payload = linia
 //! `e<epoka> <UTC> <źródło> <treść>`.
 //!
